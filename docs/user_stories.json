@@ -1,0 +1,62 @@
+[
+    {
+        "description": "Committee Lead views Dashboard (Command Center)",
+        "steps": [
+            "Navigate to the dashboard homepage",
+            "Verify 'Total Progress' card displays the correct percentage of contacted companies",
+            "Verify 'Response Rate' card displays the correct percentage",
+            "Verify 'Stalled Items' count shows number of companies not updated in > 7 days",
+            "Verify 'Member Activity Monitor' table lists all committee members with their last active time",
+            "Verify 'Flagged Items' section shows companies that requested attention"
+        ],
+        "passes": false
+    },
+    {
+        "description": "Committee Member views their Personal Workspace",
+        "steps": [
+            "Navigate to the Committee Workspace page",
+            "Select a 'Committee Member' from the filter/dropdown (or auto-detected)",
+            "Verify the Kanban board/list only shows companies assigned to that member",
+            "Verify columns exist for: 'To Contact', 'Contacted', 'Negotiating', 'Closed/Rejected'",
+            "Verify companies with no updates > 7 days are highlighted (e.g., yellow background)"
+        ],
+        "passes": false
+    },
+    {
+        "description": "Committee Member updates Company Status via 'Case File' Modal",
+        "steps": [
+            "Click on a company card in the workspace",
+            "Verify a Modal opens showing company details",
+            "Change status from 'To Contact' to 'Contacted'",
+            "Enter a remark: 'Sent initial email'",
+            "Click 'Save'",
+            "Verify the Modal closes and the card moves to the 'Contacted' column",
+            "Verify 'Last Updated' timestamp in Google Sheet is updated to NOW",
+            "Verify 'Committee_Status' sheet updates the member's Last Active time to NOW"
+        ],
+        "passes": false
+    },
+    {
+        "description": "Committee Member adds a new Contact Person",
+        "steps": [
+            "Open Company Modal -> 'Contacts' tab",
+            "Click 'Add Contact'",
+            "Enter Type (Phone), Name (Jane), Value (555-0199)",
+            "Click 'Save'",
+            "Verify the new contact appears in the list instantly",
+            "Verify a NEW ROW is inserted in the Google Sheet with the same Company Name and Status"
+        ],
+        "passes": false
+    },
+    {
+        "description": "Admin searches for a company in Master Database",
+        "steps": [
+            "Navigate to 'All Companies' page",
+            "Enter a company name in the search bar",
+            "Verify the table filters to show only matching companies",
+            "Click 'Last Updated' header",
+            "Verify the table sorts by date descending"
+        ],
+        "passes": false
+    }
+]
