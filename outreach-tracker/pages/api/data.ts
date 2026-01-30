@@ -73,6 +73,7 @@ export default async function handler(
                     discipline: row[2],
                     priority: row[3],
                     status: row[4],
+                    remark: row[12] || '', // Current remark from Column M
                     pic: row[13], // Committee Member
                     lastUpdated: row[14],
                     isFlagged: row[15] === 'TRUE',

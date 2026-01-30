@@ -52,7 +52,8 @@ export default async function handler(
             'status': 'E',
             'pic': 'N',
             'isFlagged': 'P',
-            'lastUpdated': 'O'
+            'lastUpdated': 'O',
+            'remark': 'M'
         };
 
         const valueUpdates = [];
@@ -105,6 +106,12 @@ export default async function handler(
                     values: [[updates.isFlagged ? 'TRUE' : 'FALSE']]
                 });
             }
+            if (remark) {
+                valueUpdates.push({
+                    range: `${sheetName}!${COL_MAP['remark']}${rowIndex}`,
+                    values: [[remark]]
+                });
+            }
         }
 
         // Execute Batch Update
@@ -121,12 +128,12 @@ export default async function handler(
         // 3. Append to Logs
         const logSheetName = 'Logs_DoNotEdit';
         const logValues = [
-            [timestamp, user, oldCompanyName, JSON.stringify(updates), '', '', remark || '']
+            [timestamp, user, oldCompanyName, JSON.stringify(updates)]
         ];
 
         await sheets.spreadsheets.values.append({
             spreadsheetId,
-            range: `${logSheetName}!A:G`,
+            range: `${logSheetName}!A:D`,
             valueInputOption: 'USER_ENTERED',
             requestBody: { values: logValues }
         });

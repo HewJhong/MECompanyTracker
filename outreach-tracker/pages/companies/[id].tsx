@@ -45,6 +45,7 @@ interface Company {
     contacts: any[];
     lastUpdated?: string;
     pic?: string;
+    remark?: string;
     history?: any[];
     discipline?: string;
     priority?: string;
@@ -348,11 +349,10 @@ export default function CompanyDetailPage() {
                                     key={tab.id}
                                     type="button"
                                     onClick={() => setActiveTab(tab.id)}
-                                    className={`flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
-                                        activeTab === tab.id
-                                            ? 'border-blue-600 text-blue-600'
-                                            : 'border-transparent text-slate-600 hover:text-slate-900 hover:border-slate-300'
-                                    }`}
+                                    className={`flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors ${activeTab === tab.id
+                                        ? 'border-blue-600 text-blue-600'
+                                        : 'border-transparent text-slate-600 hover:text-slate-900 hover:border-slate-300'
+                                        }`}
                                 >
                                     <TabIcon className="w-5 h-5" aria-hidden="true" />
                                     {tab.label}
@@ -379,6 +379,16 @@ export default function CompanyDetailPage() {
                                     ))}
                                 </select>
                             </div>
+
+                            {company.remark && (
+                                <div>
+                                    <label className="block text-sm font-medium text-slate-700 mb-2">Latest Remark</label>
+                                    <div className="p-4 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-600 italic">
+                                        "{company.remark}"
+                                    </div>
+                                </div>
+                            )}
+
                             <div>
                                 <label htmlFor="remarks" className="block text-sm font-medium text-slate-700 mb-2">Add Remark</label>
                                 <textarea
@@ -601,9 +611,8 @@ export default function CompanyDetailPage() {
                             type="button"
                             onClick={handleSave}
                             disabled={isSaving}
-                            className={`inline-flex items-center gap-2 px-6 py-2 text-sm font-medium rounded-lg ${
-                                isEditMode ? 'bg-indigo-600 hover:bg-indigo-700' : 'bg-blue-600 hover:bg-blue-700'
-                            } text-white disabled:opacity-50`}
+                            className={`inline-flex items-center gap-2 px-6 py-2 text-sm font-medium rounded-lg ${isEditMode ? 'bg-indigo-600 hover:bg-indigo-700' : 'bg-blue-600 hover:bg-blue-700'
+                                } text-white disabled:opacity-50`}
                         >
                             {isSaving ? <ArrowPathIcon className="w-4 h-4 animate-spin" /> : <CheckCircleIcon className="w-4 h-4" />}
                             {isEditMode ? 'Save All Changes' : 'Update Status'}
