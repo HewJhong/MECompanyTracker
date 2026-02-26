@@ -73,12 +73,14 @@ export default function CommitteePage() {
             return (lastCompanyReplyDate > lastCommitteeContactDate) && (daysSinceReply > 3);
         })();
 
+        const activeContact = company.contacts?.find((c: any) => c.isActive) || company.contacts?.[0];
+
         return {
             id: company.id,
             name: company.companyName || company.name || '',
             status: company.status,
-            contact: company.contacts?.[0]?.picName || '',
-            email: company.contacts?.[0]?.email || '',
+            contact: activeContact?.name || '',
+            email: activeContact?.email || '',
             lastUpdated: company.lastUpdated || '',
             isFlagged: company.isFlagged,
             isStale: daysSinceUpdate > 7,

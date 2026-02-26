@@ -3,7 +3,7 @@ import { google } from 'googleapis';
 export async function getGoogleSheetsClient() {
   try {
     const scopes = ['https://www.googleapis.com/auth/spreadsheets'];
-    
+
     // Support newlines in private key if they are escaped in the environment variable
     const privateKey = process.env.GOOGLE_PRIVATE_KEY
       ? process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n')
@@ -18,10 +18,10 @@ export async function getGoogleSheetsClient() {
     });
 
     const client = await auth.getClient();
-    
+
     // @ts-ignore - The googleapis type definitions can be tricky with auth clients
     const sheets = google.sheets({ version: 'v4', auth: client });
-    
+
     return sheets;
   } catch (error) {
     console.error('Error creating Google Sheets client:', error);
