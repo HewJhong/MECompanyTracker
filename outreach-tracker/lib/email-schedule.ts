@@ -1,5 +1,5 @@
 import { getGoogleSheetsClient } from './google-sheets';
-import { cache } from './cache';
+import { cache, deleteCacheKeysAndPrefix } from './cache';
 import {
     calculateTimeSlots,
     ScheduleSettings,
@@ -473,12 +473,6 @@ export async function checkTimeConflicts(
 }
 
 export function invalidateScheduleCache(): void {
-    // Clear all schedule-related cache keys
-    for (const key of ['email_schedule', 'email_schedule_settings']) {
-        cache.delete(key);
-    }
-    // Also clear date-specific cache entries by iterating known patterns
-    // Since lru-cache doesn't enumerate keys easily, we clear the common date format keys
-    // by using a broad delete. Future: could track known date keys in a side-set.
-    // For now, rely on the short TTL (1 min) for date-specific entries.
+    // Clear all schedule-related cache keys (including date-prefixed email_schedule_YYYY-MM-DD)
+    deleteCacheKeysAndPrefix([CACHE_KEY_SCHEDULE, CACHE_KEY_SETTINGS], CACHE_KEY_SCHEDULE);
 }

@@ -65,6 +65,7 @@ export default function CompaniesPage() {
     const [isFetchingSlot, setIsFetchingSlot] = useState(false);
     const [projectedSlots, setProjectedSlots] = useState<string[] | null>(null);
     const [scheduleMap, setScheduleMap] = useState<Record<string, { date: string; time: string }>>({});
+    const [isSyncing, setIsSyncing] = useState(false);
 
     const showError = (title: string, message: string) => {
         setErrorTitle(title);
@@ -251,6 +252,18 @@ export default function CompaniesPage() {
             return c;
         }));
 
+        // Optimistic schedule map when we have date/time so table shows scheduled slot immediately
+        if (scheduleDate && scheduleStartTime && schedulePreview?.slots && assignee !== '__UNASSIGN__') {
+            const companyIds = Array.from(selectedCompanies);
+            setScheduleMap(prev => {
+                const next = { ...prev };
+                schedulePreview.slots.forEach((slot, i) => {
+                    if (companyIds[i]) next[companyIds[i]] = { date: scheduleDate, time: slot };
+                });
+                return next;
+            });
+        }
+
         // 2. Clear UI state immediately
         const actionText = assignee === '__UNASSIGN__' ? 'unassigned' : 'assigned';
         const targetText = assignee === '__UNASSIGN__' ? '' : ` to ${assignee}`;
@@ -287,9 +300,29 @@ export default function CompaniesPage() {
                 throw new Error(data.error || 'Server error');
             }
 
-            // Optionally refresh silently to ensure exact consistency (e.g. if server formatted dates differently)
-            fetchData();
             completeTask(taskId, 'Changes saved successfully to Google Sheets');
+            // Refetch from sheet so table shows exact server state (PIC, lastUpdated, schedule)
+            setIsSyncing(true);
+            try {
+                const [dataRes, scheduleRes] = await Promise.all([
+                    fetch(`/api/data?refresh=true`),
+                    fetch('/api/email-schedule'),
+                ]);
+                if (dataRes.ok) {
+                    const json = await dataRes.json();
+                    setData(json.companies || []);
+                }
+                if (scheduleRes.ok) {
+                    const json = await scheduleRes.json();
+                    const map: Record<string, { date: string; time: string }> = {};
+                    (json?.entries || []).forEach((e: { companyId: string; date: string; time: string }) => {
+                        map[e.companyId] = { date: e.date, time: e.time };
+                    });
+                    setScheduleMap(map);
+                }
+            } finally {
+                setIsSyncing(false);
+            }
         } catch (error) {
             console.error('Background sync failed:', error);
             // 4. Error Handling (Revert)
@@ -297,7 +330,7 @@ export default function CompaniesPage() {
             setShowSuccessModal(false); // Hide success if it's still open
             showError(
                 "Sync Error",
-                "The update appeared to succeed but failed to save to the server. reloading data..."
+                "The update appeared to succeed but failed to save to the server. Reloading data..."
             );
             fetchData(); // Force reload to revert to correct server state
         }
@@ -352,6 +385,15 @@ export default function CompaniesPage() {
                     </div>
                 </div>
             </div>
+
+            {/* Syncing progress bar: data is being refetched from sheet after bulk assign */}
+            {isSyncing && (
+                <div className="mb-4 rounded-lg bg-indigo-50 border border-indigo-200 px-4 py-2.5 flex items-center gap-3">
+                    <div className="flex-shrink-0 w-5 h-5 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+                    <p className="text-sm font-medium text-indigo-800">Syncing with sheet…</p>
+                    <div className="flex-1 h-1.5 bg-indigo-100 rounded-full overflow-hidden animate-pulse" />
+                </div>
+            )}
 
             {/* Table Content */}
             <AllCompaniesTable

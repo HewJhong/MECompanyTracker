@@ -387,9 +387,15 @@ function EmailScheduleContent() {
     const [settings, setSettings] = useState<ScheduleSettings>(DEFAULT_SCHEDULE_SETTINGS);
     const [savingSettings, setSavingSettings] = useState(false);
     const [settingsSaved, setSettingsSaved] = useState(false);
+    const [gridSyncing, setGridSyncing] = useState(false);
 
-    const fetchEntries = useCallback(async () => {
-        setLoading(true);
+    const fetchEntries = useCallback(async (options?: { silent?: boolean }) => {
+        const silent = options?.silent === true;
+        if (silent) {
+            setGridSyncing(true);
+        } else {
+            setLoading(true);
+        }
         try {
             const [scheduleRes, dataRes] = await Promise.all([
                 fetch('/api/email-schedule'),
@@ -411,7 +417,11 @@ function EmailScheduleContent() {
         } catch (e) {
             console.error('Failed to fetch schedule', e);
         } finally {
-            setLoading(false);
+            if (silent) {
+                setGridSyncing(false);
+            } else {
+                setLoading(false);
+            }
         }
     }, []);
 
@@ -582,7 +592,7 @@ function EmailScheduleContent() {
             const slotBlocked = visibleTimeSlots.some(s => s.time === normTime && s.blocked);
             if (slotBlocked) {
                 completeTask(taskId, 'Schedule updated');
-                fetchEntries();
+                fetchEntries({ silent: true });
                 return;
             }
 
@@ -596,7 +606,7 @@ function EmailScheduleContent() {
             const newSlots = computeTimeSlotsWithOccupancy(occupancy, normTime, movingEntries.length, settings);
             if (newSlots.length !== movingEntries.length) {
                 completeTask(taskId, 'Schedule updated');
-                fetchEntries();
+                fetchEntries({ silent: true });
                 return;
             }
 
@@ -634,10 +644,10 @@ function EmailScheduleContent() {
             });
             if (!putRes.ok) throw new Error('Save failed');
             completeTask(taskId, 'Schedule updated');
-            fetchEntries();
+            fetchEntries({ silent: true });
         } catch {
             failTask(taskId, 'Failed to update schedule');
-            fetchEntries();
+            fetchEntries({ silent: true });
         }
     }, [selectedIds, settings, visibleTimeSlots, addTask, completeTask, failTask, fetchEntries]);
 
@@ -702,7 +712,7 @@ function EmailScheduleContent() {
             if (newSlots.length !== movingEntries.length) {
                 setMoveError('Not enough capacity at that time (rate limit would be exceeded)');
                 completeTask(taskId, 'Schedule updated');
-                fetchEntries();
+                fetchEntries({ silent: true });
                 return;
             }
 
@@ -742,10 +752,10 @@ function EmailScheduleContent() {
             });
             if (!putRes.ok) throw new Error('Save failed');
             completeTask(taskId, 'Schedule updated');
-            fetchEntries();
+            fetchEntries({ silent: true });
         } catch {
             failTask(taskId, 'Failed to update schedule');
-            fetchEntries();
+            fetchEntries({ silent: true });
         }
     }, [selectedIds, moveDate, moveTime, visibleTimeSlots, settings, addTask, completeTask, failTask, fetchEntries]);
 
@@ -766,12 +776,23 @@ function EmailScheduleContent() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ entries: updated }),
             });
+            const json = await res.json().catch(() => ({}));
             if (!res.ok) throw new Error('Save failed');
             completeTask(taskId, 'PIC updated');
-            fetchEntries();
+            // Merge server response into state so we don't refetch (avoids stale cache showing old date/committee)
+            const savedEntries = json.entries as ScheduleEntry[] | undefined;
+            if (Array.isArray(savedEntries) && savedEntries.length > 0) {
+                setEntries(prev => {
+                    const byKey = new Map(prev.map(e => [`${e.companyId}|${e.date}`, e]));
+                    savedEntries.forEach(e => byKey.set(`${e.companyId}|${e.date}`, { ...e, order: e.order ?? 0 }));
+                    return Array.from(byKey.values()).sort((a, b) =>
+                        a.date.localeCompare(b.date) || normalizeTime(a.time).localeCompare(normalizeTime(b.time)) || a.order - b.order
+                    );
+                });
+            }
         } catch {
             failTask(taskId, 'Failed to update PIC');
-            fetchEntries();
+            fetchEntries({ silent: true });
         }
     }, [selectedEntries, assignPicValue, addTask, completeTask, failTask, fetchEntries]);
 
@@ -797,10 +818,10 @@ function EmailScheduleContent() {
                 if (!res.ok) throw new Error('Delete failed');
             }
             completeTask(taskId, 'Removed from schedule');
-            fetchEntries();
+            fetchEntries({ silent: true });
         } catch {
             failTask(taskId, 'Failed to remove from schedule');
-            fetchEntries();
+            fetchEntries({ silent: true });
         }
     }, [selectedEntries, selectedIds, addTask, completeTask, failTask, fetchEntries]);
 
@@ -863,7 +884,7 @@ function EmailScheduleContent() {
                 </div>
                 <div className="flex items-center gap-2">
                     <button
-                        onClick={fetchEntries}
+                        onClick={() => fetchEntries()}
                         className="p-2 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-colors"
                         title="Refresh"
                     >
@@ -1025,6 +1046,13 @@ function EmailScheduleContent() {
                     <div className="animate-spin rounded-full h-10 w-10 border-4 border-indigo-600 border-t-transparent" />
                 </div>
             ) : (
+                <>
+            {gridSyncing && (
+                <div className="mb-3 rounded-lg bg-indigo-50 border border-indigo-200 px-3 py-2 flex items-center gap-2">
+                    <div className="flex-shrink-0 w-4 h-4 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+                    <span className="text-xs font-medium text-indigo-700">Syncing schedule…</span>
+                </div>
+            )}
                 <DndContext
                     sensors={sensors}
                     onDragStart={handleDragStart}
@@ -1089,6 +1117,7 @@ function EmailScheduleContent() {
                         ) : null}
                     </DragOverlay>
                 </DndContext>
+                </>
             )}
 
             {selectedIds.size >= 1 && (
