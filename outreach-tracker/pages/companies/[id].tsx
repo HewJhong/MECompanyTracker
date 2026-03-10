@@ -252,8 +252,8 @@ export default function CompanyDetailPage() {
         if (!outreachScheduleDate || !effectiveIsAdmin) return;
         setIsFetchingScheduleSlot(true);
         fetch(`/api/email-schedule/available-slots?date=${outreachScheduleDate}`)
-            .then(res => res.ok ? res.json() : {})
-            .then(json => {
+            .then(res => res.ok ? res.json() : ({} as { nextStartTime?: string }))
+            .then((json: { nextStartTime?: string }) => {
                 if (json.nextStartTime) setOutreachScheduleTime(json.nextStartTime);
             })
             .finally(() => setIsFetchingScheduleSlot(false));
