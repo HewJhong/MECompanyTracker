@@ -9,11 +9,13 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@headlessui/react": "^2.2.9",
     "@heroicons/react": "^2.2.0",
-    "dotenv": "^17.2.3",
+    "dotenv": "^17.3.1",
     "googleapis": "^170.1.0",
     "lru-cache": "^11.2.5",
     "next": "16.1.6",
+    "next-auth": "^4.24.13",
     "react": "19.2.3",
     "react-dom": "19.2.3"
   },

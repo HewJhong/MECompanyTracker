@@ -168,6 +168,48 @@ sequenceDiagram
   - [ ] Review index and committee for buttons/links that trigger writes; conditionally render or disable using context role flags.
   - [ ] Analytics: confirm read-only or add same gating for any future export/write feature.
 
+#### Task 6.2 — Dashboard statistics: what to show (proposal)
+
+- **Description:** Define which statistics and widgets to show on the dashboard (index / Command Center) for **admin** vs **member**. Implement or filter the dashboard so each role sees the right set.
+
+**Proposed statistics for Admin**
+
+| Stat / Widget | Description | Data source |
+|---------------|-------------|-------------|
+| **Outreach progress** | % of companies contacted (contacted / total) | All companies, `status !== 'To Contact'` |
+| **Pipeline summary** | Counts by status: To Contact, Contacted, Negotiating, Interested, etc. | All companies |
+| **Committee inactive** | Companies with no internal update in 7+ days (committee bottleneck) | All companies, `lastUpdated` |
+| **Follow-ups due** | Contacted companies with no company activity in 7+ days (ready to nudge) | All companies, `status === 'Contacted'`, `lastCompanyActivity` |
+| **Total follow-ups** | Cumulative follow-ups completed (effort metric) | Sum of `followUpsCompleted` |
+| **Flagged count** | Companies needing attention | `isFlagged` |
+| **Unassigned count** | Companies with no PIC (admin-only; supports bulk assign) | `pic` empty or 'Unassigned' |
+| **Committee leaderboard** | Per-member: total assigned, contacted, replied, follow-ups (and optionally stalled) | Companies grouped by `pic` + history |
+| **Member activity** | Last activity timestamp per member (who’s active) | History / Committee_Status |
+| **Flagged items list** | Full list of flagged companies with quick link to detail | Filter `isFlagged` |
+
+**Proposed statistics for Member**
+
+| Stat / Widget | Description | Data source |
+|---------------|-------------|-------------|
+| **My outreach progress** | % of *my* assigned companies contacted | Companies where `pic === currentUser.name` |
+| **My assigned count** | Number of companies assigned to me | Same filter |
+| **My contacted / replied** | Count of my companies by status (e.g. contacted, negotiating/interested) | Same filter, by status |
+| **My follow-ups due** | My assigned companies that are “Contacted” and stale (7+ days no company activity) | My companies, status + `lastCompanyActivity` |
+| **My total follow-ups** | Follow-ups I’ve completed on my list | Sum of `followUpsCompleted` for my companies |
+| **My flagged items** | Flagged companies assigned to me (or all flagged if desired) | My companies with `isFlagged` |
+| **Quick links** | My Workspace (committee), All Companies | Existing nav |
+
+**Role-based visibility (summary)**
+
+- **Admin:** Full portfolio stats (all companies), committee leaderboard, member activity, unassigned count, full flagged list. Optionally same “my” stats if they have assigned companies.
+- **Member:** Only “my” stats (filtered by `pic === currentUser.name`). No leaderboard (or show only “you” vs team average if product wants). No unassigned count. Flagged list can be “all” or “my flagged only” by product choice.
+- **Unlisted:** Read-only; can show same as member (e.g. no “my” data if they have no assignments) or a minimal read-only summary (e.g. total companies, contacted % only).
+
+**Implementation notes**
+
+- Reuse existing aggregates where possible (`DashboardStats`, `CommitteeLeaderboard`, `MemberActivity`, `FlaggedItems`). Add role checks and, for member, filter companies by `pic` before computing stats.
+- Consider a small “dashboard config” or props (e.g. `scope: 'all' | 'mine'`, `showLeaderboard: boolean`, `showUnassigned: boolean`) derived from `user?.isAdmin` and `user?.name` so index page passes the right data to each widget.
+
 ### Dependencies
 
 - **Phase 1** must be done first (context and /api/me flags); Phases 2–6 can be parallelized after that.

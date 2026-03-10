@@ -1,12 +1,18 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { useRouter } from 'next/router';
-import DashboardStats from '../components/DashboardStats';
-import MemberActivity from '../components/MemberActivity';
-import FlaggedItems from '../components/FlaggedItems';
-import CommitteeLeaderboard from '../components/CommitteeLeaderboard';
+import { useSession } from 'next-auth/react';
 import Layout from '../components/Layout';
-import { SparklesIcon } from '@heroicons/react/24/solid';
-import Link from 'next/link';
+import LandingPage from '../components/LandingPage';
+import MemberActivity from '../components/MemberActivity';
+import {
+    SparklesIcon,
+    ChartBarIcon,
+    ArrowTrendingUpIcon,
+    ArrowPathIcon,
+    FlagIcon,
+    CheckCircleIcon
+} from '@heroicons/react/24/outline';
+import { SparklesIcon as SolidSparkles } from '@heroicons/react/24/solid';
 
 interface Company {
     id: string;
@@ -17,9 +23,13 @@ interface Company {
     contacts: any[];
     lastUpdated?: string;
     pic?: string;
-    history?: any[];
     discipline?: string;
     priority?: string;
+    followUpsCompleted?: number;
+    lastCompanyActivity?: string;
+    sponsorshipTier?: string;
+    daysAttending?: string;
+    remark?: string;
 }
 
 interface HistoryEntry {
@@ -31,94 +41,268 @@ interface HistoryEntry {
     remark: string;
 }
 
+type TimelineMetric = 'contacted' | 'interested' | 'registered';
+
+function OutreachPerformanceLineChart({ timeline }: { timeline: { date: string; contacted: number; interested: number; registered: number }[] }) {
+    const [metric, setMetric] = useState<TimelineMetric>('contacted');
+    const chartWidth = 600;
+    const chartHeight = 200;
+    const padding = { top: 8, right: 8, bottom: 24, left: 36 };
+
+    const values = timeline.map(p => p[metric]);
+    const maxVal = Math.max(...values, 1);
+    const minVal = Math.min(...values, 0);
+    const range = maxVal - minVal || 1;
+    const innerWidth = chartWidth - padding.left - padding.right;
+    const innerHeight = chartHeight - padding.top - padding.bottom;
+
+    const points = timeline.map((p, i) => {
+        const x = padding.left + (i / Math.max(timeline.length - 1, 1)) * innerWidth;
+        const y = padding.top + innerHeight - ((p[metric] - minVal) / range) * innerHeight;
+        return `${x},${y}`;
+    }).join(' ');
+
+    const strokeColor = metric === 'contacted' ? '#3b82f6' : metric === 'interested' ? '#a855f7' : '#22c55e';
+
+    return (
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+            <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
+                <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Outreach Performance Over Time</h3>
+                <select
+                    value={metric}
+                    onChange={(e) => setMetric(e.target.value as TimelineMetric)}
+                    className="text-xs font-medium text-slate-700 bg-white border border-slate-200 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    aria-label="Select metric to display"
+                >
+                    <option value="contacted">Contacted</option>
+                    <option value="interested">Interested</option>
+                    <option value="registered">Registered</option>
+                </select>
+            </div>
+            <div className="relative w-full overflow-x-auto">
+                <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="w-full min-h-[200px]" preserveAspectRatio="none">
+                    <defs>
+                        <linearGradient id="lineGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+                            <stop offset="0%" stopColor={strokeColor} stopOpacity="0.3" />
+                            <stop offset="100%" stopColor={strokeColor} stopOpacity="0" />
+                        </linearGradient>
+                    </defs>
+                    {timeline.length > 0 && (
+                        <>
+                            <polyline
+                                fill="none"
+                                stroke={strokeColor}
+                                strokeWidth="2"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                points={points}
+                            />
+                            <polygon
+                                fill="url(#lineGrad)"
+                                points={`${padding.left},${padding.top + innerHeight} ${points} ${padding.left + innerWidth},${padding.top + innerHeight}`}
+                            />
+                        </>
+                    )}
+                </svg>
+            </div>
+            <div className="flex justify-between mt-2 text-[10px] text-slate-400 font-medium">
+                <span>{timeline[0]?.date}</span>
+                <span>30 day cumulative</span>
+                <span>{timeline[timeline.length - 1]?.date}</span>
+            </div>
+        </div>
+    );
+}
+
 export default function Home() {
     const router = useRouter();
+    const { data: session, status: authStatus } = useSession();
     const [data, setData] = useState<Company[]>([]);
     const [history, setHistory] = useState<HistoryEntry[]>([]);
     const [loading, setLoading] = useState(true);
+    const [refreshing, setRefreshing] = useState(false);
 
-    const fetchData = async () => {
+    const fetchData = async (refresh = false) => {
+        if (refresh) setRefreshing(true);
         try {
-            const res = await fetch('/api/data');
+            const res = await fetch(`/api/data${refresh ? '?refresh=true' : ''}`);
             const responseData = await res.json();
-            const companies = responseData.companies || [];
-            const historyData = responseData.history || [];
-            setData(companies);
-            setHistory(historyData);
+            setData(responseData.companies || []);
+            setHistory(responseData.history || []);
             setLoading(false);
         } catch (err) {
             console.error('Failed to load data', err);
             setLoading(false);
+        } finally {
+            setRefreshing(false);
         }
     };
 
     useEffect(() => {
-        fetchData();
-    }, []);
+        if (session) {
+            fetchData();
+        }
+    }, [session]);
 
-    // Compute Stats
-    // ... rest of the logic remains same until handleCompanyClick
-    // (Optimization: I'll include the full logic to ensure no regression)
+    const stats = useMemo(() => {
+        if (data.length === 0) return null;
 
-    const totalCompanies = data.length;
-    const contactedCount = data.filter(c =>
-        c.status && c.status !== 'To Contact'
-    ).length;
+        const total = data.length;
+        const reached = data.filter(c => !['To Contact', 'Rejected'].includes(c.status)).length;
+        const registered = data.filter(c => c.status === 'Registered').length;
+        const interested = data.filter(c => c.status === 'Interested').length;
+        const contacted = data.filter(c => c.status === 'Contacted').length;
+        const noReply = data.filter(c => c.status === 'No Reply').length;
+        const rejected = data.filter(c => c.status === 'Rejected').length;
+        const totalFollowUps = data.reduce((acc, c) => acc + (c.followUpsCompleted || 0), 0);
+        const flaggedCount = data.filter(c => c.isFlagged).length;
 
-    const responseCount = data.filter(c =>
-        ['Replied', 'Negotiating', 'Closed', 'Succeeded'].includes(c.status)
-    ).length;
+        // Stalled Logic
+        const committeeStalledCount = data.filter(c => {
+            if (!c.lastUpdated) return false;
+            const daysSinceUpdate = (Date.now() - new Date(c.lastUpdated).getTime()) / (1000 * 60 * 60 * 24);
+            return daysSinceUpdate > 7;
+        }).length;
 
-    const stalledCount = data.filter(c => {
-        if (!c.lastUpdated) return false;
-        const daysSinceUpdate = (Date.now() - new Date(c.lastUpdated).getTime()) / (1000 * 60 * 60 * 24);
-        return daysSinceUpdate > 7;
-    }).length;
+        const companyStalledCount = data.filter(c => {
+            if (c.status !== 'Contacted' || !c.lastCompanyActivity) return false;
+            const daysSinceActivity = (Date.now() - new Date(c.lastCompanyActivity).getTime()) / (1000 * 60 * 60 * 24);
+            return daysSinceActivity > 7;
+        }).length;
 
-    const flaggedCount = data.filter(c => c.isFlagged).length;
+        // Distributions
+        const sponsorshipDist: Record<string, number> = {};
+        const disciplineDist: Record<string, number> = {};
+        const dayDist: Record<string, number> = {};
+        const dayTierBreakdown: Record<string, Record<string, number>> = {};
 
-    const flaggedCompanies = data.filter(c => c.isFlagged).map(c => ({
-        id: c.id,
-        name: c.companyName || c.name || '',
-        status: c.status,
-        assignedTo: c.pic || 'Unassigned',
-        reason: 'Needs attention from lead',
-        flaggedDate: c.lastUpdated || new Date().toISOString()
-    }));
-
-    const memberActivityMap = new Map<string, string>();
-    history.forEach(entry => {
-        if (entry.user && entry.timestamp) {
-            const existingTime = memberActivityMap.get(entry.user);
-            if (!existingTime || new Date(entry.timestamp) > new Date(existingTime)) {
-                memberActivityMap.set(entry.user, entry.timestamp);
+        data.forEach(c => {
+            if (c.status === 'Registered' && c.sponsorshipTier) {
+                sponsorshipDist[c.sponsorshipTier] = (sponsorshipDist[c.sponsorshipTier] || 0) + 1;
             }
+            if (c.discipline) {
+                c.discipline.split(',').forEach(d => {
+                    const trimmed = d.trim();
+                    if (trimmed) disciplineDist[trimmed] = (disciplineDist[trimmed] || 0) + 1;
+                });
+            }
+            if (c.daysAttending) {
+                c.daysAttending.split(',').forEach(d => {
+                    const trimmed = d.trim();
+                    if (trimmed) {
+                        dayDist[trimmed] = (dayDist[trimmed] || 0) + 1;
+                        if (c.status === 'Registered' && c.sponsorshipTier) {
+                            if (!dayTierBreakdown[trimmed]) dayTierBreakdown[trimmed] = {};
+                            dayTierBreakdown[trimmed][c.sponsorshipTier] = (dayTierBreakdown[trimmed][c.sponsorshipTier] || 0) + 1;
+                        }
+                    }
+                });
+            }
+        });
+
+        // Committee Leaderboard
+        const memberStats = new Map<string, { registered: number; assigned: number; contacted: number; followUps: number }>();
+        data.forEach(c => {
+            const pic = c.pic || 'Unassigned';
+            if (!memberStats.has(pic)) {
+                memberStats.set(pic, { registered: 0, assigned: 0, contacted: 0, followUps: 0 });
+            }
+            const s = memberStats.get(pic)!;
+            s.assigned++;
+            s.followUps += (c.followUpsCompleted || 0);
+            if (c.status === 'Registered') s.registered++;
+            if (!['To Contact'].includes(c.status)) s.contacted++;
+        });
+
+        const leaderboard = Array.from(memberStats.entries())
+            .filter(([name]) => name !== 'Unassigned')
+            .map(([name, s]) => ({
+                name,
+                registered: s.registered,
+                contacted: s.contacted,
+                assigned: s.assigned,
+                totalFollowUps: s.followUps,
+                percentage: s.assigned > 0 ? Math.round((s.contacted / s.assigned) * 100) : 0
+            }))
+            .sort((a, b) => b.registered - a.registered || b.percentage - a.percentage);
+
+        // Timeline Data (Last 30 days)
+        const timeline: Record<string, { contacted: number; interested: number; registered: number }> = {};
+        const daysToShow = 30;
+        const now = new Date();
+        for (let i = daysToShow; i >= 0; i--) {
+            const d = new Date(now);
+            d.setDate(d.getDate() - i);
+            timeline[d.toISOString().split('T')[0]] = { contacted: 0, interested: 0, registered: 0 };
         }
-    });
 
-    const realMembers = Array.from(memberActivityMap.entries()).map(([name, lastActive]) => ({
-        name,
-        lastActive
-    }));
+        history.forEach(h => {
+            const date = h.timestamp.split('T')[0];
+            if (!timeline[date]) return;
+            const r = (h.remark || h.action || '').toLowerCase();
+            if (r.includes('status: contacted') || r.includes('outreach')) timeline[date].contacted++;
+            if (r.includes('status: interested') || r.includes('company reply')) timeline[date].interested++;
+            if (r.includes('status: registered') || r.includes('completed')) timeline[date].registered++;
+        });
 
-    const memberStatsMap = new Map<string, { totalAssigned: number; contactedCount: number; responseCount: number }>();
-    data.forEach(company => {
-        const pic = company.pic || 'Unassigned';
-        if (!memberStatsMap.has(pic)) {
-            memberStatsMap.set(pic, { totalAssigned: 0, contactedCount: 0, responseCount: 0 });
-        }
-        const stats = memberStatsMap.get(pic)!;
-        stats.totalAssigned++;
-        if (company.status && company.status !== 'To Contact') stats.contactedCount++;
-        if (['Replied', 'Negotiating', 'Closed', 'Succeeded'].includes(company.status)) stats.responseCount++;
-    });
+        const timelineList = Object.entries(timeline).sort((a, b) => a[0].localeCompare(b[0]));
+        let cumContacted = 0, cumInterested = 0, cumRegistered = 0;
+        const cumulativeTimeline = timelineList.map(([date, counts]) => {
+            cumContacted += counts.contacted;
+            cumInterested += counts.interested;
+            cumRegistered += counts.registered;
+            return { date, contacted: cumContacted, interested: cumInterested, registered: cumRegistered };
+        });
 
-    const leaderboardMembers = Array.from(memberStatsMap.entries())
-        .filter(([name]) => name !== 'Unassigned')
-        .map(([name, stats]) => ({
+        // Member Activity
+        const memberActivityMap = new Map<string, string>();
+        history.forEach(entry => {
+            if (entry.user && entry.timestamp) {
+                const existingTime = memberActivityMap.get(entry.user);
+                if (!existingTime || new Date(entry.timestamp) > new Date(existingTime)) {
+                    memberActivityMap.set(entry.user, entry.timestamp);
+                }
+            }
+        });
+        const realMembers = Array.from(memberActivityMap.entries()).map(([name, lastActive]) => ({
             name,
-            ...stats
-        }));
+            lastActive
+        })).sort((a, b) => new Date(b.lastActive).getTime() - new Date(a.lastActive).getTime());
+
+        return {
+            total,
+            reached,
+            registered,
+            interested,
+            contacted,
+            noReply,
+            rejected,
+            totalFollowUps,
+            flaggedCount,
+            committeeStalledCount,
+            companyStalledCount,
+            sponsorshipDist,
+            disciplineDist,
+            dayDist,
+            dayTierBreakdown,
+            leaderboard,
+            timeline: cumulativeTimeline,
+            realMembers,
+            flagged: data.filter(c => c.isFlagged)
+        };
+    }, [data, history]);
+
+    if (authStatus === 'loading') {
+        return (
+            <div className="min-h-screen flex items-center justify-center bg-slate-50">
+                <div className="animate-spin rounded-full h-12 w-12 border-4 border-blue-600 border-t-transparent"></div>
+            </div>
+        );
+    }
+
+    if (!session) {
+        return <LandingPage />;
+    }
 
     const handleCompanyClick = (companyId: string) => {
         router.push(`/companies/${encodeURIComponent(companyId)}`);
@@ -127,85 +311,288 @@ export default function Home() {
     return (
         <Layout title="Command Center | Outreach Tracker">
             {/* Page Header */}
-            <div className="mb-8">
-                <div className="flex items-center gap-3 mb-2">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
+                <div className="flex items-center gap-3">
                     <div className="p-2 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-xl">
-                        <SparklesIcon className="w-6 h-6 text-white" aria-hidden="true" />
+                        <SolidSparkles className="w-6 h-6 text-white" aria-hidden="true" />
                     </div>
                     <div>
-                        <h1 className="text-3xl font-bold text-slate-900">Command Center</h1>
-                        <p className="text-slate-600 mt-1">Real-time overview of sponsorship outreach progress</p>
+                        <h1 className="text-3xl font-extrabold text-slate-900 tracking-tight">Command Center</h1>
+                        <p className="text-slate-500">Real-time overview of sponsorship outreach progress</p>
                     </div>
                 </div>
+                <button
+                    onClick={() => fetchData(true)}
+                    disabled={refreshing}
+                    className="inline-flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-lg text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors shadow-sm disabled:opacity-50"
+                >
+                    <ArrowPathIcon className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+                    Refresh Stats
+                </button>
             </div>
 
             {loading ? (
                 <div className="flex flex-col items-center justify-center h-96">
                     <div className="animate-spin rounded-full h-12 w-12 border-4 border-blue-600 border-t-transparent mb-4"></div>
-                    <p className="text-slate-600 font-medium">Loading dashboard data...</p>
+                    <p className="text-slate-600 font-medium">Loading command center...</p>
+                </div>
+            ) : !stats ? (
+                <div className="bg-white rounded-2xl p-12 text-center border-2 border-dashed border-slate-200">
+                    <p className="text-slate-400">No outreach data available yet.</p>
                 </div>
             ) : (
                 <div className="space-y-8">
-                    {/* Key Metrics */}
-                    <DashboardStats
-                        totalCompanies={totalCompanies}
-                        contactedCount={contactedCount}
-                        responseCount={responseCount}
-                        stalledCount={stalledCount}
-                        flaggedCount={flaggedCount}
-                    />
-
-                    {/* Main Content Grid */}
-                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                        {/* Left Column - Flagged Items & Leaderboard */}
-                        <div className="lg:col-span-2 space-y-8">
-                            <FlaggedItems
-                                companies={flaggedCompanies}
-                                onCompanyClick={handleCompanyClick}
-                            />
-                            <CommitteeLeaderboard members={leaderboardMembers} />
-
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                <Link href="/committee">
-                                    <div className="bg-gradient-to-br from-blue-50 to-indigo-50 border-2 border-blue-200 rounded-xl p-6 hover:shadow-lg transition-all cursor-pointer group">
-                                        <div className="flex items-center gap-4">
-                                            <div className="p-3 bg-blue-600 rounded-lg group-hover:scale-110 transition-transform">
-                                                <svg className="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-                                                </svg>
-                                            </div>
-                                            <div className="flex-1">
-                                                <h3 className="font-semibold text-slate-900 mb-1">My Workspace</h3>
-                                                <p className="text-sm text-slate-600">View your assigned companies</p>
-                                            </div>
-                                        </div>
+                    {/* Row 1: Key Metrics */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                        {/* Outreach Progress - left: gauge, right: numbers */}
+                        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 flex flex-col">
+                            <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-4">Outreach Progress</h3>
+                            <div className="flex items-center gap-4 flex-1 min-h-[100px]">
+                                <div className="relative w-16 h-16 flex-shrink-0" aria-hidden="true">
+                                    <svg className="w-full h-full transform -rotate-90" viewBox="0 0 36 36" aria-hidden="true">
+                                        <circle cx="18" cy="18" r="15" stroke="currentColor" strokeWidth="3" fill="transparent" className="text-slate-100" />
+                                        <circle cx="18" cy="18" r="15" stroke="currentColor" strokeWidth="3" fill="transparent"
+                                            strokeDasharray={2 * Math.PI * 15}
+                                            strokeDashoffset={2 * Math.PI * 15 * (1 - (stats.reached / stats.total))}
+                                            className="text-blue-600 transition-all duration-1000 ease-out"
+                                        />
+                                    </svg>
+                                    <div className="absolute inset-0 flex items-center justify-center">
+                                        <span className="text-base font-bold text-slate-900">{Math.round((stats.reached / stats.total) * 100)}%</span>
                                     </div>
-                                </Link>
-
-                                <Link href="/companies">
-                                    <div className="bg-gradient-to-br from-green-50 to-emerald-50 border-2 border-green-200 rounded-xl p-6 hover:shadow-lg transition-all cursor-pointer group">
-                                        <div className="flex items-center gap-4">
-                                            <div className="p-3 bg-green-600 rounded-lg group-hover:scale-110 transition-transform">
-                                                <svg className="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                                                </svg>
-                                            </div>
-                                            <div className="flex-1">
-                                                <h3 className="font-semibold text-slate-900 mb-1">All Companies</h3>
-                                                <p className="text-sm text-slate-600">Browse master database</p>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </Link>
+                                </div>
+                                <div className="min-w-0 flex flex-col justify-center">
+                                    <p className="text-3xl font-bold text-slate-900 leading-tight">{stats.reached} <span className="text-slate-400 font-normal text-lg">/ {stats.total}</span></p>
+                                    <p className="text-sm text-slate-500 mt-1"><span className="font-bold text-amber-500">{stats.companyStalledCount}</span> Awaiting Reply</p>
+                                </div>
                             </div>
                         </div>
 
-                        <div>
-                            <MemberActivity members={realMembers} />
+                        {/* Total Follow-up - left: icon, right: numbers */}
+                        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 flex flex-col group">
+                            <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-4">Total Follow-up</h3>
+                            <div className="flex items-center gap-4 flex-1 min-h-[100px]">
+                                <div className="flex-shrink-0 p-2 rounded-xl bg-indigo-50 text-indigo-600 group-hover:bg-indigo-100 transition-colors duration-200" aria-hidden="true">
+                                    <ArrowTrendingUpIcon className="w-10 h-10" />
+                                </div>
+                                <div className="flex flex-col justify-center min-w-0">
+                                    <p className="text-3xl font-bold text-slate-900">{stats.totalFollowUps}</p>
+                                    <p className="text-xs text-slate-400 mt-1">Interactions logged</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Sponsorship Tiers */}
+                        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 flex flex-col lg:col-span-2">
+                            <div className="flex items-center gap-2 mb-4">
+                                <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Sponsorship Tiers</h3>
+                                {Object.entries(stats.sponsorshipDist).length === 0 && (
+                                    <span className="text-[10px] font-medium text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">Example</span>
+                                )}
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 flex-1">
+                                {(Object.entries(stats.sponsorshipDist).length > 0 ? Object.entries(stats.sponsorshipDist) : [['OP', 3], ['Gold', 12], ['Silver', 8], ['Bronze', 5]] as [string, number][]).map(([tier, count]) => (
+                                    <div key={tier} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl">
+                                        <div className="flex items-center gap-2">
+                                            <div className={`w-3 h-3 rounded-full ${tier === 'OP' ? 'bg-blue-500' : tier === 'Gold' ? 'bg-amber-400' : tier === 'Silver' ? 'bg-slate-300' : tier === 'Bronze' ? 'bg-amber-700' : 'bg-slate-400'}`} />
+                                            <span className="text-sm font-medium text-slate-700">{tier}</span>
+                                        </div>
+                                        <span className="text-sm font-bold text-slate-900">{count}</span>
+                                    </div>
+                                ))}
+                            </div>
                         </div>
                     </div>
-                </div>
+
+                    {/* Outreach Breakdown - pie left, numbers right */}
+                    <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8">
+                        <h3 className="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-6">Outreach Breakdown</h3>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+                            {[
+                                { label: 'Registered', count: stats.registered, color: 'bg-green-500', strokeColor: 'stroke-green-500' },
+                                { label: 'Interested', count: stats.interested, color: 'bg-orange-500', strokeColor: 'stroke-orange-500' },
+                                { label: 'Rejected', count: stats.rejected, color: 'bg-red-500', strokeColor: 'stroke-red-500' },
+                                { label: 'No Reply', count: stats.noReply, color: 'bg-slate-400', strokeColor: 'stroke-slate-400' },
+                            ].map(item => {
+                                const pct = stats.total > 0 ? (item.count / stats.total) * 100 : 0;
+                                const r = 18;
+                                const circ = 2 * Math.PI * r;
+                                const offset = circ * (1 - item.count / stats.total);
+                                return (
+                                    <div key={item.label} className="flex items-center gap-4 p-4 rounded-xl bg-slate-50/80 border border-slate-100">
+                                        <div className="relative w-16 h-16 flex-shrink-0" aria-hidden="true">
+                                            <svg className="w-full h-full transform -rotate-90" viewBox="0 0 44 44">
+                                                <circle cx="22" cy="22" r={r} stroke="currentColor" strokeWidth="5" fill="transparent" className="text-slate-200" />
+                                                <circle cx="22" cy="22" r={r} stroke="currentColor" strokeWidth="5" fill="transparent"
+                                                    strokeDasharray={circ} strokeDashoffset={stats.total > 0 ? offset : circ}
+                                                    className={`${item.strokeColor} transition-all duration-1000 ease-out`}
+                                                />
+                                            </svg>
+                                            <div className="absolute inset-0 flex items-center justify-center">
+                                                <span className="text-xs font-bold text-slate-700 tabular-nums">{Math.round(pct)}%</span>
+                                            </div>
+                                        </div>
+                                        <div className="min-w-0 flex-1">
+                                            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">{item.label}</p>
+                                            <p className="text-2xl font-bold text-slate-900 tabular-nums leading-tight mt-0.5">{item.count}</p>
+                                            <p className="text-[10px] text-slate-400 mt-0.5">of {stats.total} total</p>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+
+                    {/* Main Content Grid */}
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                        {/* Left & Middle Columns */}
+                        <div className="lg:col-span-2 space-y-8">
+
+                            {/* Day Attendance */}
+                                <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+                                    <div className="flex items-center gap-2 mb-6">
+                                        <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                                            Day Attendance
+                                        </h3>
+                                        {Object.keys(stats.dayDist).length === 0 && (
+                                            <span className="text-[10px] font-medium text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">Example</span>
+                                        )}
+                                    </div>
+                                    {(() => {
+                                        const isExample = Object.keys(stats.dayDist).length === 0;
+                                        const displayDayDist = isExample ? { '1': 42, '2': 48, '3': 45, '4': 38 } : stats.dayDist;
+                                        const displayDayTier = isExample ? {
+                                            '1': { OP: 1, Gold: 12, Silver: 18, Bronze: 10 },
+                                            '2': { Gold: 14, Silver: 20, Bronze: 11 },
+                                            '3': { Gold: 13, Silver: 19, Bronze: 11 },
+                                            '4': { Gold: 10, Silver: 15, Bronze: 12 },
+                                        } : stats.dayTierBreakdown;
+                                        const displayDayTierSlots: Record<string, Record<string, number>> = isExample ? {
+                                            '1': { OP: 1, Gold: 20, Silver: 25, Bronze: 15 },
+                                            '2': { OP: 1, Gold: 20, Silver: 25, Bronze: 15 },
+                                            '3': { OP: 1, Gold: 20, Silver: 25, Bronze: 15 },
+                                            '4': { OP: 1, Gold: 20, Silver: 25, Bronze: 15 },
+                                        } : {};
+                                        const tierOrder = ['OP', 'Gold', 'Silver', 'Bronze'];
+                                        const tierOrderStackedBar = ['OP', 'Bronze', 'Silver', 'Gold'];
+                                        const tierColors: Record<string, string> = { OP: 'bg-blue-500', Gold: 'bg-amber-400', Silver: 'bg-slate-300', Bronze: 'bg-amber-700' };
+                                        const maxHeight = Math.max(...Object.values(displayDayDist), 1);
+                                        return (
+                                            <div className="space-y-5">
+                                                <div className="flex items-stretch justify-between gap-3">
+                                                    {[1, 2, 3, 4].map(day => {
+                                                        const dayKey = day.toString();
+                                                        const count = displayDayDist[dayKey] || 0;
+                                                        const tiers = displayDayTier[dayKey] || {};
+                                                        const slots = displayDayTierSlots[dayKey] || {};
+                                                        const totalTier = tierOrder.reduce((sum, t) => sum + (tiers[t] || 0), 0);
+                                                        return (
+                                                            <div key={day} className="flex-1 flex flex-col items-center gap-2 min-w-0">
+                                                                <div className="w-full text-center">
+                                                                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Day {day}</p>
+                                                                    <p className="text-2xl font-bold text-slate-900 tabular-nums mt-0.5">{count}</p>
+                                                                    <p className="text-[10px] text-slate-400 font-medium">companies</p>
+                                                                </div>
+                                                                <div className="w-full rounded-t-md relative flex flex-col-reverse overflow-hidden border border-blue-100 bg-blue-50/80" style={{ height: '100px' }} title="Empty area = vacancies">
+                                                                    {totalTier > 0 ? (
+                                                                        <div className="w-full flex flex-col-reverse" style={{ height: `${(count / maxHeight) * 100}%` }}>
+                                                                            {tierOrderStackedBar.map(tier => {
+                                                                                const n = tiers[tier] || 0;
+                                                                                if (n === 0) return null;
+                                                                                return (
+                                                                                    <div key={tier} className={`w-full ${tierColors[tier]} min-h-[3px] transition-all duration-1000`} style={{ height: `${(n / totalTier) * 100}%` }} title={`${tier}: ${n}`} />
+                                                                                );
+                                                                            })}
+                                                                        </div>
+                                                                    ) : (
+                                                                        <div className="w-full bg-gradient-to-t from-blue-600 to-indigo-500 transition-all duration-1000" style={{ height: `${(count / maxHeight) * 100}%` }} />
+                                                                    )}
+                                                                </div>
+                                                                {totalTier > 0 && (
+                                                                    <div className="w-full space-y-1.5 pt-1">
+                                                                        {tierOrder.filter(t => (tiers[t] || 0) > 0).map(t => {
+                                                                            const current = tiers[t] || 0;
+                                                                            const max = slots[t];
+                                                                            const countLabel = max != null ? `${current}/${max}` : String(current);
+                                                                            return (
+                                                                                <div key={t} className="flex items-center justify-between gap-2 text-xs">
+                                                                                    <span className="flex items-center gap-1.5 font-medium text-slate-600 min-w-0">
+                                                                                        <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${tierColors[t]}`} />
+                                                                                        <span className="truncate">{t}</span>
+                                                                                    </span>
+                                                                                    <span className="font-bold text-slate-900 tabular-nums flex-shrink-0">{countLabel}</span>
+                                                                                </div>
+                                                                            );
+                                                                        })}
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
+                                                {Object.keys(displayDayTier[Object.keys(displayDayTier)[0]] || {}).length > 0 && (
+                                                    <div className="flex flex-wrap items-center gap-4 pt-4 border-t border-slate-200 justify-center text-xs font-semibold text-slate-600">
+                                                        {tierOrder.map(t => <span key={t} className="flex items-center gap-2"><span className={`w-3 h-3 rounded-full ${tierColors[t]}`} /> {t}</span>)}
+                                                        <span className="flex items-center gap-2 text-slate-400 font-medium"><span className="w-3 h-3 rounded border border-blue-200 bg-blue-50" /> Vacancies</span>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        );
+                                    })()}
+                                </div>
+                            </div>
+
+                            {/* Outreach Performance Over Time - line chart with metric filter */}
+                            <OutreachPerformanceLineChart timeline={stats.timeline} />
+
+                        </div>
+
+                        {/* Right Column - Flags */}
+                        <div className="space-y-8">
+                            {/* Flagged Items Mini */}
+                            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                                <div className="p-4 bg-red-50 border-b border-red-100 flex items-center justify-between">
+                                    <h3 className="text-[10px] font-bold text-red-600 uppercase tracking-widest flex items-center gap-2">
+                                        <FlagIcon className="w-3 h-3" />
+                                        Flagged
+                                    </h3>
+                                    <span className="text-[10px] font-bold text-red-600 px-1.5 py-0.5 bg-white rounded-md border border-red-100">{stats.flagged.length}</span>
+                                </div>
+                                <div className="p-2 space-y-2">
+                                    {stats.flagged.slice(0, 3).map(c => (
+                                        <div
+                                            key={c.id}
+                                            onClick={() => handleCompanyClick(c.id)}
+                                            className="p-3 hover:bg-slate-50 rounded-lg transition-colors cursor-pointer group"
+                                        >
+                                            <h4 className="text-xs font-bold text-slate-900 group-hover:text-blue-600 transition-colors uppercase tracking-tight">{c.companyName}</h4>
+                                            <p className="text-[10px] text-slate-500 mt-1 line-clamp-2 italic">"{c.remark || 'Attention required'}"</p>
+                                        </div>
+                                    ))}
+                                    {stats.flagged.length === 0 && (
+                                        <div className="py-8 text-center">
+                                            <CheckCircleIcon className="w-8 h-8 text-green-200 mx-auto mb-2" />
+                                            <p className="text-[10px] text-slate-400 font-medium tracking-tight">System All Clear</p>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
             )}
+
+            <style jsx>{`
+                .custom-scrollbar::-webkit-scrollbar {
+                    width: 4px;
+                }
+                .custom-scrollbar::-webkit-scrollbar-track {
+                    background: transparent;
+                }
+                .custom-scrollbar::-webkit-scrollbar-thumb {
+                    background: #e2e8f0;
+                    border-radius: 10px;
+                }
+            `}</style>
         </Layout>
     );
 }

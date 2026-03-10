@@ -48,9 +48,10 @@ export default function FlaggedItems({ companies, onCompanyClick }: FlaggedItems
         const colors: Record<string, string> = {
             'To Contact': 'bg-slate-100 text-slate-700',
             'Contacted': 'bg-blue-100 text-blue-700',
-            'Negotiating': 'bg-amber-100 text-amber-700',
-            'Closed': 'bg-green-100 text-green-700',
+            'Interested': 'bg-purple-100 text-purple-700',
+            'Registered': 'bg-green-100 text-green-700',
             'Rejected': 'bg-red-100 text-red-700',
+            'No Reply': 'bg-gray-100 text-gray-500',
         };
         return colors[status] || 'bg-slate-100 text-slate-700';
     };

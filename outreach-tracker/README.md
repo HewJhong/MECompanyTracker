@@ -29,8 +29,26 @@ To learn more about Next.js, take a look at the following resources:
 
 You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
 
-## Deploy on Vercel
+## Deployment
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+### Quick Update (Cloud Run)
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+To deploy the latest changes to Google Cloud Run, run the following command from the project root:
+
+```bash
+gcloud run deploy outreach-tracker \
+  --source . \
+  --project company-tracker-485803 \
+  --region us-central1 \
+  --allow-unauthenticated
+```
+
+### Deployment Guides
+
+For detailed information on the deployment process, configuration, and security, refer to:
+
+- [Cloud Run Deployment Guide](file:///Users/jinhong/Documents/My Projects/ME Company Tracker/docs/deployment/CLOUD_RUN_DEPLOYMENT.md)
+- [Outreach Tracker Deployment Plan](file:///Users/jinhong/Documents/My Projects/ME Company Tracker/docs/deployment/outreach_tracker_deployment_plan.md)
+- [Security Best Practices](file:///Users/jinhong/Documents/My Projects/ME Company Tracker/docs/deployment/SECURITY_BEST_PRACTICES.md)
+
+## Learn More

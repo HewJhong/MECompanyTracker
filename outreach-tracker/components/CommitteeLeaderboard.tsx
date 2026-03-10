@@ -7,6 +7,7 @@ interface CommitteeMember {
     contactedCount: number;
     totalAssigned: number;
     responseCount: number;
+    followUps: number;
 }
 
 interface CommitteeLeaderboardProps {
@@ -22,7 +23,7 @@ export default function CommitteeLeaderboard({ members }: CommitteeLeaderboardPr
     });
 
     // Find max progress for scaling
-    const maxProgress = Math.max(...sortedMembers.map(m => 
+    const maxProgress = Math.max(...sortedMembers.map(m =>
         m.totalAssigned > 0 ? (m.contactedCount / m.totalAssigned) * 100 : 0
     ), 1);
 
@@ -70,8 +71,8 @@ export default function CommitteeLeaderboard({ members }: CommitteeLeaderboardPr
             {/* Chart */}
             <div className="p-6 space-y-4">
                 {sortedMembers.map((member, index) => {
-                    const progress = member.totalAssigned > 0 
-                        ? Math.round((member.contactedCount / member.totalAssigned) * 100) 
+                    const progress = member.totalAssigned > 0
+                        ? Math.round((member.contactedCount / member.totalAssigned) * 100)
                         : 0;
                     const responseRate = member.contactedCount > 0
                         ? Math.round((member.responseCount / member.contactedCount) * 100)
@@ -117,7 +118,9 @@ export default function CommitteeLeaderboard({ members }: CommitteeLeaderboardPr
 
                             {/* Stats */}
                             <div className="flex items-center gap-4 mt-2 text-xs text-slate-500">
-                                <span>Response Rate: <span className="font-medium text-slate-700">{responseRate}%</span></span>
+                                <span>Response: <span className="font-medium text-slate-700">{responseRate}%</span></span>
+                                <span>•</span>
+                                <span>Follow Ups: <span className="font-medium text-blue-600">{member.followUps}</span></span>
                                 <span>•</span>
                                 <span>{member.responseCount} positive responses</span>
                             </div>
@@ -128,7 +131,7 @@ export default function CommitteeLeaderboard({ members }: CommitteeLeaderboardPr
 
             {/* Footer Stats */}
             <div className="px-6 py-4 bg-slate-50 border-t border-slate-200">
-                <div className="grid grid-cols-3 gap-4 text-center">
+                <div className="grid grid-cols-4 gap-4 text-center">
                     <div>
                         <p className="text-xs text-slate-600">Total Members</p>
                         <p className="text-lg font-bold text-slate-900">{members.length}</p>
@@ -143,6 +146,12 @@ export default function CommitteeLeaderboard({ members }: CommitteeLeaderboardPr
                         <p className="text-xs text-slate-600">Responses</p>
                         <p className="text-lg font-bold text-slate-900">
                             {members.reduce((sum, m) => sum + m.responseCount, 0)}
+                        </p>
+                    </div>
+                    <div>
+                        <p className="text-xs text-slate-600">Follow Ups</p>
+                        <p className="text-lg font-bold text-blue-600">
+                            {members.reduce((sum, m) => sum + m.followUps, 0)}
                         </p>
                     </div>
                 </div>

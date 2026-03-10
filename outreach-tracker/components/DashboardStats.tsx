@@ -10,7 +10,9 @@ interface StatsProps {
     totalCompanies: number;
     contactedCount: number;
     responseCount: number;
-    stalledCount: number;
+    committeeStalledCount: number;
+    companyStalledCount: number;
+    totalFollowUps: number;
     flaggedCount: number;
 }
 
@@ -18,16 +20,14 @@ export default function DashboardStats({
     totalCompanies,
     contactedCount,
     responseCount,
-    stalledCount,
+    committeeStalledCount,
+    companyStalledCount,
+    totalFollowUps,
     flaggedCount
 }: StatsProps) {
 
     const progressPercentage = totalCompanies > 0
         ? Math.round((contactedCount / totalCompanies) * 100)
-        : 0;
-
-    const responseRate = contactedCount > 0
-        ? Math.round((responseCount / contactedCount) * 100)
         : 0;
 
     const stats = [
@@ -46,40 +46,36 @@ export default function DashboardStats({
         },
         {
             id: 2,
-            title: 'Response Rate',
-            value: `${responseRate}%`,
-            subtitle: 'Replied',
-            detail: `${responseCount} positive responses`,
-            icon: ChatBubbleBottomCenterTextIcon,
-            iconBg: 'bg-green-100',
-            iconColor: 'text-green-600',
-            progressValue: Math.min(responseRate, 100),
-            progressColor: responseRate > 50 ? 'bg-green-500' : 'bg-yellow-500',
-            barBg: responseRate > 50 ? 'bg-green-50' : 'bg-yellow-50'
+            title: 'Committee Inactive',
+            value: committeeStalledCount.toString(),
+            subtitle: '7+ Days Silence',
+            detail: committeeStalledCount > 0 ? 'Internal Bottleneck' : 'No inaction detected',
+            icon: ClockIcon,
+            iconBg: 'bg-red-100',
+            iconColor: 'text-red-600',
+            badge: committeeStalledCount > 0 ? { text: 'Committee Stalled', color: 'bg-red-100 text-red-700' } : null
         },
         {
             id: 3,
-            title: 'Stalled',
-            value: stalledCount.toString(),
-            subtitle: 'Over 7 Days',
-            detail: stalledCount > 0 ? 'Needs attention' : 'All on track',
-            icon: ClockIcon,
+            title: 'Follow-ups Due',
+            value: companyStalledCount.toString(),
+            subtitle: 'Ready to Nudge',
+            detail: companyStalledCount > 0 ? 'Companies waiting' : 'All up to date',
+            icon: ChatBubbleBottomCenterTextIcon,
             iconBg: 'bg-amber-100',
             iconColor: 'text-amber-600',
-            badge: stalledCount > 0 ? { text: 'Action Required', color: 'bg-amber-100 text-amber-700' } : null
+            badge: companyStalledCount > 0 ? { text: 'Awaiting Reply', color: 'bg-amber-100 text-amber-700' } : null
         },
         {
             id: 4,
-            title: 'Flagged Items',
-            value: flaggedCount.toString(),
-            subtitle: 'Attention Requests',
-            detail: flaggedCount > 0 ? 'View details below' : 'No issues',
-            icon: FlagIcon,
-            iconBg: 'bg-red-100',
-            iconColor: 'text-red-600',
-            badge: flaggedCount > 0 
-                ? { text: `${flaggedCount} Pending`, color: 'bg-red-100 text-red-700' }
-                : { text: 'All Clear', color: 'bg-slate-100 text-slate-600' }
+            title: 'Total Effort',
+            value: totalFollowUps.toString(),
+            subtitle: 'Follow-ups',
+            detail: 'Successful nudges sent',
+            icon: ChartBarIcon,
+            iconBg: 'bg-indigo-100',
+            iconColor: 'text-indigo-600',
+            badge: { text: 'Cumulative', color: 'bg-indigo-100 text-indigo-700' }
         }
     ];
 

@@ -4,8 +4,10 @@
 @source "../components";
 
 :root {
-  --foreground-rgb: 15, 23, 42; /* slate-900 */
-  --background-rgb: 248, 250, 252; /* slate-50 */
+  --foreground-rgb: 15, 23, 42;
+  /* slate-900 */
+  --background-rgb: 248, 250, 252;
+  /* slate-50 */
 }
 
 /* Base Styles */
@@ -19,11 +21,13 @@ body {
 /* Smooth Scrolling */
 html {
   scroll-behavior: smooth;
+  overflow-y: scroll;
 }
 
 /* Focus Styles for Accessibility */
 *:focus-visible {
-  outline: 2px solid rgb(37, 99, 235); /* blue-600 */
+  outline: 2px solid rgb(37, 99, 235);
+  /* blue-600 */
   outline-offset: 2px;
 }
 
@@ -34,22 +38,27 @@ html {
 }
 
 ::-webkit-scrollbar-track {
-  background: rgb(241, 245, 249); /* slate-100 */
+  background: rgb(241, 245, 249);
+  /* slate-100 */
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgb(148, 163, 184); /* slate-400 */
+  background: rgb(148, 163, 184);
+  /* slate-400 */
   border-radius: 5px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgb(100, 116, 139); /* slate-500 */
+  background: rgb(100, 116, 139);
+  /* slate-500 */
 }
 
 /* Selection Styles */
 ::selection {
-  background-color: rgb(191, 219, 254); /* blue-200 */
-  color: rgb(30, 58, 138); /* blue-900 */
+  background-color: rgb(191, 219, 254);
+  /* blue-200 */
+  color: rgb(30, 58, 138);
+  /* blue-900 */
 }
 
 /* Animations */
@@ -58,6 +67,7 @@ html {
     transform: translateX(100%);
     opacity: 0;
   }
+
   to {
     transform: translateX(0);
     opacity: 1;
@@ -68,6 +78,7 @@ html {
   from {
     opacity: 0;
   }
+
   to {
     opacity: 1;
   }
@@ -96,7 +107,7 @@ html {
   body {
     background: white;
   }
-  
+
   .no-print {
     display: none !important;
   }
@@ -104,6 +115,7 @@ html {
 
 /* Reduced Motion */
 @media (prefers-reduced-motion: reduce) {
+
   *,
   *::before,
   *::after {

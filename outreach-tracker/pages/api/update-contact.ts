@@ -1,4 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { getServerSession } from 'next-auth/next';
+import { authOptions } from '../../lib/auth';
+import { getCommitteeMembers } from '../../lib/committee-members';
 import { getGoogleSheetsClient } from '../../lib/google-sheets';
 import { cache } from '../../lib/cache';
 
@@ -10,44 +13,53 @@ export default async function handler(
         return res.status(405).json({ message: 'Method not allowed' });
     }
 
-    const { rowNumber, updates, user, companyName } = req.body;
+    const session = await getServerSession(req, res, authOptions);
+    if (!session?.user?.email) {
+        return res.status(401).json({ message: 'Unauthorized' });
+    }
+    const members = await getCommitteeMembers();
+    const email = session.user.email.toLowerCase().trim();
+    const committeeUser = members.find(m => m.email.toLowerCase().trim() === email);
+    if (!committeeUser) {
+        return res.status(403).json({ message: 'Not authorized to modify data' });
+    }
 
-    if (!rowNumber || !user) {
+    const { rowNumber, updates, user, companyId, historyLog } = req.body;
+
+    if (!rowNumber || !user || !companyId) {
         return res.status(400).json({ message: 'Missing required fields' });
     }
 
     try {
         const sheets = await getGoogleSheetsClient();
-        const spreadsheetId = process.env.SPREADSHEET_ID;
+        const spreadsheetId = process.env.SPREADSHEET_ID_1;
+
+        if (!spreadsheetId) {
+            throw new Error('SPREADSHEET_ID_1 is not configured');
+        }
 
         const metadata = await sheets.spreadsheets.get({ spreadsheetId });
-        const sheetName = metadata.data.sheets?.[0].properties?.title;
+        const dbSheet = metadata.data.sheets?.find(s => s.properties?.title?.includes('[AUTOMATION ONLY]'));
+        const sheetName = dbSheet?.properties?.title || metadata.data.sheets?.[0].properties?.title;
 
-        // Map contact fields to columns
-        // G=6 (PIC Name), H=7 (Email), I=8 (Phone), K=10 (LinkedIn), M=12 (Remark)
         const CONTACT_COL_MAP: Record<string, string> = {
-            'picName': 'G',
+            'picName': 'F',
+            'role': 'G',
             'email': 'H',
             'phone': 'I',
             'linkedin': 'K',
-            'remark': 'M'
+            'remark': 'M',
+            'isActive': 'N'
         };
 
-        const valueUpdates = [];
-        const timestamp = new Date().toISOString();
+        const valueUpdates: any[] = [];
 
-        // Also update the "Last Updated" column (O=14) for this row
-        valueUpdates.push({
-            range: `${sheetName}!O${rowNumber}`,
-            values: [[timestamp]]
-        });
-
-        // Apply contact updates
         Object.entries(updates).forEach(([key, value]) => {
             if (CONTACT_COL_MAP[key]) {
+                const val = (key === 'isActive') ? (value ? 'TRUE' : 'FALSE') : value;
                 valueUpdates.push({
                     range: `${sheetName}!${CONTACT_COL_MAP[key]}${rowNumber}`,
-                    values: [[value]]
+                    values: [[val]]
                 });
             }
         });
@@ -62,20 +74,27 @@ export default async function handler(
             });
         }
 
-        // Log the change
-        const logSheetName = 'Logs_DoNotEdit';
-        const logValues = [
-            [timestamp, user, companyName || 'Unknown', JSON.stringify({ contactUpdate: updates, rowNumber }), '', '', 'Contact updated']
-        ];
+        const spreadsheetId2 = process.env.SPREADSHEET_ID_2;
+        if (spreadsheetId2) {
+            const timestamp = new Date().toISOString();
+            const logSheetName = 'Logs_DoNotEdit';
+            await sheets.spreadsheets.values.append({
+                spreadsheetId: spreadsheetId2,
+                range: `${logSheetName}!A:E`,
+                valueInputOption: 'USER_ENTERED',
+                requestBody: { values: [[timestamp, user, companyId, 'Contact Update', JSON.stringify(updates)]] }
+            });
 
-        await sheets.spreadsheets.values.append({
-            spreadsheetId,
-            range: `${logSheetName}!A:G`,
-            valueInputOption: 'USER_ENTERED',
-            requestBody: { values: logValues }
-        });
+            if (historyLog) {
+                await sheets.spreadsheets.values.append({
+                    spreadsheetId: spreadsheetId2,
+                    range: `Thread_History!A:D`,
+                    valueInputOption: 'USER_ENTERED',
+                    requestBody: { values: [[timestamp, companyId, user, historyLog]] }
+                });
+            }
+        }
 
-        // Invalidate Cache
         cache.delete('sheet_data');
 
         res.status(200).json({ success: true });

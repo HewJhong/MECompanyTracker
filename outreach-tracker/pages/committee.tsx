@@ -17,15 +17,24 @@ interface Company {
     history?: any[];
     discipline?: string;
     priority?: string;
+    lastCompanyActivity?: string;
+    previousResponse?: string;
 }
 
 export default function CommitteePage() {
     const router = useRouter();
-    const { user } = useCurrentUser();
+    const { user, loading: userLoading } = useCurrentUser();
     const [data, setData] = useState<Company[]>([]);
     const [loading, setLoading] = useState(true);
 
-    const currentUser = user?.name ?? 'Anonymous';
+    // Redirect to home if not authenticated
+    useEffect(() => {
+        if (!userLoading && !user) {
+            router.push('/');
+        }
+    }, [userLoading, user, router]);
+
+    const currentUser = user?.name ?? '';
 
     const fetchData = async () => {
         try {
@@ -52,6 +61,18 @@ export default function CommitteePage() {
             ? (Date.now() - new Date(company.lastUpdated).getTime()) / (1000 * 60 * 60 * 24)
             : 0;
 
+        // Warning Logic: Company Replied > Committee Contact > 3 Days
+        const replyNeeded = (() => {
+            if (!company.previousResponse) return false;
+
+            const lastCommitteeContactDate = company.lastCompanyActivity ? new Date(company.lastCompanyActivity).getTime() : 0;
+            const lastCompanyReplyDate = new Date(company.previousResponse).getTime();
+
+            const daysSinceReply = (Date.now() - lastCompanyReplyDate) / (1000 * 60 * 60 * 24);
+
+            return (lastCompanyReplyDate > lastCommitteeContactDate) && (daysSinceReply > 3);
+        })();
+
         return {
             id: company.id,
             name: company.companyName || company.name || '',
@@ -60,7 +81,8 @@ export default function CommitteePage() {
             email: company.contacts?.[0]?.email || '',
             lastUpdated: company.lastUpdated || '',
             isFlagged: company.isFlagged,
-            isStale: daysSinceUpdate > 7
+            isStale: daysSinceUpdate > 7,
+            replyNeeded
         };
     });
 
@@ -68,7 +90,7 @@ export default function CommitteePage() {
         router.push(`/companies/${encodeURIComponent(companyId)}`);
     };
 
-    if (loading) {
+    if (loading || userLoading) {
         return (
             <Layout title="My Workspace | Outreach Tracker">
                 <div className="flex flex-col items-center justify-center h-96">
@@ -94,21 +116,28 @@ export default function CommitteePage() {
                 </div>
             </div>
 
-            {!currentUser && (
-                <div className="mb-6 p-4 bg-amber-50 border border-amber-200 rounded-xl text-amber-800 text-sm">
-                    <p className="font-medium">No user set — assignments are filtered by your name.</p>
-                    <p className="mt-1 text-amber-700">
-                        Set <code className="bg-amber-100 px-1 rounded">NEXT_PUBLIC_CURRENT_USER_NAME</code> in your environment, or configure your profile in Settings. Once auth is deployed, this will use your signed-in identity.
+
+            {user && !user.isCommitteeMember && (
+                <div className="mb-6 p-6 bg-amber-50 border border-amber-200 rounded-xl">
+                    <h3 className="text-lg font-semibold text-amber-900 mb-2">Committee Workspace Not Available</h3>
+                    <p className="text-amber-800">
+                        You are signed in as <strong>{user.name || user.email}</strong>, but you don't have access to the committee workspace.
+                    </p>
+                    <p className="text-amber-700 mt-2 text-sm">
+                        This page is only available for committee members. If you believe this is an error, please contact the administrator.
                     </p>
                 </div>
             )}
 
+
             {/* Workspace Content */}
-            <CommitteeWorkspace
-                companies={transformedCompanies}
-                memberName={currentUser}
-                onCompanyClick={handleCompanyClick}
-            />
+            {user?.isCommitteeMember && (
+                <CommitteeWorkspace
+                    companies={transformedCompanies}
+                    memberName={currentUser}
+                    onCompanyClick={handleCompanyClick}
+                />
+            )}
         </Layout>
     );
 }

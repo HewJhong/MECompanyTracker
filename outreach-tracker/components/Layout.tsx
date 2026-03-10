@@ -22,14 +22,14 @@ interface LayoutProps {
 export default function Layout({ children, title = 'Outreach Tracker' }: LayoutProps) {
     const [sidebarOpen, setSidebarOpen] = useState(false);
     const router = useRouter();
-    const { user } = useCurrentUser();
+    const { user, effectiveIsAdmin, viewAsMember, setViewAsMember } = useCurrentUser();
 
-    const navigation = [
+    const navItems = [
         { name: 'Dashboard', href: '/', icon: HomeIcon, description: 'Command center overview' },
         { name: 'Committee Workspace', href: '/committee', icon: UsersIcon, description: 'My assignments' },
         { name: 'All Companies', href: '/companies', icon: TableCellsIcon, description: 'Master database' },
         { name: 'Analytics', href: '/analytics', icon: ChartBarIcon, description: 'Progress insights' },
-        { name: 'Settings', href: '/settings', icon: Cog6ToothIcon, description: 'Admin settings' },
+        ...(effectiveIsAdmin ? [{ name: 'Settings', href: '/settings', icon: Cog6ToothIcon, description: 'Admin settings' }] : []),
     ];
 
     return (
@@ -79,8 +79,10 @@ export default function Layout({ children, title = 'Outreach Tracker' }: LayoutP
                     <p className="px-3 text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
                         Main Menu
                     </p>
-                    {navigation.map((item) => {
-                        const isActive = router.pathname === item.href;
+                    {navItems.map((item) => {
+                        const isActive = item.href === '/'
+                            ? router.pathname === '/'
+                            : router.pathname.startsWith(item.href);
                         return (
                             <Link
                                 key={item.name}
@@ -127,9 +129,22 @@ export default function Layout({ children, title = 'Outreach Tracker' }: LayoutP
                 </div>
 
                 {/* User Profile */}
-                <div className="p-4 border-t border-slate-800/50">
-                    <Link href="/settings">
-                        <div className="flex items-center gap-3 p-3 bg-slate-800/30 rounded-xl hover:bg-slate-800/50 transition-colors cursor-pointer">
+                <div className="p-4 border-t border-slate-800/50 space-y-2">
+                    {effectiveIsAdmin ? (
+                        <Link href="/settings">
+                            <div className="flex items-center gap-3 p-3 bg-slate-800/30 rounded-xl hover:bg-slate-800/50 transition-colors cursor-pointer">
+                                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white text-sm font-bold ring-2 ring-slate-700">
+                                    {user?.name ? user.name.charAt(0).toUpperCase() : 'G'}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                    <p className="text-sm font-medium text-white truncate">{user?.name ?? 'Guest'}</p>
+                                    <p className="text-xs text-slate-400 truncate">{user?.role ?? 'Committee Member'}</p>
+                                </div>
+                                <Cog6ToothIcon className="w-5 h-5 text-slate-500" />
+                            </div>
+                        </Link>
+                    ) : (
+                        <div className="flex items-center gap-3 p-3 bg-slate-800/30 rounded-xl">
                             <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white text-sm font-bold ring-2 ring-slate-700">
                                 {user?.name ? user.name.charAt(0).toUpperCase() : 'G'}
                             </div>
@@ -137,9 +152,17 @@ export default function Layout({ children, title = 'Outreach Tracker' }: LayoutP
                                 <p className="text-sm font-medium text-white truncate">{user?.name ?? 'Guest'}</p>
                                 <p className="text-xs text-slate-400 truncate">{user?.role ?? 'Committee Member'}</p>
                             </div>
-                            <Cog6ToothIcon className="w-5 h-5 text-slate-500" />
                         </div>
-                    </Link>
+                    )}
+                    {user?.isAdmin && (
+                        <button
+                            type="button"
+                            onClick={() => setViewAsMember(!viewAsMember)}
+                            className="w-full text-left px-3 py-2 text-xs font-medium text-slate-400 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors"
+                        >
+                            {viewAsMember ? 'Exit member view' : 'View as member'}
+                        </button>
+                    )}
                 </div>
             </aside>
 
@@ -159,6 +182,18 @@ export default function Layout({ children, title = 'Outreach Tracker' }: LayoutP
 
                 {/* Page Content */}
                 <main className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto">
+                    {viewAsMember && user?.isAdmin && (
+                        <div className="max-w-[1600px] mx-auto mb-4 flex items-center justify-between gap-2 px-4 py-2 bg-amber-100 border border-amber-300 rounded-lg text-amber-800 text-sm">
+                            <span className="font-medium">Viewing as member</span>
+                            <button
+                                type="button"
+                                onClick={() => setViewAsMember(false)}
+                                className="font-medium text-amber-700 hover:text-amber-900 underline"
+                            >
+                                Exit member view
+                            </button>
+                        </div>
+                    )}
                     <div className="max-w-[1600px] mx-auto">
                         {children}
                     </div>

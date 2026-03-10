@@ -16,7 +16,9 @@ export async function getCommitteeMembers(): Promise<CommitteeMember[]> {
 
     try {
         const sheets = await getGoogleSheetsClient();
-        const spreadsheetId = process.env.SPREADSHEET_ID;
+        const spreadsheetId = process.env.SPREADSHEET_ID_2 || process.env.SPREADSHEET_ID_1 || process.env.SPREADSHEET_ID;
+        if (!spreadsheetId) throw new Error('No SPREADSHEET_ID configured');
+
         const response = await sheets.spreadsheets.values.get({
             spreadsheetId,
             range: `${SHEET_NAME}!A2:C`,
