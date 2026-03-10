@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/router';
 import Link from 'next/link';
 import Layout from '../../components/Layout';
@@ -16,7 +16,8 @@ import {
     ArrowPathIcon,
     ExclamationTriangleIcon,
     XMarkIcon,
-    ArrowUturnLeftIcon
+    ArrowUturnLeftIcon,
+    CalendarDaysIcon,
 } from '@heroicons/react/24/outline';
 import { CheckCircleIcon, XCircleIcon, ClockIcon as ClockIconSolid } from '@heroicons/react/24/solid';
 import { useCurrentUser } from '../../contexts/CurrentUserContext';
@@ -25,6 +26,7 @@ import ConfirmModal from '../../components/ConfirmModal';
 import InteractionSection from '../../components/InteractionSection';
 import { disciplineToDisplay, disciplineToDatabase, disciplineOptions } from '../../lib/discipline-mapping';
 import { priorityToDisplay, priorityToDatabase, priorityOptions } from '../../lib/priority-mapping';
+import { formatTime } from '../../lib/schedule-calculator';
 
 interface Contact {
     id: string;
@@ -36,6 +38,7 @@ interface Contact {
     linkedin?: string;
     remark?: string;
     isActive?: boolean;
+    activeMethods?: string;
 }
 
 interface HistoryEntry {
@@ -76,10 +79,10 @@ const sponsorshipTierOptions = ['Official Partner', 'Gold', 'Silver', 'Bronze'];
 
 export default function CompanyDetailPage() {
     const router = useRouter();
-    const { id } = router.query;
-    const { user } = useCurrentUser();
+    const { id, from } = router.query;
+    const { user, effectiveIsAdmin } = useCurrentUser();
     const currentUser = user?.name ?? 'Committee Member';
-    const canEdit = user?.isCommitteeMember === true;
+    const canEdit = user?.canEditCompanies === true;
 
     const [company, setCompany] = useState<Company | null>(null);
     const [loading, setLoading] = useState(true);
@@ -100,6 +103,12 @@ export default function CompanyDetailPage() {
     const [companyResponseDate, setCompanyResponseDate] = useState('');
     const [daysAttending, setDaysAttending] = useState('');
     const [channel, setChannel] = useState('');
+    const [scheduledDate, setScheduledDate] = useState<string>('');
+    const [scheduledTime, setScheduledTime] = useState<string>('');
+    const [outreachScheduleDate, setOutreachScheduleDate] = useState('');
+    const [outreachScheduleTime, setOutreachScheduleTime] = useState('');
+    const [isFetchingScheduleSlot, setIsFetchingScheduleSlot] = useState(false);
+    const [isSettingSchedule, setIsSettingSchedule] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
     const [successMessage, setSuccessMessage] = useState('');
     const [showAddContact, setShowAddContact] = useState(false);
@@ -210,6 +219,120 @@ export default function CompanyDetailPage() {
         if (user) fetchCommitteeMembers();
     }, [companyId, user]);
 
+    // Fetch email schedule for this company (admin schedule section)
+    const fetchScheduleForCompany = useCallback(async () => {
+        if (!company?.id) return;
+        try {
+            const res = await fetch('/api/email-schedule');
+            if (!res.ok) return;
+            const json = await res.json();
+            const entries = (json.entries || []) as { companyId: string; date: string; time: string }[];
+            const entry = entries.find((e: { companyId: string }) => e.companyId === company.id);
+            if (entry) {
+                setScheduledDate(entry.date);
+                setScheduledTime(entry.time);
+                setOutreachScheduleDate(entry.date);
+                setOutreachScheduleTime(entry.time);
+            } else {
+                setScheduledDate('');
+                setScheduledTime('');
+            }
+        } catch {
+            setScheduledDate('');
+            setScheduledTime('');
+        }
+    }, [company?.id]);
+
+    useEffect(() => {
+        if (company?.id && effectiveIsAdmin) fetchScheduleForCompany();
+    }, [company?.id, effectiveIsAdmin, fetchScheduleForCompany]);
+
+    // When admin changes outreach date, fetch next available start time
+    useEffect(() => {
+        if (!outreachScheduleDate || !effectiveIsAdmin) return;
+        setIsFetchingScheduleSlot(true);
+        fetch(`/api/email-schedule/available-slots?date=${outreachScheduleDate}`)
+            .then(res => res.ok ? res.json() : {})
+            .then(json => {
+                if (json.nextStartTime) setOutreachScheduleTime(json.nextStartTime);
+            })
+            .finally(() => setIsFetchingScheduleSlot(false));
+    }, [outreachScheduleDate, effectiveIsAdmin]);
+
+    const handleSetOutreachSchedule = useCallback(async () => {
+        if (!company || !effectiveIsAdmin || !outreachScheduleDate || !outreachScheduleTime) return;
+        const pic = assignedTo?.trim();
+        if (!pic || pic === 'Unassigned') {
+            showError('Assign PIC first', 'Please assign this company to a committee member before setting the outreach schedule.');
+            return;
+        }
+        setIsSettingSchedule(true);
+        const taskId = addTask('Setting outreach schedule...');
+        try {
+            const schedRes = await fetch('/api/email-schedule');
+            const schedJson = await schedRes.json();
+            const entries = (schedJson.entries || []) as { companyId: string; date: string }[];
+            const existingDates = [...new Set(entries.filter((e: { companyId: string }) => e.companyId === company.id).map((e: { date: string }) => e.date))];
+            for (const date of existingDates) {
+                await fetch('/api/email-schedule', {
+                    method: 'DELETE',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ companyIds: [company.id], date }),
+                });
+            }
+            await fetch('/api/email-schedule', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    companyIds: [company.id],
+                    companyNames: { [company.id]: company.companyName || company.name || company.id },
+                    pic,
+                    date: outreachScheduleDate,
+                    startTime: outreachScheduleTime,
+                }),
+            });
+            setScheduledDate(outreachScheduleDate);
+            setScheduledTime(outreachScheduleTime);
+            completeTask(taskId, 'Outreach schedule set');
+            fetchScheduleForCompany();
+        } catch (err) {
+            console.error('Set schedule failed', err);
+            failTask(taskId, 'Failed to set schedule');
+        } finally {
+            setIsSettingSchedule(false);
+        }
+    }, [company, effectiveIsAdmin, outreachScheduleDate, outreachScheduleTime, assignedTo, addTask, completeTask, failTask, showError, fetchScheduleForCompany]);
+
+    const handleClearOutreachSchedule = useCallback(async () => {
+        if (!company || !effectiveIsAdmin) return;
+        setIsSettingSchedule(true);
+        const taskId = addTask('Clearing outreach schedule...');
+        try {
+            const schedRes = await fetch('/api/email-schedule');
+            const schedJson = await schedRes.json();
+            const entries = (schedJson.entries || []) as { companyId: string; date: string }[];
+            const datesToClear = [...new Set(entries.filter((e: { companyId: string }) => e.companyId === company.id).map((e: { date: string }) => e.date))];
+            for (const date of datesToClear) {
+                await fetch('/api/email-schedule', {
+                    method: 'DELETE',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ companyIds: [company.id], date }),
+                });
+            }
+            setScheduledDate('');
+            setScheduledTime('');
+            setOutreachScheduleDate('');
+            setOutreachScheduleTime('');
+            completeTask(taskId, 'Schedule cleared');
+            fetchScheduleForCompany();
+        } catch (err) {
+            console.error('Clear schedule failed', err);
+            failTask(taskId, 'Failed to clear schedule');
+        } finally {
+            setIsSettingSchedule(false);
+        }
+    }, [company, effectiveIsAdmin, addTask, completeTask, failTask, fetchScheduleForCompany]);
+
     const handleConfirmNavigation = () => {
         setHasUnsavedChanges(false);
         setShowNavigationModal(false);
@@ -278,18 +401,21 @@ export default function CompanyDetailPage() {
 
     const isCommitteeStalled = company?.lastUpdated ? (Date.now() - new Date(company.lastUpdated).getTime()) / (1000 * 60 * 60 * 24) > 7 : false;
     const isCompanyStalled = lastCompanyActivity ? (Date.now() - new Date(lastCompanyActivity).getTime()) / (1000 * 60 * 60 * 24) > 7 : false;
+    // Follow-up due: only show when status is Contacted and it's been at least 3 days since last committee contact (lastContact = when we last contacted them)
+    const lastCommitteeContactDate = company?.lastContact || '';
+    const isFollowUpDue = company?.status === 'Contacted' && lastCommitteeContactDate && (Date.now() - new Date(lastCommitteeContactDate).getTime()) / (1000 * 60 * 60 * 24) >= 3;
 
     // Warning Logic: Company Replied > Committee Contact > 3 Days
     const needsReplyWarning = (() => {
         if (!company?.previousResponse) return false;
 
-        const lastCommitteeContactDate = company.lastCompanyActivity ? new Date(company.lastCompanyActivity).getTime() : 0;
+        const lastCommitteeContactTime = company.lastContact ? new Date(company.lastContact).getTime() : 0;
         const lastCompanyReplyDate = new Date(company.previousResponse).getTime();
 
         const daysSinceReply = (Date.now() - lastCompanyReplyDate) / (1000 * 60 * 60 * 24);
 
         // Return true if company replied AFTER we last contacted them AND it's been > 3 days
-        return (lastCompanyReplyDate > lastCommitteeContactDate) && (daysSinceReply > 3);
+        return (lastCompanyReplyDate > lastCommitteeContactTime) && (daysSinceReply > 3);
     })();
 
     // Success messages now shown via background tasks only
@@ -369,7 +495,7 @@ export default function CompanyDetailPage() {
         if (!company) return;
 
         const previousCompanyState = { ...company };
-        const remarkText = `[System] Follow-up counter reset by user`;
+        const remarkText = `[User Update]: Follow-up counter reset`;
 
         const performSave = async () => {
             setCompany({ ...company, followUpsCompleted: 0 });
@@ -518,12 +644,12 @@ export default function CompanyDetailPage() {
         // If there are changes, append them to remark or use them as remark
         let finalRemark = remarks.trim();
         if (changes.length > 0) {
-            const auditLog = `[System Update]: ${changes.join(', ')}`;
+            const auditLog = `[Company Update]: ${changes.join(', ')}`;
             finalRemark = finalRemark ? `${finalRemark}\n\n${auditLog}` : auditLog;
         } else if (!finalRemark) {
             // No changes and no remark? Maybe just saving name?
             if (company.companyName !== editedName) {
-                finalRemark = `[System Update]: Name changed: ${company.companyName} → ${editedName}`;
+                finalRemark = `[Company Update]: Name changed: ${company.companyName} → ${editedName}`;
             }
         }
 
@@ -684,7 +810,7 @@ export default function CompanyDetailPage() {
                             changes.push(`Active: ${originalContact.isActive} → ${updates.isActive}`);
 
                         return changes.length > 0
-                            ? `Updated contact ${originalContact.name}: ${changes.join(', ')}`
+                            ? `[Contact Update]: ${originalContact.name} - ${changes.join(', ')}`
                             : undefined; // Return undefined to skip logging if no real changes
                     })()
                 })
@@ -726,9 +852,34 @@ export default function CompanyDetailPage() {
                 // Errors handled in handleUpdateContact
             }
         } else if (newContact.name) {
-            console.log('Add contact:', newContact);
-            setNewContact({ name: '', phone: '', email: '', role: '', linkedin: '', remark: '', isActive: false });
-            setShowAddContact(false);
+            const taskId = addTask(`Adding new contact ${newContact.name}...`);
+            try {
+                const res = await fetch('/api/add-contact', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        companyId: company?.id,
+                        companyName: company?.companyName || company?.name,
+                        discipline: company?.discipline || '',
+                        contact: newContact,
+                        user: currentUser,
+                        historyLog: `[Contact Added]: ${newContact.name} (${newContact.role || 'No role'})`
+                    })
+                });
+
+                if (res.ok) {
+                    fetchData(true);
+                    completeTask(taskId, 'Contact added successfully');
+                    setNewContact({ name: '', phone: '', email: '', role: '', linkedin: '', remark: '', isActive: false });
+                    setShowAddContact(false);
+                } else {
+                    throw new Error('Failed to add contact');
+                }
+            } catch (error) {
+                console.error('Error adding contact:', error);
+                failTask(taskId, 'Failed to add contact');
+                showError("Add Contact Failed", "Could not add the new contact.");
+            }
         }
     };
 
@@ -804,6 +955,113 @@ export default function CompanyDetailPage() {
         }
     };
 
+    const handleClearAllContactMethods = async (targetContact: Contact) => {
+        if (!company || !targetContact.rowNumber) return;
+
+        const previousCompanyState = { ...company };
+
+        // Optimistic update
+        const updatedContacts = (company.contacts || []).map((c: any) => {
+            if (c.rowNumber === targetContact.rowNumber) {
+                return {
+                    ...c,
+                    activeMethods: '',
+                    isActive: false
+                };
+            }
+            return c;
+        });
+
+        setCompany({ ...company, contacts: updatedContacts });
+
+        const taskId = addTask(`Removing ${targetContact.name} from currently contacting...`);
+
+        try {
+            const res = await fetch('/api/set-primary-contact', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    companyId: company.id,
+                    rowNumber: targetContact.rowNumber,
+                    method: 'all',  // Using 'all' to signal clear-all
+                    isMethodActive: false,
+                    user: currentUser
+                })
+            });
+
+            if (res.ok) {
+                fetchData(true);
+                completeTask(taskId, `${targetContact.name} removed from currently contacting`);
+            } else {
+                throw new Error('Failed to clear contact methods');
+            }
+        } catch (error) {
+            console.error('Error clearing contact methods:', error);
+            failTask(taskId, 'Failed to update contact');
+            showError('Update Failed', 'Could not update the contact. Reverting...');
+            setCompany(previousCompanyState);
+        }
+    };
+
+    const handleToggleContactMethod = async (targetContact: Contact, method: string, isMethodActive: boolean) => {
+        if (!company || !targetContact.rowNumber) return;
+
+        const previousCompanyState = { ...company };
+
+        // Optimistic update
+        const updatedContacts = (company.contacts || []).map((c: any) => {
+            if (c.rowNumber === targetContact.rowNumber) {
+                const currentMethods = c.activeMethods ? c.activeMethods.split(',') : [];
+                let newMethods = [...currentMethods];
+
+                if (isMethodActive) {
+                    if (!newMethods.includes(method)) newMethods.push(method);
+                } else {
+                    newMethods = newMethods.filter((m: string) => m !== method);
+                }
+
+                return {
+                    ...c,
+                    activeMethods: newMethods.join(','),
+                    isActive: newMethods.length > 0
+                };
+            }
+            return c;
+        });
+
+        setCompany({ ...company, contacts: updatedContacts });
+
+        const label = isMethodActive ? `Marking ${method} as active for ${targetContact.name}...` : `Removing ${method} for ${targetContact.name}...`;
+        const taskId = addTask(label);
+
+        try {
+            const res = await fetch('/api/set-primary-contact', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    companyId: company.id,
+                    rowNumber: targetContact.rowNumber,
+                    method,
+                    isMethodActive,
+                    user: currentUser
+                })
+            });
+
+            if (res.ok) {
+                fetchData(true);
+                completeTask(taskId, isMethodActive ? `${method} marked active for ${targetContact.name}` : `${method} removed`);
+            } else {
+                throw new Error('Failed to update contact method');
+            }
+        } catch (error) {
+            console.error('Error toggling contact method:', error);
+            failTask(taskId, 'Failed to update contact');
+            showError('Update Failed', 'Could not update the contact. Reverting...');
+            setCompany(previousCompanyState);
+        }
+    };
+
+
     const handleRevert = () => {
         if (company) {
             setEditedName(company.companyName || company.name || '');
@@ -866,11 +1124,11 @@ export default function CompanyDetailPage() {
                     <h2 className="text-xl font-semibold text-slate-900 mb-2">Company not found</h2>
                     <p className="text-slate-600 mb-6">The company you're looking for may have been removed or the link is invalid.</p>
                     <Link
-                        href="/companies"
+                        href={from === 'committee' ? '/committee' : '/companies'}
                         className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
                     >
                         <ArrowLeftIcon className="w-4 h-4" />
-                        Back to All Companies
+                        {from === 'committee' ? 'Back to Workspace' : 'Back to All Companies'}
                     </Link>
                 </div>
             </Layout>
@@ -888,11 +1146,11 @@ export default function CompanyDetailPage() {
             <div className="max-w-4xl mx-auto">
                 {/* Back link */}
                 <Link
-                    href="/companies"
+                    href={from === 'committee' ? '/committee' : '/companies'}
                     className="inline-flex items-center gap-2 text-sm font-medium text-slate-600 hover:text-slate-900 mb-6"
                 >
                     <ArrowLeftIcon className="w-4 h-4" />
-                    Back to All Companies
+                    {from === 'committee' ? 'Back to Workspace' : 'Back to All Companies'}
                 </Link>
 
                 {/* Header */}
@@ -936,7 +1194,7 @@ export default function CompanyDetailPage() {
                                         ACTION NEEDED
                                     </span>
                                 )}
-                                {isCompanyStalled && company.status === 'Contacted' && (
+                                {isFollowUpDue && (
                                     <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-100 text-amber-700 text-xs font-bold border border-amber-200">
                                         <ClockIcon className="w-3 h-3" />
                                         FOLLOW-UP DUE
@@ -946,6 +1204,12 @@ export default function CompanyDetailPage() {
                                     <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-red-100 text-red-700 text-xs font-bold border border-red-200 animate-pulse">
                                         <ExclamationTriangleIcon className="w-3 h-3" />
                                         REPLY OVERDUE
+                                    </span>
+                                )}
+                                {scheduledDate && scheduledTime && (
+                                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-indigo-100 text-indigo-700 text-xs font-medium border border-indigo-200">
+                                        <CalendarDaysIcon className="w-3 h-3" />
+                                        {scheduledDate} {formatTime(scheduledTime)}
                                     </span>
                                 )}
                             </div>
@@ -1029,14 +1293,20 @@ export default function CompanyDetailPage() {
                             {/* Channel */}
                             <div>
                                 <label htmlFor="channel" className="block text-sm font-medium text-slate-700 mb-2 font-semibold">Outreach Channel</label>
-                                <input
-                                    type="text"
+                                <select
                                     id="channel"
                                     value={channel}
                                     onChange={(e) => setChannel(e.target.value)}
-                                    placeholder="e.g. LinkedIn, Email, Phone"
                                     className="w-full px-4 py-2 bg-white border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all text-slate-900"
-                                />
+                                >
+                                    <option value="">-- Select Channel --</option>
+                                    <option value="Email">Email</option>
+                                    <option value="LinkedIn">LinkedIn</option>
+                                    <option value="Phone">Phone</option>
+                                    <option value="WhatsApp">WhatsApp</option>
+                                    <option value="In-person">In-person</option>
+                                    <option value="Other">Other</option>
+                                </select>
                             </div>
 
                             {/* Sponsorship Tier - Show when status is Interested or Registered */}
@@ -1224,6 +1494,70 @@ export default function CompanyDetailPage() {
                                     </select>
                                 </div>
                             </div>
+
+                            {/* Outreach schedule - Admin only */}
+                            {effectiveIsAdmin && (
+                                <div className="pt-4 border-t border-slate-200">
+                                    <div className="flex items-center gap-2 mb-3">
+                                        <CalendarDaysIcon className="w-5 h-5 text-indigo-600" aria-hidden />
+                                        <label className="block text-sm font-medium text-slate-700">Outreach schedule</label>
+                                    </div>
+                                    {scheduledDate && scheduledTime ? (
+                                        <div className="flex flex-wrap items-center gap-3 mb-3">
+                                            <span className="text-sm text-slate-600">
+                                                Scheduled: <strong>{scheduledDate}</strong> at {formatTime(scheduledTime)}
+                                            </span>
+                                            <button
+                                                type="button"
+                                                onClick={handleClearOutreachSchedule}
+                                                disabled={isSettingSchedule}
+                                                className="text-sm font-medium text-red-600 hover:text-red-700 disabled:opacity-50"
+                                            >
+                                                Clear schedule
+                                            </button>
+                                        </div>
+                                    ) : null}
+                                    <div className="flex flex-wrap items-center gap-3">
+                                        <div className="flex flex-col gap-0.5">
+                                            <label className="text-xs text-slate-500">Date</label>
+                                            <input
+                                                type="date"
+                                                value={outreachScheduleDate}
+                                                min={new Date().toISOString().slice(0, 10)}
+                                                onChange={e => setOutreachScheduleDate(e.target.value)}
+                                                className="px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                                            />
+                                        </div>
+                                        {outreachScheduleDate && (
+                                            <div className="flex flex-col gap-0.5">
+                                                <label className="text-xs text-slate-500 flex items-center gap-1">
+                                                    Time
+                                                    {isFetchingScheduleSlot && <span className="text-slate-400 text-[10px]">(loading…)</span>}
+                                                </label>
+                                                <input
+                                                    type="time"
+                                                    value={outreachScheduleTime}
+                                                    onChange={e => setOutreachScheduleTime(e.target.value)}
+                                                    className="px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                                                />
+                                            </div>
+                                        )}
+                                        <div className="flex items-end gap-2">
+                                            <button
+                                                type="button"
+                                                onClick={handleSetOutreachSchedule}
+                                                disabled={isSettingSchedule || !outreachScheduleDate || !outreachScheduleTime || !assignedTo?.trim() || assignedTo === 'Unassigned'}
+                                                className="px-3 py-1.5 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                                            >
+                                                {isSettingSchedule ? 'Setting…' : 'Set schedule'}
+                                            </button>
+                                        </div>
+                                    </div>
+                                    {(!assignedTo?.trim() || assignedTo === 'Unassigned') && (
+                                        <p className="mt-2 text-xs text-slate-500">Assign the company to a committee member above before setting the schedule.</p>
+                                    )}
+                                </div>
+                            )}
                         </div>
                     )}
 
@@ -1291,15 +1625,7 @@ export default function CompanyDetailPage() {
                                         onChange={(e) => setNewContact({ ...newContact, remark: e.target.value })}
                                         className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 h-20 resize-none"
                                     />
-                                    <label className="flex items-center gap-2 cursor-pointer">
-                                        <input
-                                            type="checkbox"
-                                            checked={newContact.isActive}
-                                            onChange={(e) => setNewContact({ ...newContact, isActive: e.target.checked })}
-                                            className="w-4 h-4 text-green-600 border-gray-300 rounded focus:ring-green-500"
-                                        />
-                                        <span className="text-sm text-slate-700">Mark as active contact (will receive emails)</span>
-                                    </label>
+
                                     <div className="flex gap-2">
                                         <button
                                             type="button"
@@ -1324,45 +1650,103 @@ export default function CompanyDetailPage() {
                                     <div
                                         key={contact.id}
                                         className={`p-4 border rounded-lg transition-colors group ${contact.isActive
-                                            ? 'bg-amber-50 border-amber-200'
-                                            : 'border-slate-200 hover:border-blue-300'
+                                            ? 'bg-blue-50 border-blue-200'
+                                            : 'border-slate-200 hover:border-slate-300'
                                             }`}
                                     >
                                         <div className="flex items-start justify-between">
                                             <div className="flex-1">
-                                                <div className="flex items-center gap-2">
+                                                <div className="flex items-center gap-2 flex-wrap">
                                                     <h4 className="font-semibold text-slate-900">{contact.name}</h4>
                                                     {contact.role && <span className="text-xs text-slate-500 py-0.5 px-2 bg-slate-100 rounded-full">{contact.role}</span>}
-                                                    {contact.isActive && <span className="text-xs text-green-700 py-0.5 px-2 bg-green-100 rounded-full font-medium">Active</span>}
+                                                    {contact.isActive && (
+                                                        <span className="inline-flex items-center gap-1 text-xs text-blue-700 py-0.5 pl-2 pr-1 bg-blue-100 rounded-full font-medium">
+                                                            Currently Contacting
+                                                            {canEdit && (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => handleClearAllContactMethods(contact)}
+                                                                    className="ml-0.5 p-0.5 hover:bg-blue-200 rounded-full transition-colors"
+                                                                    title="Remove from currently contacting"
+                                                                >
+                                                                    <XMarkIcon className="w-3 h-3" />
+                                                                </button>
+                                                            )}
+                                                        </span>
+                                                    )}
                                                 </div>
-                                                <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2">
-                                                    {contact.phone && <div className="text-sm text-slate-600 flex items-center gap-1"><PhoneIcon className="w-3.5 h-3.5" />{contact.phone}</div>}
-                                                    {contact.email && <div className="text-sm text-slate-600 flex items-center gap-1"><EnvelopeIcon className="w-3.5 h-3.5" />{contact.email}</div>}
+                                                <div className="flex flex-wrap gap-x-6 gap-y-2 mt-2">
+                                                    {contact.phone && (
+                                                        <div className="flex items-center gap-1.5 group/method">
+                                                            <div className={`text-sm flex items-center gap-1 ${contact.activeMethods?.includes('phone') ? 'text-amber-700 font-medium' : 'text-slate-600'}`}>
+                                                                <PhoneIcon className="w-4 h-4" />{contact.phone}
+                                                            </div>
+                                                            {canEdit && (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => handleToggleContactMethod(contact, 'phone', !contact.activeMethods?.includes('phone'))}
+                                                                    className={`p-1 rounded flex items-center justify-center transition-all ${contact.activeMethods?.includes('phone')
+                                                                        ? 'text-amber-600 bg-amber-100 hover:bg-amber-200 opacity-100'
+                                                                        : 'text-slate-400 hover:text-amber-600 hover:bg-amber-50 opacity-0 group-hover/method:opacity-100'
+                                                                        }`}
+                                                                    title={contact.activeMethods?.includes('phone') ? "Remove phone from active" : "Mark phone as active method"}
+                                                                >
+                                                                    <svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+                                                                        <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
+                                                                    </svg>
+                                                                </button>
+                                                            )}
+                                                        </div>
+                                                    )}
+                                                    {contact.email && (
+                                                        <div className="flex items-center gap-1.5 group/method">
+                                                            <div className={`text-sm flex items-center gap-1 ${contact.activeMethods?.includes('email') ? 'text-amber-700 font-medium' : 'text-slate-600'}`}>
+                                                                <EnvelopeIcon className="w-4 h-4" />{contact.email}
+                                                            </div>
+                                                            {canEdit && (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => handleToggleContactMethod(contact, 'email', !contact.activeMethods?.includes('email'))}
+                                                                    className={`p-1 rounded flex items-center justify-center transition-all ${contact.activeMethods?.includes('email')
+                                                                        ? 'text-amber-600 bg-amber-100 hover:bg-amber-200 opacity-100'
+                                                                        : 'text-slate-400 hover:text-amber-600 hover:bg-amber-50 opacity-0 group-hover/method:opacity-100'
+                                                                        }`}
+                                                                    title={contact.activeMethods?.includes('email') ? "Remove email from active" : "Mark email as active method"}
+                                                                >
+                                                                    <svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+                                                                        <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
+                                                                    </svg>
+                                                                </button>
+                                                            )}
+                                                        </div>
+                                                    )}
                                                 </div>
                                                 {contact.remark && <p className="text-xs text-slate-500 mt-2 italic">"{contact.remark}"</p>}
                                             </div>
-                                            {canEdit && (
-                                                <div className="flex gap-1">
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => startEditingContact(contact)}
-                                                        className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg opacity-0 group-hover:opacity-100"
-                                                        title="Edit Contact"
-                                                    >
-                                                        <PencilSquareIcon className="w-5 h-5" />
-                                                    </button>
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => handleDeleteContact(contact)}
-                                                        className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg opacity-0 group-hover:opacity-100"
-                                                        title="Delete Contact"
-                                                    >
-                                                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                                                        </svg>
-                                                    </button>
-                                                </div>
-                                            )}
+                                            <div className="flex gap-1">
+                                                {canEdit && (
+                                                    <>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => startEditingContact(contact)}
+                                                            className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg opacity-0 group-hover:opacity-100"
+                                                            title="Edit Contact"
+                                                        >
+                                                            <PencilSquareIcon className="w-5 h-5" />
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleDeleteContact(contact)}
+                                                            className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg opacity-0 group-hover:opacity-100"
+                                                            title="Delete Contact"
+                                                        >
+                                                            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                                            </svg>
+                                                        </button>
+                                                    </>
+                                                )}
+                                            </div>
                                         </div>
                                     </div>
                                 ))}

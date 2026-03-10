@@ -4,6 +4,8 @@ import { authOptions } from '../../lib/auth';
 import { getCommitteeMembers } from '../../lib/committee-members';
 import { getGoogleSheetsClient } from '../../lib/google-sheets';
 import { cache } from '../../lib/cache';
+import { syncDailyStats } from '../../lib/daily-stats';
+import { deleteEmailScheduleEntriesForCompanies } from '../../lib/email-schedule';
 
 export default async function handler(
     req: NextApiRequest,
@@ -20,7 +22,9 @@ export default async function handler(
     const members = await getCommitteeMembers();
     const email = session.user.email.toLowerCase().trim();
     const committeeUser = members.find(m => m.email.toLowerCase().trim() === email);
-    if (!committeeUser) {
+    const roleLower = committeeUser?.role?.toLowerCase() || '';
+    const canEditCompanies = committeeUser && (roleLower === 'admin' || roleLower === 'member' || roleLower === 'committee member');
+    if (!canEditCompanies) {
         return res.status(403).json({ message: 'Not authorized to modify data' });
     }
 
@@ -136,7 +140,7 @@ export default async function handler(
         const DB_MAP: Record<string, string> = {
             'companyName': 'B',
             'discipline': 'C',
-            'priority': 'D'
+            'targetSponsorshipTier': 'D'
         };
 
         dbRowIndices.forEach(rowIndex => {
@@ -188,6 +192,19 @@ export default async function handler(
         }
 
         cache.delete('sheet_data');
+
+        // When we record that the scheduled email was sent (first outreach or follow-up), clear that company from the email schedule so the slot is freed for the next round
+        const recordedContact = updates.status === 'Contacted' || updates.hasOwnProperty('followUpsCompleted') || updates.lastContact;
+        if (recordedContact) {
+            try {
+                await deleteEmailScheduleEntriesForCompanies([companyId]);
+            } catch (scheduleErr) {
+                console.warn('Could not clear email schedule for company after contact update:', scheduleErr);
+            }
+        }
+
+        // Sync daily stats after any updates
+        await syncDailyStats(sheets, spreadsheetId2);
 
         // Verify: Fetch the updated status and follow-up count to confirm save
         const verifyRange = await sheets.spreadsheets.values.get({

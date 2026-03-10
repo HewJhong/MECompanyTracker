@@ -13,7 +13,8 @@ import {
     ArrowRightIcon,  // Import added
     ExclamationTriangleIcon, // Import added
     QueueListIcon,    // Import added
-    XMarkIcon
+    XMarkIcon,
+    AdjustmentsHorizontalIcon // Import added
 } from '@heroicons/react/24/solid';
 import { useCurrentUser } from '../contexts/CurrentUserContext';
 import DuplicateMergeModal from '../components/DuplicateMergeModal';
@@ -21,7 +22,7 @@ import AdminRoute from '../components/AdminRoute';
 
 function SettingsContent() {
     const { user } = useCurrentUser();
-    const [activeTab, setActiveTab] = useState<'profile' | 'notifications' | 'security' | 'appearance' | 'data'>('profile');
+    const [activeTab, setActiveTab] = useState<'profile' | 'notifications' | 'security' | 'appearance' | 'data' | 'limits'>('profile');
     const [saving, setSaving] = useState(false);
     const [saved, setSaved] = useState(false);
 
@@ -56,6 +57,16 @@ function SettingsContent() {
     const [importingResponses, setImportingResponses] = useState(false);
     const [importResult, setImportResult] = useState<{ success: boolean; message: string; stats?: any } | null>(null);
 
+    // Row Reorder States
+    const [reordering, setReordering] = useState(false);
+    const [reorderResult, setReorderResult] = useState<{ success: boolean; message: string } | null>(null);
+
+    // Limits States
+    const [limits, setLimits] = useState<any[]>([]);
+    const [loadingLimits, setLoadingLimits] = useState(false);
+    const [savingLimits, setSavingLimits] = useState(false);
+    const [limitsResult, setLimitsResult] = useState<{ success: boolean; message: string } | null>(null);
+
     const [profile, setProfile] = useState({
         name: '',
         email: '',
@@ -73,6 +84,27 @@ function SettingsContent() {
             }));
         }
     }, [user]);
+
+    // Fetch limits when tab becomes active
+    useEffect(() => {
+        if (activeTab === 'limits' && limits.length === 0) {
+            const fetchLimits = async () => {
+                setLoadingLimits(true);
+                try {
+                    const res = await fetch('/api/limits');
+                    const data = await res.json();
+                    if (data.limits) {
+                        setLimits(data.limits);
+                    }
+                } catch (error) {
+                    console.error('Failed to fetch limits', error);
+                } finally {
+                    setLoadingLimits(false);
+                }
+            };
+            fetchLimits();
+        }
+    }, [activeTab, limits.length]);
 
     // ... (rest of state initializers unchanged) ...
     // Notification settings
@@ -250,7 +282,7 @@ function SettingsContent() {
                     stats
                 });
             } else {
-                setImportResult({ success: false, message: data.message || 'Failed to import responses.' });
+                setImportResult({ success: false, message: data.message || 'Import failed.' });
             }
         } catch (error) {
             setImportResult({ success: false, message: 'An error occurred during import.' });
@@ -259,12 +291,64 @@ function SettingsContent() {
         }
     };
 
+    const handleReorderRows = async () => {
+        setReordering(true);
+        setReorderResult(null);
+        try {
+            const res = await fetch('/api/reorder-rows', { method: 'POST' });
+            const data = await res.json();
+            if (data.success) {
+                setReorderResult({
+                    success: true,
+                    message: data.message
+                });
+            } else {
+                setReorderResult({ success: false, message: data.message || 'Reorder failed.' });
+            }
+        } catch (error) {
+            setReorderResult({ success: false, message: 'An error occurred during reordering.' });
+        } finally {
+            setReordering(false);
+        }
+    };
+
+    const handleSaveLimits = async () => {
+        setSavingLimits(true);
+        setLimitsResult(null);
+        try {
+            const cleanLimits = limits.map(l => ({
+                ...l,
+                total: l.total === '' ? 0 : Number(l.total),
+                daily: l.daily === '' ? 0 : Number(l.daily)
+            }));
+
+            const res = await fetch('/api/limits', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ limits: cleanLimits })
+            });
+            const data = await res.json();
+            if (data.success) {
+                setLimitsResult({ success: true, message: 'Limits saved successfully.' });
+            } else {
+                setLimitsResult({ success: false, message: data.message || 'Failed to save limits.' });
+            }
+        } catch (error) {
+            setLimitsResult({ success: false, message: 'An error occurred while saving.' });
+        } finally {
+            setSavingLimits(false);
+            // Hide message after 3s
+            setTimeout(() => setLimitsResult(null), 3000);
+        }
+    };
+
     const tabs = [
         { id: 'profile', label: 'Profile', icon: UserCircleIcon },
         { id: 'notifications', label: 'Notifications', icon: BellIcon },
         { id: 'security', label: 'Security', icon: ShieldCheckIcon },
         { id: 'appearance', label: 'Appearance', icon: PaintBrushIcon },
-        { id: 'data', label: 'Data Management', icon: CircleStackIcon } // New Tab
+        { id: 'data', label: 'Data Management', icon: CircleStackIcon }, // New Tab
+        { id: 'limits', label: 'Sponsorship Limits', icon: AdjustmentsHorizontalIcon } // New Tab
     ];
 
     return (
@@ -344,18 +428,6 @@ function SettingsContent() {
                                         />
                                     </div>
 
-                                    <div>
-                                        <label htmlFor="role" className="block text-sm font-medium text-slate-700 mb-2">
-                                            Role
-                                        </label>
-                                        <input
-                                            type="text"
-                                            id="role"
-                                            value={profile.role}
-                                            onChange={(e) => setProfile({ ...profile, role: e.target.value })}
-                                            className="w-full px-4 py-2.5 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                                        />
-                                    </div>
 
                                     <div>
                                         <label htmlFor="timezone" className="block text-sm font-medium text-slate-700 mb-2">
@@ -778,6 +850,44 @@ function SettingsContent() {
                                         </div>
                                     </div>
 
+                                    {/* Reorder Rows */}
+                                    <div className="p-4 bg-slate-50 border border-slate-200 rounded-lg">
+                                        <div className="flex items-start gap-3">
+                                            <div className="p-2 bg-indigo-100 rounded-lg">
+                                                <svg className="w-6 h-6 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4h13M3 8h9m-9 4h6m4 0l4-4m0 0l4 4m-4-4v12" />
+                                                </svg>
+                                            </div>
+                                            <div className="flex-1">
+                                                <div className="flex justify-between items-start">
+                                                    <div>
+                                                        <h3 className="text-base font-medium text-slate-900">Reorder Rows</h3>
+                                                        <p className="text-sm text-slate-600 mt-1">
+                                                            Sort all rows in the Database sheet by Company ID to keep it organized (especially after adding new contacts).
+                                                        </p>
+                                                    </div>
+                                                    <button
+                                                        onClick={handleReorderRows}
+                                                        disabled={reordering}
+                                                        className="px-3 py-1.5 text-sm bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50"
+                                                    >
+                                                        {reordering ? 'Reordering...' : 'Reorder Rows'}
+                                                    </button>
+                                                </div>
+
+                                                {/* Reorder Result */}
+                                                {reorderResult && (
+                                                    <div className={`mt-4 p-3 rounded-lg text-sm ${reorderResult.success
+                                                        ? 'bg-green-50 text-green-700 border border-green-200'
+                                                        : 'bg-red-50 text-red-700 border border-red-200'
+                                                        }`}>
+                                                        <p className="font-medium">{reorderResult.message}</p>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+
                                     {/* Duplicate Management */}
                                     <div className="p-4 bg-slate-50 border border-slate-200 rounded-lg">
                                         <div className="flex items-start gap-3">
@@ -1122,8 +1232,95 @@ function SettingsContent() {
                             </div>
                         )}
 
-                        {/* Save Button (Hide for Data tab if no general settings to save there) */}
-                        {activeTab !== 'data' && (
+                        {/* Limits Tab */}
+                        {activeTab === 'limits' && (
+                            <div className="p-6 space-y-6">
+                                <div>
+                                    <h2 className="text-xl font-semibold text-slate-900 mb-1">Sponsorship Limits</h2>
+                                    <p className="text-sm text-slate-600">Set maximum capacities for total and daily companies accommodated by tier.</p>
+                                </div>
+
+                                <div className="space-y-4">
+                                    {loadingLimits ? (
+                                        <div className="flex justify-center p-8">
+                                            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                                        </div>
+                                    ) : (
+                                        <div className="overflow-x-auto rounded-lg border border-slate-200">
+                                            <table className="min-w-full divide-y divide-slate-200">
+                                                <thead className="bg-slate-50">
+                                                    <tr>
+                                                        <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Tier</th>
+                                                        <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Total Limit</th>
+                                                        <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Daily Limit</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody className="bg-white divide-y divide-slate-200">
+                                                    {limits.map((limit, index) => (
+                                                        <tr key={limit.tier}>
+                                                            <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-slate-900">{limit.tier}</td>
+                                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500">
+                                                                <input
+                                                                    type="number"
+                                                                    min="0"
+                                                                    value={limit.total}
+                                                                    onChange={(e) => {
+                                                                        const newLimits = [...limits];
+                                                                        const val = e.target.value;
+                                                                        newLimits[index].total = val === '' ? '' : (parseInt(val, 10) || 0);
+                                                                        setLimits(newLimits);
+                                                                    }}
+                                                                    className="w-full sm:w-24 px-3 py-1.5 border border-slate-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                                                />
+                                                            </td>
+                                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500">
+                                                                <input
+                                                                    type="number"
+                                                                    min="0"
+                                                                    value={limit.daily}
+                                                                    onChange={(e) => {
+                                                                        const newLimits = [...limits];
+                                                                        const val = e.target.value;
+                                                                        newLimits[index].daily = val === '' ? '' : (parseInt(val, 10) || 0);
+                                                                        setLimits(newLimits);
+                                                                    }}
+                                                                    className="w-full sm:w-24 px-3 py-1.5 border border-slate-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                                                />
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    )}
+
+                                    {limitsResult && (
+                                        <div className={`p-4 rounded-md text-sm ${limitsResult.success ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+                                            {limitsResult.message}
+                                        </div>
+                                    )}
+
+                                    <div className="flex justify-end pt-4">
+                                        <button
+                                            onClick={handleSaveLimits}
+                                            disabled={loadingLimits || savingLimits}
+                                            className="inline-flex items-center gap-2 px-4 py-2.5 bg-blue-600 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                                        >
+                                            {savingLimits && (
+                                                <svg className="animate-spin h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
+                                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                                </svg>
+                                            )}
+                                            {savingLimits ? 'Saving...' : 'Save Limits'}
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Save Button (Hide for Data and Limits tabs as they have their own save mechanisms) */}
+                        {activeTab !== 'data' && activeTab !== 'limits' && (
                             <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-3">
                                 {saved && (
                                     <div className="flex items-center gap-2 text-green-700">

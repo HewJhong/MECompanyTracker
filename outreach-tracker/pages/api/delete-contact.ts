@@ -20,7 +20,9 @@ export default async function handler(
     const members = await getCommitteeMembers();
     const email = session.user.email.toLowerCase().trim();
     const committeeUser = members.find(m => m.email.toLowerCase().trim() === email);
-    if (!committeeUser) {
+    const roleLower = committeeUser?.role?.toLowerCase() || '';
+    const canEditCompanies = committeeUser && (roleLower === 'admin' || roleLower === 'member' || roleLower === 'committee member');
+    if (!canEditCompanies) {
         return res.status(403).json({ message: 'Not authorized to modify data' });
     }
 
@@ -45,7 +47,7 @@ export default async function handler(
 
         const rowData = await sheets.spreadsheets.values.get({
             spreadsheetId,
-            range: `${sheetName}!A${rowNumber}:N${rowNumber}`,
+            range: `${sheetName}!A${rowNumber}:O${rowNumber}`,
         });
 
         const values = rowData.data.values?.[0] || [];
@@ -66,23 +68,42 @@ export default async function handler(
             isActive: values[13] || ''
         };
 
-        await sheets.spreadsheets.batchUpdate({
+        const companyColA = await sheets.spreadsheets.values.get({
             spreadsheetId,
-            requestBody: {
-                requests: [
-                    {
-                        deleteDimension: {
-                            range: {
-                                sheetId: sheetId,
-                                dimension: 'ROWS',
-                                startIndex: rowNumber - 1,
-                                endIndex: rowNumber,
+            range: `${sheetName}!A:A`,
+        });
+        const allIds = companyColA.data.values || [];
+        const companyRowCount = allIds.filter(r => r[0] === companyId).length;
+
+        if (companyRowCount > 1) {
+            await sheets.spreadsheets.batchUpdate({
+                spreadsheetId,
+                requestBody: {
+                    requests: [
+                        {
+                            deleteDimension: {
+                                range: {
+                                    sheetId: sheetId,
+                                    dimension: 'ROWS',
+                                    startIndex: rowNumber - 1,
+                                    endIndex: rowNumber,
+                                },
                             },
                         },
-                    },
-                ],
-            },
-        });
+                    ],
+                },
+            });
+        } else {
+            // Last row for this company — clear contact fields (F:P) to preserve the company base row
+            await sheets.spreadsheets.values.update({
+                spreadsheetId,
+                range: `${sheetName}!F${rowNumber}:P${rowNumber}`,
+                valueInputOption: 'USER_ENTERED',
+                requestBody: {
+                    values: [['', '', '', '', '', '', '', '', 'FALSE', '', '']],
+                },
+            });
+        }
 
         const spreadsheetId2 = process.env.SPREADSHEET_ID_2;
         if (spreadsheetId2) {

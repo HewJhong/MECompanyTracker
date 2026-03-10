@@ -19,6 +19,8 @@ interface Company {
     priority?: string;
     lastCompanyActivity?: string;
     previousResponse?: string;
+    followUpsCompleted?: number;
+    lastContact?: string;
 }
 
 export default function CommitteePage() {
@@ -26,6 +28,8 @@ export default function CommitteePage() {
     const { user, loading: userLoading } = useCurrentUser();
     const [data, setData] = useState<Company[]>([]);
     const [loading, setLoading] = useState(true);
+    // scheduleMap: companyId → { date, time }
+    const [scheduleMap, setScheduleMap] = useState<Record<string, { date: string; time: string }>>({});
 
     // Redirect to home if not authenticated
     useEffect(() => {
@@ -38,9 +42,22 @@ export default function CommitteePage() {
 
     const fetchData = async () => {
         try {
-            const res = await fetch('/api/data');
-            const responseData = await res.json();
+            const [dataRes, schedRes] = await Promise.all([
+                fetch('/api/data'),
+                fetch('/api/email-schedule'),
+            ]);
+            const responseData = await dataRes.json();
             setData(responseData.companies || []);
+
+            if (schedRes.ok) {
+                const schedData = await schedRes.json();
+                const map: Record<string, { date: string; time: string }> = {};
+                (schedData.entries || []).forEach((e: { companyId: string; date: string; time: string }) => {
+                    map[e.companyId] = { date: e.date, time: e.time };
+                });
+                setScheduleMap(map);
+            }
+
             setLoading(false);
         } catch (err) {
             console.error('Failed to load data', err);
@@ -73,21 +90,39 @@ export default function CommitteePage() {
             return (lastCompanyReplyDate > lastCommitteeContactDate) && (daysSinceReply > 3);
         })();
 
+        const scheduled = scheduleMap[company.id];
+
         return {
             id: company.id,
             name: company.companyName || company.name || '',
             status: company.status,
-            contact: company.contacts?.[0]?.picName || '',
+            followUpsCompleted: company.followUpsCompleted ?? 0,
+            lastContact: company.lastContact || '',
+            previousResponse: company.previousResponse || '',
+            contact: (() => {
+                const active = company.contacts?.filter((c: any) => c.isActive) || [];
+                if (active.length > 0) {
+                    return active.map((c: any) => {
+                        let iconStr = '';
+                        if (c.activeMethods?.includes('phone')) iconStr += '📱';
+                        if (c.activeMethods?.includes('email')) iconStr += '✉️';
+                        return `${c.name}${iconStr ? ` ${iconStr}` : ''}`;
+                    }).join(' & ');
+                }
+                return company.contacts?.[0]?.name || '';
+            })(),
             email: company.contacts?.[0]?.email || '',
             lastUpdated: company.lastUpdated || '',
             isFlagged: company.isFlagged,
             isStale: daysSinceUpdate > 7,
-            replyNeeded
+            replyNeeded,
+            scheduledTime: scheduled?.time,
+            scheduledDate: scheduled?.date,
         };
     });
 
     const handleCompanyClick = (companyId: string) => {
-        router.push(`/companies/${encodeURIComponent(companyId)}`);
+        router.push(`/companies/${encodeURIComponent(companyId)}?from=committee`);
     };
 
     if (loading || userLoading) {
@@ -136,6 +171,7 @@ export default function CommitteePage() {
                     companies={transformedCompanies}
                     memberName={currentUser}
                     onCompanyClick={handleCompanyClick}
+                    onRefresh={fetchData}
                 />
             )}
         </Layout>

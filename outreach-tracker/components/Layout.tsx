@@ -8,10 +8,12 @@ import {
     Bars3Icon,
     XMarkIcon,
     ChartBarIcon,
-    BellIcon
+    ArrowRightOnRectangleIcon,
+    CalendarDaysIcon,
 } from '@heroicons/react/24/outline';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
+import { signOut } from 'next-auth/react';
 import { useCurrentUser } from '../contexts/CurrentUserContext';
 
 interface LayoutProps {
@@ -29,7 +31,10 @@ export default function Layout({ children, title = 'Outreach Tracker' }: LayoutP
         { name: 'Committee Workspace', href: '/committee', icon: UsersIcon, description: 'My assignments' },
         { name: 'All Companies', href: '/companies', icon: TableCellsIcon, description: 'Master database' },
         { name: 'Analytics', href: '/analytics', icon: ChartBarIcon, description: 'Progress insights' },
-        ...(effectiveIsAdmin ? [{ name: 'Settings', href: '/settings', icon: Cog6ToothIcon, description: 'Admin settings' }] : []),
+        ...(effectiveIsAdmin ? [
+            { name: 'Email Schedule', href: '/email-schedule', icon: CalendarDaysIcon, description: 'Email send schedule' },
+            { name: 'Settings', href: '/settings', icon: Cog6ToothIcon, description: 'Admin settings' },
+        ] : []),
     ];
 
     return (
@@ -75,7 +80,7 @@ export default function Layout({ children, title = 'Outreach Tracker' }: LayoutP
                 </div>
 
                 {/* Navigation */}
-                <nav className="p-4 space-y-2 flex-1 overflow-y-auto">
+                <nav className="p-4 space-y-2 flex-1 overflow-y-auto overflow-x-hidden">
                     <p className="px-3 text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
                         Main Menu
                     </p>
@@ -107,26 +112,6 @@ export default function Layout({ children, title = 'Outreach Tracker' }: LayoutP
                         );
                     })}
                 </nav>
-
-                {/* Quick Stats */}
-                <div className="p-4 mx-4 mb-4 bg-slate-800/50 rounded-xl border border-slate-700/50">
-                    <div className="flex items-center justify-between mb-2">
-                        <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
-                            Quick Stats
-                        </p>
-                        <BellIcon className="w-4 h-4 text-slate-500" />
-                    </div>
-                    <div className="space-y-2">
-                        <div className="flex items-center justify-between text-sm">
-                            <span className="text-slate-400">Active Today</span>
-                            <span className="font-bold text-green-400">12</span>
-                        </div>
-                        <div className="flex items-center justify-between text-sm">
-                            <span className="text-slate-400">Pending</span>
-                            <span className="font-bold text-amber-400">5</span>
-                        </div>
-                    </div>
-                </div>
 
                 {/* User Profile */}
                 <div className="p-4 border-t border-slate-800/50 space-y-2">
@@ -163,6 +148,14 @@ export default function Layout({ children, title = 'Outreach Tracker' }: LayoutP
                             {viewAsMember ? 'Exit member view' : 'View as member'}
                         </button>
                     )}
+                    <button
+                        type="button"
+                        onClick={() => signOut({ callbackUrl: '/' })}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium text-slate-400 hover:text-white hover:bg-red-500/10 hover:text-red-400 rounded-lg transition-colors"
+                    >
+                        <ArrowRightOnRectangleIcon className="w-5 h-5 flex-shrink-0" />
+                        <span className="flex-1 text-left">Log out</span>
+                    </button>
                 </div>
             </aside>
 

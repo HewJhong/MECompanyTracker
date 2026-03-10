@@ -26,70 +26,80 @@ export default async function handler(
         return res.status(403).json({ message: 'Not authorized to modify data' });
     }
 
-    const { rowNumber, updates, user, companyId, historyLog } = req.body;
+    const { companyId, companyName, discipline, contact, user, historyLog } = req.body;
 
-    if (!rowNumber || !user || !companyId) {
+    if (!companyId || !contact || !contact.name) {
         return res.status(400).json({ message: 'Missing required fields' });
     }
 
     try {
         const sheets = await getGoogleSheetsClient();
-        const spreadsheetId = process.env.SPREADSHEET_ID_1;
+        const databaseSpreadsheetId = process.env.SPREADSHEET_ID_1;
+        const trackerSpreadsheetId = process.env.SPREADSHEET_ID_2;
 
-        if (!spreadsheetId) {
+        if (!databaseSpreadsheetId) {
             throw new Error('SPREADSHEET_ID_1 is not configured');
         }
 
-        const metadata = await sheets.spreadsheets.get({ spreadsheetId });
+        const metadata = await sheets.spreadsheets.get({ spreadsheetId: databaseSpreadsheetId });
         const dbSheet = metadata.data.sheets?.find(s => s.properties?.title?.includes('[AUTOMATION ONLY]'));
         const sheetName = dbSheet?.properties?.title || metadata.data.sheets?.[0].properties?.title;
 
-        const CONTACT_COL_MAP: Record<string, string> = {
-            'picName': 'F',
-            'role': 'G',
-            'email': 'H',
-            'phone': 'I',
-            'linkedin': 'K',
-            'remark': 'M',
-            'isActive': 'N'
-        };
+        // Fetch existing company rows to get exact mapping if needed, or just append with provided data
+        // For consistency, we try to put empty placeholders for data we don't have for contacts
+        // Database Schema:
+        // A: ID
+        // B: Company Name
+        // C: Discipline
+        // D: Target Sponsorship Tier
+        // E: Priority
+        // F: PIC Name
+        // G: Role
+        // H: Email
+        // I: Phone
+        // J: Landline
+        // K: LinkedIn
+        // L: Reference
+        // M: Remark
+        // N: Is_Active
 
-        const valueUpdates: any[] = [];
+        const newRow = [
+            companyId,
+            companyName || '',
+            discipline || '',
+            '', // Target Sponsorship Tier
+            '', // Priority
+            contact.name.trim(),
+            contact.role?.trim() || '',
+            contact.email?.trim() || '',
+            contact.phone?.trim() || '',
+            '', // Landline
+            contact.linkedin?.trim() || '',
+            '', // Reference
+            contact.remark?.trim() || '',
+            contact.isActive ? 'TRUE' : 'FALSE'
+        ];
 
-        Object.entries(updates).forEach(([key, value]) => {
-            if (CONTACT_COL_MAP[key]) {
-                const val = (key === 'isActive') ? (value ? 'TRUE' : 'FALSE') : value;
-                valueUpdates.push({
-                    range: `${sheetName}!${CONTACT_COL_MAP[key]}${rowNumber}`,
-                    values: [[val]]
-                });
-            }
+        await sheets.spreadsheets.values.append({
+            spreadsheetId: databaseSpreadsheetId,
+            range: `${sheetName}!A:N`,
+            valueInputOption: 'USER_ENTERED',
+            requestBody: { values: [newRow] }
         });
 
-        if (valueUpdates.length > 0) {
-            await sheets.spreadsheets.values.batchUpdate({
-                spreadsheetId,
-                requestBody: {
-                    valueInputOption: 'USER_ENTERED',
-                    data: valueUpdates
-                }
-            });
-        }
-
-        const spreadsheetId2 = process.env.SPREADSHEET_ID_2;
-        if (spreadsheetId2) {
+        if (trackerSpreadsheetId) {
             const timestamp = new Date().toISOString();
             const logSheetName = 'Logs_DoNotEdit';
             await sheets.spreadsheets.values.append({
-                spreadsheetId: spreadsheetId2,
+                spreadsheetId: trackerSpreadsheetId,
                 range: `${logSheetName}!A:E`,
                 valueInputOption: 'USER_ENTERED',
-                requestBody: { values: [[timestamp, user, companyId, 'Contact Update', JSON.stringify(updates)]] }
+                requestBody: { values: [[timestamp, user, companyId, 'Contact Added', JSON.stringify(contact)]] }
             });
 
             if (historyLog) {
                 await sheets.spreadsheets.values.append({
-                    spreadsheetId: spreadsheetId2,
+                    spreadsheetId: trackerSpreadsheetId,
                     range: `Thread_History!A:D`,
                     valueInputOption: 'USER_ENTERED',
                     requestBody: { values: [[timestamp, companyId, user, historyLog]] }
@@ -102,7 +112,7 @@ export default async function handler(
         res.status(200).json({ success: true });
 
     } catch (error) {
-        console.error('Contact Update Error:', error);
-        res.status(500).json({ message: 'Update Failed' });
+        console.error('Contact Add Error:', error);
+        res.status(500).json({ message: 'Add Contact Failed' });
     }
 }

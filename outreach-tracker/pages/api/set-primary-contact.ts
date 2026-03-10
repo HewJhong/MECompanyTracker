@@ -26,9 +26,9 @@ export default async function handler(
         return res.status(403).json({ message: 'Not authorized to modify data' });
     }
 
-    const { rowNumber, updates, user, companyId, historyLog } = req.body;
+    const { companyId, rowNumber, method, isMethodActive, user } = req.body;
 
-    if (!rowNumber || !user || !companyId) {
+    if (!companyId || !rowNumber || !method || isMethodActive === undefined || !user) {
         return res.status(400).json({ message: 'Missing required fields' });
     }
 
@@ -44,57 +44,50 @@ export default async function handler(
         const dbSheet = metadata.data.sheets?.find(s => s.properties?.title?.includes('[AUTOMATION ONLY]'));
         const sheetName = dbSheet?.properties?.title || metadata.data.sheets?.[0].properties?.title;
 
-        const CONTACT_COL_MAP: Record<string, string> = {
-            'picName': 'F',
-            'role': 'G',
-            'email': 'H',
-            'phone': 'I',
-            'linkedin': 'K',
-            'remark': 'M',
-            'isActive': 'N'
-        };
+        // Get current activeMethods to append/remove correctly
+        const dbResponse = await sheets.spreadsheets.values.get({
+            spreadsheetId,
+            range: `${sheetName}!O${rowNumber}`
+        });
+        const currentMethodsStr = dbResponse.data.values?.[0]?.[0] || '';
+        let currentMethods = currentMethodsStr ? currentMethodsStr.split(',') : [];
 
-        const valueUpdates: any[] = [];
+        if (isMethodActive) {
+            if (!currentMethods.includes(method)) currentMethods.push(method);
+        } else {
+            if (method === 'all') {
+                currentMethods = [];
+            } else {
+                currentMethods = currentMethods.filter((m: string) => m !== method);
+            }
+        }
 
-        Object.entries(updates).forEach(([key, value]) => {
-            if (CONTACT_COL_MAP[key]) {
-                const val = (key === 'isActive') ? (value ? 'TRUE' : 'FALSE') : value;
-                valueUpdates.push({
-                    range: `${sheetName}!${CONTACT_COL_MAP[key]}${rowNumber}`,
-                    values: [[val]]
-                });
+        const newMethodsStr = currentMethods.join(',');
+        const newIsActive = currentMethods.length > 0;
+
+        await sheets.spreadsheets.values.batchUpdate({
+            spreadsheetId,
+            requestBody: {
+                valueInputOption: 'USER_ENTERED',
+                data: [
+                    { range: `${sheetName}!N${rowNumber}`, values: [[newIsActive ? 'TRUE' : 'FALSE']] },
+                    { range: `${sheetName}!O${rowNumber}`, values: [[newMethodsStr]] }
+                ]
             }
         });
-
-        if (valueUpdates.length > 0) {
-            await sheets.spreadsheets.values.batchUpdate({
-                spreadsheetId,
-                requestBody: {
-                    valueInputOption: 'USER_ENTERED',
-                    data: valueUpdates
-                }
-            });
-        }
 
         const spreadsheetId2 = process.env.SPREADSHEET_ID_2;
         if (spreadsheetId2) {
             const timestamp = new Date().toISOString();
-            const logSheetName = 'Logs_DoNotEdit';
+            const action = isMethodActive
+                ? `Marked ${method} as currently contacting (row ${rowNumber})`
+                : `Unmarked ${method} as currently contacting (row ${rowNumber})`;
             await sheets.spreadsheets.values.append({
                 spreadsheetId: spreadsheetId2,
-                range: `${logSheetName}!A:E`,
+                range: `Thread_History!A:D`,
                 valueInputOption: 'USER_ENTERED',
-                requestBody: { values: [[timestamp, user, companyId, 'Contact Update', JSON.stringify(updates)]] }
+                requestBody: { values: [[timestamp, companyId, user, action]] }
             });
-
-            if (historyLog) {
-                await sheets.spreadsheets.values.append({
-                    spreadsheetId: spreadsheetId2,
-                    range: `Thread_History!A:D`,
-                    valueInputOption: 'USER_ENTERED',
-                    requestBody: { values: [[timestamp, companyId, user, historyLog]] }
-                });
-            }
         }
 
         cache.delete('sheet_data');
@@ -102,7 +95,7 @@ export default async function handler(
         res.status(200).json({ success: true });
 
     } catch (error) {
-        console.error('Contact Update Error:', error);
-        res.status(500).json({ message: 'Update Failed' });
+        console.error('Set Primary Contact Error:', error);
+        res.status(500).json({ message: 'Failed to update contact' });
     }
 }

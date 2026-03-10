@@ -1,31 +1,21 @@
-require('dotenv').config({ path: '.env.local' });
 const { google } = require('googleapis');
+require('dotenv').config({ path: '.env.local' });
 
-async function listSheets() {
-    try {
-        const auth = new google.auth.GoogleAuth({
-            credentials: {
-                client_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
-                private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
-            },
-            scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-        });
+async function main() {
+  const auth = new google.auth.GoogleAuth({
+    credentials: JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON),
+    scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
+  });
 
-        const sheets = google.sheets({ version: 'v4', auth });
-        const spreadsheetId = process.env.SPREADSHEET_ID_2;
+  const sheets = google.sheets({ version: 'v4', auth });
+  
+  console.log("Tracker Spreadsheet:");
+  const res2 = await sheets.spreadsheets.get({ spreadsheetId: process.env.SPREADSHEET_ID_2 });
+  res2.data.sheets.forEach(s => console.log(' - ' + s.properties.title));
 
-        if (!spreadsheetId) {
-            console.error('SPREADSHEET_ID_2 not found in .env.local');
-            return;
-        }
-
-        const metadata = await sheets.spreadsheets.get({ spreadsheetId });
-        const sheetNames = metadata.data.sheets.map(s => s.properties.title);
-
-        console.log('Available Sheets:', sheetNames);
-    } catch (error) {
-        console.error('Error:', error);
-    }
+  console.log("\nDatabase Spreadsheet:");
+  const res1 = await sheets.spreadsheets.get({ spreadsheetId: process.env.SPREADSHEET_ID_1 });
+  res1.data.sheets.forEach(s => console.log(' - ' + s.properties.title));
 }
 
-listSheets();
+main().catch(console.error);

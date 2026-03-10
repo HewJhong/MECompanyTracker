@@ -5,6 +5,7 @@ import { getCommitteeMembers } from '../../lib/committee-members';
 import { getGoogleSheetsClient } from '../../lib/google-sheets';
 import { cache } from '../../lib/cache';
 import { disciplineToDatabase } from '../../lib/discipline-mapping';
+import { syncDailyStats } from '../../lib/daily-stats';
 
 export default async function handler(
     req: NextApiRequest,
@@ -21,7 +22,9 @@ export default async function handler(
     const members = await getCommitteeMembers();
     const email = session.user.email.toLowerCase().trim();
     const committeeUser = members.find(m => m.email.toLowerCase().trim() === email);
-    if (!committeeUser) {
+    const roleLower = committeeUser?.role?.toLowerCase() || '';
+    const canEditCompanies = committeeUser && (roleLower === 'admin' || roleLower === 'member' || roleLower === 'committee member');
+    if (!canEditCompanies) {
         return res.status(403).json({ message: 'Not authorized to modify data' });
     }
 
@@ -133,6 +136,11 @@ export default async function handler(
 
         // 7. Clear cache to force refresh
         cache.clear();
+
+        // 8. Sync daily stats
+        if (trackerSpreadsheetId) {
+            await syncDailyStats(sheets, trackerSpreadsheetId);
+        }
 
         console.log(`✅ Successfully created company ${newCompanyId}: ${companyName}`);
 

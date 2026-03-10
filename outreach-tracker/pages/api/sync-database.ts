@@ -1,6 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getGoogleSheetsClient } from '../../lib/google-sheets';
 import { cache } from '../../lib/cache';
+import { syncDailyStats } from '../../lib/daily-stats';
 
 export default async function handler(
     req: NextApiRequest,
@@ -321,9 +322,10 @@ export default async function handler(
             console.log(`${preview ? '[PREVIEW] ' : ''}Removed ${duplicatesToRemove.length} duplicate rows.`);
         }
 
-        // 5. Invalidate Cache
+        // 5. Invalidate Cache and sync daily stats
         if (!preview) {
             cache.delete('sheet_data');
+            await syncDailyStats(sheets, trackerSpreadsheetId);
         }
 
         return res.status(200).json({

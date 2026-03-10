@@ -7,8 +7,10 @@ import {
     ChevronDownIcon,
     EyeIcon,
     FlagIcon,
-    XMarkIcon
+    XMarkIcon,
+    ClockIcon,
 } from '@heroicons/react/24/outline';
+import { formatTime } from '../lib/schedule-calculator';
 
 interface Company {
     id: string;
@@ -22,6 +24,8 @@ interface Company {
     discipline?: string;
     targetSponsorshipTier?: string;
     followUpsCompleted?: number;
+    scheduledDate?: string;
+    scheduledTime?: string;
 }
 
 interface AllCompaniesTableProps {
@@ -121,18 +125,67 @@ export default function AllCompaniesTable({
     lastSelectedIndex,
     onLastSelectedIndexChange = () => { }
 }: AllCompaniesTableProps) {
-    const [sortField, setSortField] = useState<SortField>('id');
-    const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
-
-    const [columnFilters, setColumnFilters] = useState({
-        id: '',
-        name: '',
-        status: [] as string[],
-        discipline: [] as string[],
-        targetSponsorshipTier: [] as string[],
-        assignedTo: [] as string[],
-        contact: ''
+    // State with sessionStorage persistence
+    const [sortField, setSortField] = useState<SortField>(() => {
+        if (typeof window !== 'undefined') {
+            const saved = sessionStorage.getItem('companies_sortField');
+            return saved ? (saved as SortField) : 'id';
+        }
+        return 'id';
     });
+
+    const [sortDirection, setSortDirection] = useState<SortDirection>(() => {
+        if (typeof window !== 'undefined') {
+            const saved = sessionStorage.getItem('companies_sortDirection');
+            return saved ? (saved as SortDirection) : 'asc';
+        }
+        return 'asc';
+    });
+
+    const [columnFilters, setColumnFilters] = useState(() => {
+        if (typeof window !== 'undefined') {
+            const saved = sessionStorage.getItem('companies_columnFilters');
+            if (saved) {
+                try {
+                    return JSON.parse(saved);
+                } catch (e) {
+                    // Ignore parse errors
+                }
+            }
+        }
+        return {
+            id: '',
+            name: '',
+            status: [] as string[],
+            discipline: [] as string[],
+            targetSponsorshipTier: [] as string[],
+            assignedTo: [] as string[],
+            contact: ''
+        };
+    });
+
+    const [showScheduleColumn, setShowScheduleColumn] = useState(() => {
+        if (typeof window !== 'undefined') {
+            const saved = localStorage.getItem('companies_showScheduleColumn');
+            return saved === 'true';
+        }
+        return false;
+    });
+
+    useEffect(() => {
+        if (typeof window !== 'undefined') {
+            localStorage.setItem('companies_showScheduleColumn', String(showScheduleColumn));
+        }
+    }, [showScheduleColumn]);
+
+    // Save states to sessionStorage whenever they change
+    useEffect(() => {
+        if (typeof window !== 'undefined') {
+            sessionStorage.setItem('companies_sortField', sortField);
+            sessionStorage.setItem('companies_sortDirection', sortDirection);
+            sessionStorage.setItem('companies_columnFilters', JSON.stringify(columnFilters));
+        }
+    }, [sortField, sortDirection, columnFilters]);
 
     // Get unique statuses, disciplines and assignees for filters
     const statuses = useMemo(() =>
@@ -186,7 +239,7 @@ export default function AllCompaniesTable({
             const matchesId = company.id.toLowerCase().includes(columnFilters.id.toLowerCase());
             const matchesName = company.name.toLowerCase().includes(columnFilters.name.toLowerCase());
             const matchesStatus = columnFilters.status.length === 0 || columnFilters.status.includes(company.status);
-            const matchesDiscipline = columnFilters.discipline.length === 0 || (company.discipline && columnFilters.discipline.some(d => company.discipline?.includes(d)));
+            const matchesDiscipline = columnFilters.discipline.length === 0 || (company.discipline && columnFilters.discipline.some((d: string) => company.discipline?.includes(d)));
             const matchesTier = columnFilters.targetSponsorshipTier.length === 0 || (company.targetSponsorshipTier && columnFilters.targetSponsorshipTier.includes(company.targetSponsorshipTier));
             const matchesAssignee = columnFilters.assignedTo.length === 0 || columnFilters.assignedTo.includes(company.assignedTo);
             const matchesContact =
@@ -348,9 +401,19 @@ export default function AllCompaniesTable({
                         </div>
                     </div>
 
-                    {/* Clear Filters Button */}
-                    {(columnFilters.id || columnFilters.name || columnFilters.status.length > 0 ||
-                        columnFilters.discipline.length > 0 || columnFilters.targetSponsorshipTier.length > 0 || columnFilters.assignedTo.length > 0 || columnFilters.contact) && (
+                    <div className="flex items-center gap-3">
+                        <label className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer select-none">
+                            <input
+                                type="checkbox"
+                                checked={showScheduleColumn}
+                                onChange={(e) => setShowScheduleColumn(e.target.checked)}
+                                className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500"
+                            />
+                            <ClockIcon className="w-4 h-4 text-slate-400" />
+                            <span>Schedule</span>
+                        </label>
+                        {(columnFilters.id || columnFilters.name || columnFilters.status.length > 0 ||
+                            columnFilters.discipline.length > 0 || columnFilters.targetSponsorshipTier.length > 0 || columnFilters.assignedTo.length > 0 || columnFilters.contact) && (
                             <button
                                 onClick={() => setColumnFilters({
                                     id: '',
@@ -366,6 +429,7 @@ export default function AllCompaniesTable({
                                 Clear All Filters
                             </button>
                         )}
+                    </div>
                 </div>
             </div>
 
@@ -414,10 +478,10 @@ export default function AllCompaniesTable({
                                         <SortIcon field="status" />
                                     </button>
                                 </th>
-                                <th className="px-6 py-3 text-xs font-medium text-slate-600 tracking-wider w-[180px] bg-slate-50">
+                                <th className="px-6 py-3 text-xs font-medium text-slate-600 tracking-wider w-[120px] bg-slate-50">
                                     <span>Discipline</span>
                                 </th>
-                                <th className="px-6 py-3 text-xs font-medium text-slate-600 tracking-wider w-[180px] bg-slate-50">
+                                <th className="px-6 py-3 text-xs font-medium text-slate-600 tracking-wider w-[120px] bg-slate-50">
                                     <button
                                         onClick={() => handleSort('targetSponsorshipTier')}
                                         className="flex items-center gap-2 hover:text-slate-900 transition-colors"
@@ -425,6 +489,9 @@ export default function AllCompaniesTable({
                                         Target Tier
                                         <SortIcon field="targetSponsorshipTier" />
                                     </button>
+                                </th>
+                                <th className="px-6 py-3 text-xs font-medium text-slate-600 tracking-wider w-[220px] bg-slate-50">
+                                    <span>Contact Person</span>
                                 </th>
                                 <th className="px-6 py-3 text-xs font-medium text-slate-600 tracking-wider w-[160px] bg-slate-50">
                                     <button
@@ -435,9 +502,11 @@ export default function AllCompaniesTable({
                                         <SortIcon field="assignedTo" />
                                     </button>
                                 </th>
-                                <th className="px-6 py-3 text-xs font-medium text-slate-600 tracking-wider w-[220px] bg-slate-50">
-                                    <span>Contact Person</span>
-                                </th>
+                                {showScheduleColumn && (
+                                    <th className="px-6 py-3 text-xs font-medium text-slate-600 tracking-wider w-[140px] bg-slate-50">
+                                        <span>Scheduled</span>
+                                    </th>
+                                )}
                                 <th className="px-6 py-3 text-xs font-medium text-slate-600 tracking-wider w-[180px] bg-slate-50">
                                     <button
                                         onClick={() => handleSort('lastUpdated')}
@@ -486,7 +555,7 @@ export default function AllCompaniesTable({
                                         placeholder="All"
                                     />
                                 </th>
-                                <th className="px-6 py-2 w-[180px] bg-white">
+                                <th className="px-6 py-2 w-[120px] bg-white">
                                     <FilterRowMultiSelect
                                         options={disciplines}
                                         selected={columnFilters.discipline}
@@ -494,19 +563,11 @@ export default function AllCompaniesTable({
                                         placeholder="All"
                                     />
                                 </th>
-                                <th className="px-6 py-2 w-[180px] bg-white">
+                                <th className="px-6 py-2 w-[120px] bg-white">
                                     <FilterRowMultiSelect
                                         options={targetTiers}
                                         selected={columnFilters.targetSponsorshipTier}
                                         onChange={(selected) => setColumnFilters({ ...columnFilters, targetSponsorshipTier: selected })}
-                                        placeholder="All"
-                                    />
-                                </th>
-                                <th className="px-6 py-2 w-[160px] bg-white">
-                                    <FilterRowMultiSelect
-                                        options={assignees}
-                                        selected={columnFilters.assignedTo}
-                                        onChange={(selected) => setColumnFilters({ ...columnFilters, assignedTo: selected })}
                                         placeholder="All"
                                     />
                                 </th>
@@ -519,6 +580,15 @@ export default function AllCompaniesTable({
                                         className="w-full px-2 py-1 text-xs border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
                                     />
                                 </th>
+                                <th className="px-6 py-2 w-[160px] bg-white">
+                                    <FilterRowMultiSelect
+                                        options={assignees}
+                                        selected={columnFilters.assignedTo}
+                                        onChange={(selected) => setColumnFilters({ ...columnFilters, assignedTo: selected })}
+                                        placeholder="All"
+                                    />
+                                </th>
+                                {showScheduleColumn && <th className="px-6 py-2 w-[140px] bg-white"></th>}
                                 <th className="px-6 py-2 w-[180px] bg-white"></th>
                                 <th className="px-6 py-2 w-[100px] bg-white"></th>
                             </tr>
@@ -526,7 +596,7 @@ export default function AllCompaniesTable({
                         <tbody className="divide-y divide-slate-100">
                             {filteredAndSortedCompanies.length === 0 ? (
                                 <tr>
-                                    <td colSpan={9} className="px-6 py-12 text-center">
+                                    <td colSpan={showScheduleColumn ? 11 : 10} className="px-6 py-12 text-center">
                                         <MagnifyingGlassIcon className="mx-auto w-12 h-12 text-slate-300 mb-3" />
                                         <p className="text-sm text-slate-600 font-medium">No companies found</p>
                                         <p className="text-xs text-slate-500 mt-1">Try adjusting your search or filters</p>
@@ -566,7 +636,7 @@ export default function AllCompaniesTable({
                                                 {company.status}
                                             </span>
                                         </td>
-                                        <td className="px-6 py-4 w-[180px]">
+                                        <td className="px-6 py-4 w-[120px]">
                                             <div className="flex flex-wrap gap-1">
                                                 {company.discipline ? company.discipline.split(',').map(d => {
                                                     const trimmed = d.trim();
@@ -584,15 +654,26 @@ export default function AllCompaniesTable({
                                                 )}
                                             </div>
                                         </td>
-                                        <td className="px-6 py-4 w-[180px]">
+                                        <td className="px-6 py-4 w-[120px]">
                                             <span className="text-slate-700">{company.targetSponsorshipTier || 'N/A'}</span>
-                                        </td>
-                                        <td className="px-6 py-4 text-slate-700 w-[160px]">
-                                            {company.assignedTo}
                                         </td>
                                         <td className="px-6 py-4 w-[220px]">
                                             <div className="text-slate-700 font-medium">{company.contact}</div>
                                         </td>
+                                        <td className="px-6 py-4 text-slate-700 w-[160px]">
+                                            {company.assignedTo}
+                                        </td>
+                                        {showScheduleColumn && (
+                                            <td className="px-6 py-4 w-[140px] text-slate-600 text-xs whitespace-nowrap">
+                                                {company.scheduledDate && company.scheduledTime ? (
+                                                    <span>
+                                                        {new Date(company.scheduledDate + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}, {formatTime(company.scheduledTime)}
+                                                    </span>
+                                                ) : (
+                                                    <span className="text-slate-300">—</span>
+                                                )}
+                                            </td>
+                                        )}
                                         <td className="px-6 py-4 text-slate-600 w-[180px] whitespace-nowrap">
                                             {formatDate(company.lastUpdated)}
                                         </td>

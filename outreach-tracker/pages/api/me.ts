@@ -10,6 +10,7 @@ export interface MeResponse {
     authenticated: boolean;
     isCommitteeMember: boolean;
     isAdmin: boolean;
+    canEditCompanies: boolean;
 }
 
 export default async function handler(
@@ -24,6 +25,7 @@ export default async function handler(
             authenticated: false,
             isCommitteeMember: false,
             isAdmin: false,
+            canEditCompanies: false,
         });
     }
 
@@ -39,6 +41,7 @@ export default async function handler(
                 authenticated: false,
                 isCommitteeMember: false,
                 isAdmin: false,
+                canEditCompanies: false,
             });
         }
 
@@ -52,6 +55,10 @@ export default async function handler(
         );
 
         if (committeeMember) {
+            const roleLower = committeeMember.role?.toLowerCase() || '';
+            const isAdmin = roleLower === 'admin';
+            const canEditCompanies = isAdmin || roleLower === 'member' || roleLower === 'committee member';
+
             // User is in Committee_Members sheet
             return res.status(200).json({
                 name: committeeMember.name,
@@ -59,7 +66,8 @@ export default async function handler(
                 role: committeeMember.role,
                 authenticated: true,
                 isCommitteeMember: true,
-                isAdmin: committeeMember.role?.toLowerCase() === 'admin',
+                isAdmin,
+                canEditCompanies,
             });
         }
 
@@ -71,6 +79,7 @@ export default async function handler(
             authenticated: true,
             isCommitteeMember: false,
             isAdmin: false,
+            canEditCompanies: false,
         });
     } catch (error) {
         console.error('Error in /api/me:', error);
@@ -81,6 +90,7 @@ export default async function handler(
             authenticated: false,
             isCommitteeMember: false,
             isAdmin: false,
+            canEditCompanies: false,
         });
     }
 }

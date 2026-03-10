@@ -21,8 +21,7 @@ export const priorityDbToDisplay: Record<string, string> = {
     'Gold': 'Gold',
     'Silver': 'Silver',
     'Bronze': 'Bronze',
-    'Normal': 'Normal',
-    '': '', 
+    '': '',
 };
 
 // ============================================================================
@@ -33,14 +32,13 @@ export const priorityDisplayToDb: Record<string, string> = {
     'Gold': 'Gold',
     'Silver': 'Silver',
     'Bronze': 'Bronze',
-    'Normal': 'Normal',
-    '': '', 
+    '': '',
 };
 
 // ============================================================================
 // 📝 EDIT HERE: Dropdown options
 // ============================================================================
-export const priorityOptions = ['Official Partner', 'Gold', 'Silver', 'Bronze', 'Normal'];
+export const priorityOptions = ['Official Partner', 'Gold', 'Silver', 'Bronze'];
 
 // ============================================================================
 // Helper Functions (DO NOT EDIT unless changing logic)

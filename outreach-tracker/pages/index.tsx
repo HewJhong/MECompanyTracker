@@ -50,8 +50,25 @@ function OutreachPerformanceLineChart({ timeline }: { timeline: { date: string; 
     const padding = { top: 8, right: 8, bottom: 24, left: 36 };
 
     const values = timeline.map(p => p[metric]);
-    const maxVal = Math.max(...values, 1);
-    const minVal = Math.min(...values, 0);
+    const maxValFromData = Math.max(...values, 1);
+
+    // Round up the max value to a nice number for the scale
+    const orderOfMagnitude = Math.floor(Math.log10(maxValFromData));
+    const step = Math.pow(10, orderOfMagnitude);
+    let topScale = Math.ceil(maxValFromData / step) * step;
+    if (topScale - maxValFromData < step * 0.1) topScale += step;
+
+    // Define exact scale markers (0, 1/4, 1/2, 3/4, Max)
+    const scaleMarkers = [
+        Math.round(topScale),
+        Math.round(topScale * 0.75),
+        Math.round(topScale * 0.5),
+        Math.round(topScale * 0.25),
+        0
+    ];
+
+    const maxVal = topScale;
+    const minVal = 0;
     const range = maxVal - minVal || 1;
     const innerWidth = chartWidth - padding.left - padding.right;
     const innerHeight = chartHeight - padding.top - padding.bottom;
@@ -65,7 +82,7 @@ function OutreachPerformanceLineChart({ timeline }: { timeline: { date: string; 
     const strokeColor = metric === 'contacted' ? '#3b82f6' : metric === 'interested' ? '#a855f7' : '#22c55e';
 
     return (
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 flex flex-col h-full">
             <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
                 <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Outreach Performance Over Time</h3>
                 <select
@@ -79,33 +96,50 @@ function OutreachPerformanceLineChart({ timeline }: { timeline: { date: string; 
                     <option value="registered">Registered</option>
                 </select>
             </div>
-            <div className="relative w-full overflow-x-auto">
-                <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="w-full min-h-[200px]" preserveAspectRatio="none">
-                    <defs>
-                        <linearGradient id="lineGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-                            <stop offset="0%" stopColor={strokeColor} stopOpacity="0.3" />
-                            <stop offset="100%" stopColor={strokeColor} stopOpacity="0" />
-                        </linearGradient>
-                    </defs>
-                    {timeline.length > 0 && (
-                        <>
-                            <polyline
-                                fill="none"
-                                stroke={strokeColor}
-                                strokeWidth="2"
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                                points={points}
-                            />
-                            <polygon
-                                fill="url(#lineGrad)"
-                                points={`${padding.left},${padding.top + innerHeight} ${points} ${padding.left + innerWidth},${padding.top + innerHeight}`}
-                            />
-                        </>
-                    )}
-                </svg>
+            <div className="relative w-full flex-1 flex">
+                {/* Y-Axis Scale Labels */}
+                <div className="flex flex-col justify-between items-end pr-3 text-[10px] font-medium text-slate-400 pb-[24px]" style={{ height: `${chartHeight}px` }}>
+                    {scaleMarkers.map((marker, i) => (
+                        <span key={i} className={`leading-none ${i === scaleMarkers.length - 1 ? 'translate-y-1' : ''}`}>{marker}</span>
+                    ))}
+                </div>
+
+                {/* Graph Area */}
+                <div className="relative flex-1 h-full">
+                    {/* Horizontal Grid Lines */}
+                    <div className="absolute inset-0 flex flex-col justify-between pb-[24px]" style={{ height: `${chartHeight}px` }}>
+                        {scaleMarkers.map((_, i) => (
+                            <div key={i} className={`w-full border-t border-slate-100 ${i === scaleMarkers.length - 1 ? 'border-t-slate-200' : ''}`} />
+                        ))}
+                    </div>
+
+                    <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="absolute inset-0 w-full h-full" preserveAspectRatio="none">
+                        <defs>
+                            <linearGradient id="lineGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+                                <stop offset="0%" stopColor={strokeColor} stopOpacity="0.3" />
+                                <stop offset="100%" stopColor={strokeColor} stopOpacity="0" />
+                            </linearGradient>
+                        </defs>
+                        {timeline.length > 0 && (
+                            <>
+                                <polyline
+                                    fill="none"
+                                    stroke={strokeColor}
+                                    strokeWidth="2"
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    points={points}
+                                />
+                                <polygon
+                                    fill="url(#lineGrad)"
+                                    points={`${padding.left},${padding.top + innerHeight} ${points} ${padding.left + innerWidth},${padding.top + innerHeight}`}
+                                />
+                            </>
+                        )}
+                    </svg>
+                </div>
             </div>
-            <div className="flex justify-between mt-2 text-[10px] text-slate-400 font-medium">
+            <div className="flex justify-between mt-auto pt-2 text-[10px] text-slate-400 font-medium pl-6">
                 <span>{timeline[0]?.date}</span>
                 <span>30 day cumulative</span>
                 <span>{timeline[timeline.length - 1]?.date}</span>
@@ -119,16 +153,26 @@ export default function Home() {
     const { data: session, status: authStatus } = useSession();
     const [data, setData] = useState<Company[]>([]);
     const [history, setHistory] = useState<HistoryEntry[]>([]);
+    const [dailyStats, setDailyStats] = useState<any[]>([]);
+    const [limits, setLimits] = useState<{ tier: string; total: number; daily: number }[]>([]);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
 
     const fetchData = async (refresh = false) => {
         if (refresh) setRefreshing(true);
         try {
-            const res = await fetch(`/api/data${refresh ? '?refresh=true' : ''}`);
-            const responseData = await res.json();
+            const [dataRes, limitsRes] = await Promise.all([
+                fetch(`/api/data${refresh ? '?refresh=true' : ''}`),
+                fetch('/api/limits')
+            ]);
+            const responseData = await dataRes.json();
+            const limitsData = limitsRes.ok ? await limitsRes.json() : { limits: [] };
+
             setData(responseData.companies || []);
             setHistory(responseData.history || []);
+            setDailyStats(responseData.dailyStats || []);
+            setLimits(limitsData.limits || []);
+
             setLoading(false);
         } catch (err) {
             console.error('Failed to load data', err);
@@ -226,33 +270,35 @@ export default function Home() {
             }))
             .sort((a, b) => b.registered - a.registered || b.percentage - a.percentage);
 
-        // Timeline Data (Last 30 days)
-        const timeline: Record<string, { contacted: number; interested: number; registered: number }> = {};
+        // Timeline Data (Last 30 days) using explicit DailyStats
+        const cumulativeTimeline: { date: string; contacted: number; interested: number; registered: number }[] = [];
         const daysToShow = 30;
         const now = new Date();
         for (let i = daysToShow; i >= 0; i--) {
             const d = new Date(now);
             d.setDate(d.getDate() - i);
-            timeline[d.toISOString().split('T')[0]] = { contacted: 0, interested: 0, registered: 0 };
+            const dateStr = d.toLocaleDateString('en-CA', { timeZone: 'Asia/Singapore' }); // YYYY-MM-DD
+
+            // Find most recent stat for this date or earlier
+            const pastStats = dailyStats.filter(s => s.date <= dateStr).sort((a, b) => b.date.localeCompare(a.date));
+            const stat = pastStats[0];
+
+            if (stat) {
+                cumulativeTimeline.push({
+                    date: dateStr.substring(5).replace('-', '/'),
+                    contacted: (stat.contacted || 0) + (stat.interested || 0) + (stat.registered || 0) + (stat.noReply || 0),
+                    interested: (stat.interested || 0) + (stat.registered || 0),
+                    registered: stat.registered || 0
+                });
+            } else {
+                cumulativeTimeline.push({
+                    date: dateStr.substring(5).replace('-', '/'),
+                    contacted: 0,
+                    interested: 0,
+                    registered: 0
+                });
+            }
         }
-
-        history.forEach(h => {
-            const date = h.timestamp.split('T')[0];
-            if (!timeline[date]) return;
-            const r = (h.remark || h.action || '').toLowerCase();
-            if (r.includes('status: contacted') || r.includes('outreach')) timeline[date].contacted++;
-            if (r.includes('status: interested') || r.includes('company reply')) timeline[date].interested++;
-            if (r.includes('status: registered') || r.includes('completed')) timeline[date].registered++;
-        });
-
-        const timelineList = Object.entries(timeline).sort((a, b) => a[0].localeCompare(b[0]));
-        let cumContacted = 0, cumInterested = 0, cumRegistered = 0;
-        const cumulativeTimeline = timelineList.map(([date, counts]) => {
-            cumContacted += counts.contacted;
-            cumInterested += counts.interested;
-            cumRegistered += counts.registered;
-            return { date, contacted: cumContacted, interested: cumInterested, registered: cumRegistered };
-        });
 
         // Member Activity
         const memberActivityMap = new Map<string, string>();
@@ -386,20 +432,37 @@ export default function Home() {
                         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 flex flex-col lg:col-span-2">
                             <div className="flex items-center gap-2 mb-4">
                                 <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Sponsorship Tiers</h3>
-                                {Object.entries(stats.sponsorshipDist).length === 0 && (
-                                    <span className="text-[10px] font-medium text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">Example</span>
-                                )}
                             </div>
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 flex-1">
-                                {(Object.entries(stats.sponsorshipDist).length > 0 ? Object.entries(stats.sponsorshipDist) : [['OP', 3], ['Gold', 12], ['Silver', 8], ['Bronze', 5]] as [string, number][]).map(([tier, count]) => (
-                                    <div key={tier} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl">
-                                        <div className="flex items-center gap-2">
-                                            <div className={`w-3 h-3 rounded-full ${tier === 'OP' ? 'bg-blue-500' : tier === 'Gold' ? 'bg-amber-400' : tier === 'Silver' ? 'bg-slate-300' : tier === 'Bronze' ? 'bg-amber-700' : 'bg-slate-400'}`} />
-                                            <span className="text-sm font-medium text-slate-700">{tier}</span>
+                                {(limits.length > 0 ? limits.map(l => l.tier) : ['OP', 'Gold', 'Silver', 'Bronze']).map(tier => {
+                                    const count = stats.sponsorshipDist[tier] || 0;
+                                    const limit = limits.find(l => l.tier === tier)?.total || 0;
+                                    const progress = limit > 0 ? Math.min((count / limit) * 100, 100) : count > 0 ? 100 : 0;
+                                    const isOverLimit = limit > 0 && count > limit;
+
+                                    return (
+                                        <div key={tier} className="flex flex-col gap-3 p-4 bg-slate-50 rounded-xl border border-slate-100">
+                                            <div className="flex items-center justify-between">
+                                                <div className="flex items-center gap-2">
+                                                    <div className={`w-3 h-3 rounded-full ${tier === 'OP' ? 'bg-blue-500' : tier === 'Gold' ? 'bg-amber-400' : tier === 'Silver' ? 'bg-slate-300' : tier === 'Bronze' ? 'bg-amber-700' : 'bg-slate-400'}`} />
+                                                    <span className="text-sm font-semibold text-slate-700">{tier}</span>
+                                                </div>
+                                                <div className="flex items-baseline gap-1">
+                                                    <span className={`text-lg font-bold ${isOverLimit ? 'text-red-600' : 'text-slate-900'}`}>{count}</span>
+                                                    {limit > 0 && <span className="text-sm font-medium text-slate-400">/ {limit}</span>}
+                                                </div>
+                                            </div>
+                                            {limit > 0 && (
+                                                <div className="w-full bg-slate-200 rounded-full h-2 overflow-hidden">
+                                                    <div
+                                                        className={`h-full rounded-full transition-all duration-1000 ease-out ${isOverLimit ? 'bg-red-500' : tier === 'OP' ? 'bg-blue-500' : tier === 'Gold' ? 'bg-amber-400' : tier === 'Silver' ? 'bg-slate-400' : tier === 'Bronze' ? 'bg-amber-700' : 'bg-slate-500'}`}
+                                                        style={{ width: `${progress}%` }}
+                                                    />
+                                                </div>
+                                            )}
                                         </div>
-                                        <span className="text-sm font-bold text-slate-900">{count}</span>
-                                    </div>
-                                ))}
+                                    );
+                                })}
                             </div>
                         </div>
                     </div>
@@ -446,139 +509,125 @@ export default function Home() {
                     {/* Main Content Grid */}
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                         {/* Left & Middle Columns */}
-                        <div className="lg:col-span-2 space-y-8">
+                        <div className="lg:col-span-2">
 
                             {/* Day Attendance */}
-                                <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-                                    <div className="flex items-center gap-2 mb-6">
-                                        <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
-                                            Day Attendance
-                                        </h3>
-                                        {Object.keys(stats.dayDist).length === 0 && (
-                                            <span className="text-[10px] font-medium text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">Example</span>
-                                        )}
-                                    </div>
-                                    {(() => {
-                                        const isExample = Object.keys(stats.dayDist).length === 0;
-                                        const displayDayDist = isExample ? { '1': 42, '2': 48, '3': 45, '4': 38 } : stats.dayDist;
-                                        const displayDayTier = isExample ? {
-                                            '1': { OP: 1, Gold: 12, Silver: 18, Bronze: 10 },
-                                            '2': { Gold: 14, Silver: 20, Bronze: 11 },
-                                            '3': { Gold: 13, Silver: 19, Bronze: 11 },
-                                            '4': { Gold: 10, Silver: 15, Bronze: 12 },
-                                        } : stats.dayTierBreakdown;
-                                        const displayDayTierSlots: Record<string, Record<string, number>> = isExample ? {
-                                            '1': { OP: 1, Gold: 20, Silver: 25, Bronze: 15 },
-                                            '2': { OP: 1, Gold: 20, Silver: 25, Bronze: 15 },
-                                            '3': { OP: 1, Gold: 20, Silver: 25, Bronze: 15 },
-                                            '4': { OP: 1, Gold: 20, Silver: 25, Bronze: 15 },
-                                        } : {};
-                                        const tierOrder = ['OP', 'Gold', 'Silver', 'Bronze'];
-                                        const tierOrderStackedBar = ['OP', 'Bronze', 'Silver', 'Gold'];
-                                        const tierColors: Record<string, string> = { OP: 'bg-blue-500', Gold: 'bg-amber-400', Silver: 'bg-slate-300', Bronze: 'bg-amber-700' };
-                                        const maxHeight = Math.max(...Object.values(displayDayDist), 1);
-                                        return (
-                                            <div className="space-y-5">
-                                                <div className="flex items-stretch justify-between gap-3">
-                                                    {[1, 2, 3, 4].map(day => {
-                                                        const dayKey = day.toString();
-                                                        const count = displayDayDist[dayKey] || 0;
-                                                        const tiers = displayDayTier[dayKey] || {};
-                                                        const slots = displayDayTierSlots[dayKey] || {};
-                                                        const totalTier = tierOrder.reduce((sum, t) => sum + (tiers[t] || 0), 0);
-                                                        return (
-                                                            <div key={day} className="flex-1 flex flex-col items-center gap-2 min-w-0">
-                                                                <div className="w-full text-center">
-                                                                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Day {day}</p>
-                                                                    <p className="text-2xl font-bold text-slate-900 tabular-nums mt-0.5">{count}</p>
-                                                                    <p className="text-[10px] text-slate-400 font-medium">companies</p>
-                                                                </div>
-                                                                <div className="w-full rounded-t-md relative flex flex-col-reverse overflow-hidden border border-blue-100 bg-blue-50/80" style={{ height: '100px' }} title="Empty area = vacancies">
-                                                                    {totalTier > 0 ? (
-                                                                        <div className="w-full flex flex-col-reverse" style={{ height: `${(count / maxHeight) * 100}%` }}>
-                                                                            {tierOrderStackedBar.map(tier => {
-                                                                                const n = tiers[tier] || 0;
-                                                                                if (n === 0) return null;
-                                                                                return (
-                                                                                    <div key={tier} className={`w-full ${tierColors[tier]} min-h-[3px] transition-all duration-1000`} style={{ height: `${(n / totalTier) * 100}%` }} title={`${tier}: ${n}`} />
-                                                                                );
-                                                                            })}
-                                                                        </div>
-                                                                    ) : (
-                                                                        <div className="w-full bg-gradient-to-t from-blue-600 to-indigo-500 transition-all duration-1000" style={{ height: `${(count / maxHeight) * 100}%` }} />
-                                                                    )}
-                                                                </div>
-                                                                {totalTier > 0 && (
-                                                                    <div className="w-full space-y-1.5 pt-1">
-                                                                        {tierOrder.filter(t => (tiers[t] || 0) > 0).map(t => {
-                                                                            const current = tiers[t] || 0;
-                                                                            const max = slots[t];
-                                                                            const countLabel = max != null ? `${current}/${max}` : String(current);
+                            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 h-full flex flex-col">
+                                <div className="flex items-center gap-2 mb-6">
+                                    <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                                        Day Attendance
+                                    </h3>
+                                </div>
+                                {(() => {
+                                    const displayDayDist = stats.dayDist;
+                                    const displayDayTier = stats.dayTierBreakdown;
+                                    const displayDayTierSlots: Record<string, Record<string, number>> = {};
+                                    const tierOrder = ['OP', 'Gold', 'Silver', 'Bronze'];
+                                    const tierOrderStackedBar = ['OP', 'Bronze', 'Silver', 'Gold'];
+                                    const tierColors: Record<string, string> = { OP: 'bg-blue-500', Gold: 'bg-amber-400', Silver: 'bg-slate-300', Bronze: 'bg-amber-700' };
+                                    const maxHeight = Math.max(...Object.values(displayDayDist), 1);
+                                    return (
+                                        <div className="space-y-5 flex-1 flex flex-col">
+                                            <div className="flex items-stretch justify-between gap-3 flex-1">
+                                                {[1, 2, 3, 4].map(day => {
+                                                    const dayKey = day.toString();
+                                                    const count = displayDayDist[dayKey] || 0;
+                                                    const tiers = displayDayTier[dayKey] || {};
+                                                    const slots = displayDayTierSlots[dayKey] || {};
+                                                    const totalTier = tierOrder.reduce((sum, t) => sum + (tiers[t] || 0), 0);
+                                                    return (
+                                                        <div key={day} className="flex-1 flex flex-col items-center gap-2 min-w-0">
+                                                            <div className="w-full text-center">
+                                                                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Day {day}</p>
+                                                                <p className="text-2xl font-bold text-slate-900 tabular-nums mt-0.5">{count}</p>
+                                                                <p className="text-[10px] text-slate-400 font-medium">companies</p>
+                                                            </div>
+                                                            <div className="w-full rounded-t-md relative flex flex-col-reverse overflow-hidden border border-blue-100 bg-blue-50/80" style={{ height: '100px' }} title="Empty area = vacancies">
+                                                                {totalTier > 0 ? (
+                                                                    <div className="w-full flex flex-col-reverse" style={{ height: `${(count / maxHeight) * 100}%` }}>
+                                                                        {tierOrderStackedBar.map(tier => {
+                                                                            const n = tiers[tier] || 0;
+                                                                            if (n === 0) return null;
                                                                             return (
-                                                                                <div key={t} className="flex items-center justify-between gap-2 text-xs">
-                                                                                    <span className="flex items-center gap-1.5 font-medium text-slate-600 min-w-0">
-                                                                                        <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${tierColors[t]}`} />
-                                                                                        <span className="truncate">{t}</span>
-                                                                                    </span>
-                                                                                    <span className="font-bold text-slate-900 tabular-nums flex-shrink-0">{countLabel}</span>
-                                                                                </div>
+                                                                                <div key={tier} className={`w-full ${tierColors[tier]} min-h-[3px] transition-all duration-1000`} style={{ height: `${(n / totalTier) * 100}%` }} title={`${tier}: ${n}`} />
                                                                             );
                                                                         })}
                                                                     </div>
+                                                                ) : (
+                                                                    <div className="w-full bg-gradient-to-t from-blue-600 to-indigo-500 transition-all duration-1000" style={{ height: `${(count / maxHeight) * 100}%` }} />
                                                                 )}
                                                             </div>
-                                                        );
-                                                    })}
-                                                </div>
-                                                {Object.keys(displayDayTier[Object.keys(displayDayTier)[0]] || {}).length > 0 && (
-                                                    <div className="flex flex-wrap items-center gap-4 pt-4 border-t border-slate-200 justify-center text-xs font-semibold text-slate-600">
-                                                        {tierOrder.map(t => <span key={t} className="flex items-center gap-2"><span className={`w-3 h-3 rounded-full ${tierColors[t]}`} /> {t}</span>)}
-                                                        <span className="flex items-center gap-2 text-slate-400 font-medium"><span className="w-3 h-3 rounded border border-blue-200 bg-blue-50" /> Vacancies</span>
-                                                    </div>
-                                                )}
+                                                            {totalTier > 0 && (
+                                                                <div className="w-full space-y-1.5 pt-1">
+                                                                    {tierOrder.filter(t => (tiers[t] || 0) > 0).map(t => {
+                                                                        const current = tiers[t] || 0;
+                                                                        const max = slots[t];
+                                                                        const countLabel = max != null ? `${current}/${max}` : String(current);
+                                                                        return (
+                                                                            <div key={t} className="flex items-center justify-between gap-2 text-xs">
+                                                                                <span className="flex items-center gap-1.5 font-medium text-slate-600 min-w-0">
+                                                                                    <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${tierColors[t]}`} />
+                                                                                    <span className="truncate">{t}</span>
+                                                                                </span>
+                                                                                <span className="font-bold text-slate-900 tabular-nums flex-shrink-0">{countLabel}</span>
+                                                                            </div>
+                                                                        );
+                                                                    })}
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    );
+                                                })}
                                             </div>
-                                        );
-                                    })()}
-                                </div>
+                                            {Object.keys(displayDayTier[Object.keys(displayDayTier)[0]] || {}).length > 0 && (
+                                                <div className="flex flex-wrap items-center gap-4 pt-4 mt-auto border-t border-slate-200 justify-center text-xs font-semibold text-slate-600">
+                                                    {tierOrder.map(t => <span key={t} className="flex items-center gap-2"><span className={`w-3 h-3 rounded-full ${tierColors[t]}`} /> {t}</span>)}
+                                                    <span className="flex items-center gap-2 text-slate-400 font-medium"><span className="w-3 h-3 rounded border border-blue-200 bg-blue-50" /> Vacancies</span>
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })()}
                             </div>
-
-                            {/* Outreach Performance Over Time - line chart with metric filter */}
-                            <OutreachPerformanceLineChart timeline={stats.timeline} />
-
                         </div>
 
-                        {/* Right Column - Flags */}
-                        <div className="space-y-8">
-                            {/* Flagged Items Mini */}
-                            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-                                <div className="p-4 bg-red-50 border-b border-red-100 flex items-center justify-between">
-                                    <h3 className="text-[10px] font-bold text-red-600 uppercase tracking-widest flex items-center gap-2">
-                                        <FlagIcon className="w-3 h-3" />
-                                        Flagged
-                                    </h3>
-                                    <span className="text-[10px] font-bold text-red-600 px-1.5 py-0.5 bg-white rounded-md border border-red-100">{stats.flagged.length}</span>
-                                </div>
-                                <div className="p-2 space-y-2">
-                                    {stats.flagged.slice(0, 3).map(c => (
-                                        <div
-                                            key={c.id}
-                                            onClick={() => handleCompanyClick(c.id)}
-                                            className="p-3 hover:bg-slate-50 rounded-lg transition-colors cursor-pointer group"
-                                        >
-                                            <h4 className="text-xs font-bold text-slate-900 group-hover:text-blue-600 transition-colors uppercase tracking-tight">{c.companyName}</h4>
-                                            <p className="text-[10px] text-slate-500 mt-1 line-clamp-2 italic">"{c.remark || 'Attention required'}"</p>
-                                        </div>
-                                    ))}
-                                    {stats.flagged.length === 0 && (
-                                        <div className="py-8 text-center">
-                                            <CheckCircleIcon className="w-8 h-8 text-green-200 mx-auto mb-2" />
-                                            <p className="text-[10px] text-slate-400 font-medium tracking-tight">System All Clear</p>
-                                        </div>
-                                    )}
-                                </div>
+                        {/* Outreach Performance Over Time - line chart with metric filter */}
+                        <OutreachPerformanceLineChart timeline={stats.timeline} />
+
+                    </div>
+
+                    {/* Right Column - Flags */}
+                    <div className="space-y-8">
+                        {/* Flagged Items Mini */}
+                        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                            <div className="p-4 bg-red-50 border-b border-red-100 flex items-center justify-between">
+                                <h3 className="text-[10px] font-bold text-red-600 uppercase tracking-widest flex items-center gap-2">
+                                    <FlagIcon className="w-3 h-3" />
+                                    Flagged
+                                </h3>
+                                <span className="text-[10px] font-bold text-red-600 px-1.5 py-0.5 bg-white rounded-md border border-red-100">{stats.flagged.length}</span>
+                            </div>
+                            <div className="p-2 space-y-2">
+                                {stats.flagged.slice(0, 3).map(c => (
+                                    <div
+                                        key={c.id}
+                                        onClick={() => handleCompanyClick(c.id)}
+                                        className="p-3 hover:bg-slate-50 rounded-lg transition-colors cursor-pointer group"
+                                    >
+                                        <h4 className="text-xs font-bold text-slate-900 group-hover:text-blue-600 transition-colors uppercase tracking-tight">{c.companyName}</h4>
+                                        <p className="text-[10px] text-slate-500 mt-1 line-clamp-2 italic">"{c.remark || 'Attention required'}"</p>
+                                    </div>
+                                ))}
+                                {stats.flagged.length === 0 && (
+                                    <div className="py-8 text-center">
+                                        <CheckCircleIcon className="w-8 h-8 text-green-200 mx-auto mb-2" />
+                                        <p className="text-[10px] text-slate-400 font-medium tracking-tight">System All Clear</p>
+                                    </div>
+                                )}
                             </div>
                         </div>
                     </div>
+                </div>
             )}
 
             <style jsx>{`

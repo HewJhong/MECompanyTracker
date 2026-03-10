@@ -4,6 +4,7 @@ import { authOptions } from '../../lib/auth';
 import { getCommitteeMembers } from '../../lib/committee-members';
 import { getGoogleSheetsClient } from '../../lib/google-sheets';
 import { cache } from '../../lib/cache';
+import { saveEmailScheduleEntries, computeTimeSlotsWithExisting, EmailScheduleEntry } from '../../lib/email-schedule';
 
 export default async function handler(
     req: NextApiRequest,
@@ -30,7 +31,7 @@ export default async function handler(
             return res.status(403).json({ error: 'Admin access required' });
         }
 
-        const { companyIds, assignee } = req.body;
+        const { companyIds, assignee, companyNames, scheduleDate, scheduleStartTime } = req.body;
 
         // Validate inputs
         if (!Array.isArray(companyIds) || companyIds.length === 0) {
@@ -158,10 +159,35 @@ export default async function handler(
         // Invalidate cache to ensure fresh data is fetched
         cache.delete('sheet_data');
 
+        // Optionally create email schedule entries
+        let scheduleEntries: EmailScheduleEntry[] = [];
+        if (scheduleDate && scheduleStartTime && assignee !== '__UNASSIGN__' && successfulIds.length > 0) {
+            try {
+                const { slots } = await computeTimeSlotsWithExisting(scheduleDate, scheduleStartTime, successfulIds.length);
+                const now = new Date().toISOString();
+                const actorName = session.user.name || session.user.email || 'Admin';
+                scheduleEntries = successfulIds.map((id, i) => ({
+                    companyId: id,
+                    companyName: (companyNames as Record<string, string> | undefined)?.[id] || id,
+                    pic: assignee,
+                    date: scheduleDate,
+                    time: slots[i],
+                    order: i,
+                    createdAt: now,
+                    createdBy: actorName,
+                }));
+                await saveEmailScheduleEntries(scheduleEntries);
+            } catch (scheduleError) {
+                console.error('Failed to create email schedule entries:', scheduleError);
+                // Don't fail the whole request — schedule creation is additive
+            }
+        }
+
         return res.status(200).json({
             success: true,
             updated: successfulIds.length,
             companyIds: successfulIds,
+            scheduleCreated: scheduleEntries.length > 0,
         });
     } catch (error) {
         console.error('Bulk assign error:', error);

@@ -107,7 +107,31 @@ export default async function handler(
             })
         ]);
 
-        // 5. Clear Cache
+        // 5. Update Thread_History so activity logs still match companies (column B = companyId)
+        try {
+            const historyResponse = await sheets.spreadsheets.values.get({
+                spreadsheetId: trackerSpreadsheetId,
+                range: 'Thread_History!B2:B',
+            });
+            const historyCompanyIds = (historyResponse.data.values || []) as string[][];
+            if (historyCompanyIds.length > 0) {
+                const newHistoryIds = historyCompanyIds.map(row => {
+                    const oldId = row[0] ? String(row[0]).trim() : '';
+                    const newId = oldId && idMap.has(oldId) ? idMap.get(oldId)! : oldId;
+                    return [newId];
+                });
+                await sheets.spreadsheets.values.update({
+                    spreadsheetId: trackerSpreadsheetId,
+                    range: `Thread_History!B2:B${1 + newHistoryIds.length}`,
+                    valueInputOption: 'RAW',
+                    requestBody: { values: newHistoryIds },
+                });
+            }
+        } catch (historyErr) {
+            console.warn('Thread_History update during fix ID gaps failed (sheet may not exist):', historyErr);
+        }
+
+        // 6. Clear Cache
         cache.clear();
 
         return res.status(200).json({

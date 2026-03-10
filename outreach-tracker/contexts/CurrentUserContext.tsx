@@ -8,6 +8,7 @@ export interface CurrentUser {
     role: string | null;
     isCommitteeMember: boolean;
     isAdmin: boolean;
+    canEditCompanies: boolean;
 }
 
 interface CurrentUserContextValue {
@@ -44,6 +45,7 @@ export function CurrentUserProvider({ children }: { children: React.ReactNode })
                         role: data.role,
                         isCommitteeMember: data.isCommitteeMember || false,
                         isAdmin: data.isAdmin || false,
+                        canEditCompanies: data.canEditCompanies || false,
                     });
                 } else {
                     setUser(null);

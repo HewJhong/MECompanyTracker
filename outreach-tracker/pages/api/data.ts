@@ -41,7 +41,7 @@ export default async function handler(
         console.log(">>> [API DATA] DB Rows...");
         const dbResponse = await sheets.spreadsheets.values.get({
             spreadsheetId: databaseSpreadsheetId,
-            range: `${dbSheetName}!A2:N`,
+            range: `${dbSheetName}!A2:O`,
         });
         const dbRows = dbResponse.data.values || [];
 
@@ -76,6 +76,28 @@ export default async function handler(
             }));
         } catch (e) {
             console.warn("History fetch failed");
+        }
+
+        // Daily Stats Fetch
+        console.log(">>> [API DATA] Daily Stats...");
+        let dailyStats: any[] = [];
+        try {
+            const statsResponse = await sheets.spreadsheets.values.get({
+                spreadsheetId: trackerSpreadsheetId,
+                range: `Daily_Stats!A2:H`,
+            });
+            dailyStats = (statsResponse.data.values || []).map(row => ({
+                date: row[0],
+                total: parseInt(row[1]) || 0,
+                toContact: parseInt(row[2]) || 0,
+                contacted: parseInt(row[3]) || 0,
+                interested: parseInt(row[4]) || 0,
+                registered: parseInt(row[5]) || 0,
+                noReply: parseInt(row[6]) || 0,
+                rejected: parseInt(row[7]) || 0,
+            }));
+        } catch (e) {
+            console.warn("Daily Stats fetch failed, sheet might not exist yet");
         }
 
         // Processing
@@ -128,18 +150,22 @@ export default async function handler(
                 });
             }
             const c = companyMap.get(id);
-            c.contacts.push({
-                id: `contact-${id}-${index}`,
-                rowNumber: index + 2,
-                name: row[5],
-                role: row[6],
-                email: row[7],
-                phone: row[8],
-                landline: row[9],
-                linkedin: row[10],
-                remark: row[12],
-                isActive: row[13] === 'TRUE'
-            });
+            const hasContactInfo = (row[5] && row[5].trim()) || (row[7] && row[7].trim()) || (row[8] && row[8].trim()) || (row[10] && row[10].trim());
+            if (hasContactInfo) {
+                c.contacts.push({
+                    id: `contact-${id}-${index}`,
+                    rowNumber: index + 2,
+                    name: row[5],
+                    role: row[6],
+                    email: row[7],
+                    phone: row[8],
+                    landline: row[9],
+                    linkedin: row[10],
+                    remark: row[12],
+                    isActive: row[13] === 'TRUE',
+                    activeMethods: row[14] || ''
+                });
+            }
         });
 
         const data = Array.from(companyMap.values());
@@ -158,7 +184,7 @@ export default async function handler(
             committeeMembers = await getCommitteeMembers();
         } catch (e) { }
 
-        const responseData = { companies: data, history: historyData, committeeMembers };
+        const responseData = { companies: data, history: historyData, dailyStats, committeeMembers };
         cache.set(CACHE_KEY, responseData);
 
         console.log(`>>> [API DATA] Done in ${Date.now() - startTime}ms`);

@@ -50,7 +50,7 @@ export default async function handler(
         // Sanitize user inputs
         const sanitizedName = sanitizeInput(companyData.name, 200);
         const sanitizedDiscipline = sanitizeInput(companyData.discipline || '', 100);
-        const sanitizedPriority = sanitizeInput(companyData.priority || 'Normal', 50);
+        const sanitizedPriority = sanitizeInput(companyData.priority || '', 50);
 
         if (!sanitizedName) {
             return res.status(400).json({ message: 'Company name cannot be empty after sanitization' });

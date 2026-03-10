@@ -13,6 +13,143 @@ import {
 } from '@heroicons/react/24/outline';
 import { useCurrentUser } from '../contexts/CurrentUserContext';
 
+type TimelineMetric = 'contacted' | 'interested' | 'registered';
+
+function OutreachPerformanceLineChart({ timeline }: { timeline: { date: string; contacted: number; interested: number; registered: number }[] }) {
+    const [selectedMetrics, setSelectedMetrics] = useState<TimelineMetric[]>(['contacted']);
+    const chartWidth = 600;
+    const chartHeight = 240;
+    const padding = { top: 12, right: 12, bottom: 24, left: 40 };
+
+    const toggleMetric = (m: TimelineMetric) => {
+        setSelectedMetrics(prev =>
+            prev.includes(m)
+                ? (prev.length > 1 ? prev.filter(x => x !== m) : prev)
+                : [...prev, m]
+        );
+    };
+
+    const allValues = timeline.flatMap(p => selectedMetrics.map(m => p[m]));
+    const maxValFromData = Math.max(...allValues, 1);
+
+    // Round up the max value to a nice number for the scale
+    const orderOfMagnitude = Math.floor(Math.log10(maxValFromData));
+    const step = Math.pow(10, orderOfMagnitude);
+    let topScale = Math.ceil(maxValFromData / step) * step;
+    // If it's too close to the top, give it some breathing room
+    if (topScale - maxValFromData < step * 0.1) topScale += step;
+
+    // Define exact scale markers (0, 1/4, 1/2, 3/4, Max)
+    const scaleMarkers = [
+        Math.round(topScale),
+        Math.round(topScale * 0.75),
+        Math.round(topScale * 0.5),
+        Math.round(topScale * 0.25),
+        0
+    ];
+
+    const maxVal = topScale;
+    const minVal = 0;
+    const range = maxVal - minVal || 1;
+    const innerWidth = chartWidth - padding.left - padding.right;
+    const innerHeight = chartHeight - padding.top - padding.bottom;
+
+    const getPoints = (m: TimelineMetric) => {
+        return timeline.map((p, i) => {
+            const x = padding.left + (i / Math.max(timeline.length - 1, 1)) * innerWidth;
+            const y = padding.top + innerHeight - ((p[m] - minVal) / range) * innerHeight;
+            return `${x},${y}`;
+        }).join(' ');
+    };
+
+    const metricColors: Record<TimelineMetric, string> = {
+        contacted: '#3b82f6',
+        interested: '#a855f7',
+        registered: '#22c55e'
+    };
+
+    return (
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8 flex flex-col h-full">
+            <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
+                <h3 className="text-sm font-semibold text-slate-500 uppercase tracking-wider">Outreach Performance Over Time</h3>
+                <div className="flex gap-2">
+                    {(['contacted', 'interested', 'registered'] as TimelineMetric[]).map(m => {
+                        const active = selectedMetrics.includes(m);
+                        const color = metricColors[m];
+                        return (
+                            <button
+                                key={m}
+                                onClick={() => toggleMetric(m)}
+                                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all border ${active
+                                    ? 'bg-slate-900 text-white border-slate-900 shadow-sm'
+                                    : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'
+                                    }`}
+                                style={active ? { backgroundColor: color, borderColor: color } : {}}
+                            >
+                                {m.charAt(0).toUpperCase() + m.slice(1)}
+                            </button>
+                        );
+                    })}
+                </div>
+            </div>
+            <div className="relative w-full flex-1 flex">
+                {/* Y-Axis Scale Labels */}
+                <div className="flex flex-col justify-between items-end pr-4 text-[10px] font-medium text-slate-400 pb-[24px]" style={{ height: `${chartHeight}px` }}>
+                    {scaleMarkers.map((marker, i) => (
+                        <span key={i} className={`leading-none ${i === scaleMarkers.length - 1 ? 'translate-y-1' : ''}`}>{marker}</span>
+                    ))}
+                </div>
+
+                {/* Graph Area */}
+                <div className="relative flex-1 h-full">
+                    {/* Horizontal Grid Lines */}
+                    <div className="absolute inset-0 flex flex-col justify-between pb-[24px]" style={{ height: `${chartHeight}px` }}>
+                        {scaleMarkers.map((_, i) => (
+                            <div key={i} className={`w-full border-t border-slate-100 ${i === scaleMarkers.length - 1 ? 'border-t-slate-200' : ''}`} />
+                        ))}
+                    </div>
+
+                    <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="absolute inset-0 w-full h-full" preserveAspectRatio="none">
+                        <defs>
+                            {selectedMetrics.map(m => (
+                                <linearGradient key={`grad-${m}`} id={`grad-${m}`} x1="0%" y1="0%" x2="0%" y2="100%">
+                                    <stop offset="0%" stopColor={metricColors[m]} stopOpacity="0.2" />
+                                    <stop offset="100%" stopColor={metricColors[m]} stopOpacity="0" />
+                                </linearGradient>
+                            ))}
+                        </defs>
+                        {timeline.length > 0 && selectedMetrics.map(m => (
+                            <g key={`line-group-${m}`}>
+                                <polyline
+                                    fill="none"
+                                    stroke={metricColors[m]}
+                                    strokeWidth="1.5"
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    points={getPoints(m)}
+                                    className="transition-all duration-300"
+                                />
+                                {/* Only show fill if single metric to avoid mess, or low opacity */}
+                                {selectedMetrics.length === 1 && (
+                                    <polygon
+                                        fill={`url(#grad-${m})`}
+                                        points={`${padding.left},${padding.top + innerHeight} ${getPoints(m)} ${padding.left + innerWidth},${padding.top + innerHeight}`}
+                                    />
+                                )}
+                            </g>
+                        ))}
+                    </svg>
+                </div>
+            </div>
+            <div className="flex justify-between mt-auto pt-4 text-xs text-slate-400 font-medium">
+                <span>{timeline[0]?.date}</span>
+                <span className="opacity-60 italic">30 day cumulative trend</span>
+                <span>{timeline[timeline.length - 1]?.date}</span>
+            </div>
+        </div>
+    );
+}
+
 interface Company {
     id: string;
     companyName: string;
@@ -46,9 +183,11 @@ export default function Analytics() {
     const { user: currentUser } = useCurrentUser();
     const [data, setData] = useState<Company[]>([]);
     const [history, setHistory] = useState<HistoryEntry[]>([]);
+    const [dailyStats, setDailyStats] = useState<any[]>([]);
     const [committeeMembers, setCommitteeMembers] = useState<CommitteeMember[]>([]);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
+    const [selectedUserFilter, setSelectedUserFilter] = useState<string>('All');
 
     const fetchData = async (refresh = false) => {
         if (refresh) setRefreshing(true);
@@ -57,6 +196,7 @@ export default function Analytics() {
             const responseData = await res.json();
             setData(responseData.companies || []);
             setHistory(responseData.history || []);
+            setDailyStats(responseData.dailyStats || []);
             setCommitteeMembers(responseData.committeeMembers || []);
         } catch (err) {
             console.error('Failed to load data', err);
@@ -73,6 +213,7 @@ export default function Analytics() {
     // --- Calculations ---
 
     const stats = useMemo(() => {
+        console.log(">>> [DEBUG GRAPH] stats useMemo TRIGGERED", { dataLength: data.length, historyLength: history.length });
         if (data.length === 0) return null;
 
         const total = data.length;
@@ -136,38 +277,38 @@ export default function Analytics() {
             }))
             .sort((a, b) => b.registered - a.registered || b.percentage - a.percentage);
 
-        // Timeline Data (Last 30 days)
-        // Group history by date and type
-        const timeline: Record<string, { contacted: number; interested: number; registered: number }> = {};
+        // Timeline Data (Last 30 days) using explicit DailyStats
+        const cumulativeTimeline: { date: string; contacted: number; interested: number; registered: number }[] = [];
         const daysToShow = 30;
         const now = new Date();
         for (let i = daysToShow; i >= 0; i--) {
             const d = new Date(now);
             d.setDate(d.getDate() - i);
-            timeline[d.toISOString().split('T')[0]] = { contacted: 0, interested: 0, registered: 0 };
+            const dateStr = d.toLocaleDateString('en-CA', { timeZone: 'Asia/Singapore' }); // YYYY-MM-DD
+
+            // Find most recent stat for this date or earlier (fills gaps where no updates happened)
+            const pastStats = dailyStats.filter(s => s.date <= dateStr).sort((a, b) => b.date.localeCompare(a.date));
+            const stat = pastStats[0];
+
+            if (stat) {
+                // To keep the graph semantics unchanged matching Dashboard format (cumulative values)
+                cumulativeTimeline.push({
+                    date: dateStr.substring(5).replace('-', '/'),
+                    contacted: (stat.contacted || 0) + (stat.interested || 0) + (stat.registered || 0) + (stat.noReply || 0),
+                    interested: (stat.interested || 0) + (stat.registered || 0),
+                    registered: stat.registered || 0
+                });
+            } else {
+                cumulativeTimeline.push({
+                    date: dateStr.substring(5).replace('-', '/'),
+                    contacted: 0,
+                    interested: 0,
+                    registered: 0
+                });
+            }
         }
 
-        // We estimate transitions from history logs
-        // This is a bit complex without explicit state machine logs, so we'll look for keywords
-        history.forEach(h => {
-            const date = h.timestamp.split('T')[0];
-            if (!timeline[date]) return;
-
-            const r = (h.remark || h.action).toLowerCase();
-            if (r.includes('status: contacted') || r.includes('outreach')) timeline[date].contacted++;
-            if (r.includes('status: interested') || r.includes('company reply')) timeline[date].interested++;
-            if (r.includes('status: registered') || r.includes('completed')) timeline[date].registered++;
-        });
-
-        // Convert to cumulative
-        const timelineList = Object.entries(timeline).sort((a, b) => a[0].localeCompare(b[0]));
-        let cumContacted = 0, cumInterested = 0, cumRegistered = 0;
-        const cumulativeTimeline = timelineList.map(([date, counts]) => {
-            cumContacted += counts.contacted;
-            cumInterested += counts.interested;
-            cumRegistered += counts.registered;
-            return { date, contacted: cumContacted, interested: cumInterested, registered: cumRegistered };
-        });
+        console.log('[DEBUG GRAPH] Final Cumulative Timeline fed from Daily_Stats:', cumulativeTimeline);
 
         // Active members (last activity per user from history)
         const memberActivityMap = new Map<string, string>();
@@ -200,6 +341,26 @@ export default function Analytics() {
             realMembers
         };
     }, [data, history]);
+
+    const processedLogs = useMemo(() => {
+        let logs = [...history].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+        if (selectedUserFilter !== 'All') {
+            logs = logs.filter(log => log.user === selectedUserFilter);
+        }
+
+        // Use string keys so lookup works whether companyId/id are string or number (e.g. from Sheets/JSON)
+        const companyMap = new Map(data.map(c => [String(c.id), c.companyName]));
+
+        return logs.map(log => {
+            const id = log.companyId != null ? String(log.companyId) : '';
+            const resolvedName = companyMap.get(id);
+            return {
+                ...log,
+                companyName: resolvedName != null && resolvedName !== '' ? resolvedName : (id ? `Company (${id})` : '—')
+            };
+        });
+    }, [history, data, selectedUserFilter]);
 
     if (loading) {
         return (
@@ -351,49 +512,7 @@ export default function Analytics() {
                 </div>
 
                 {/* Row 3: Timeline Graph */}
-                <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8">
-                    <h3 className="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-8">Outreach Performance Over Time</h3>
-                    <div className="h-64 relative">
-                        {/* Simplified Legend */}
-                        <div className="absolute top-0 right-0 flex gap-4 text-xs font-medium">
-                            <div className="flex items-center gap-1.5"><div className="w-3 h-0.5 bg-blue-500" /> Contacted</div>
-                            <div className="flex items-center gap-1.5"><div className="w-3 h-0.5 bg-purple-500" /> Interested</div>
-                            <div className="flex items-center gap-1.5"><div className="w-3 h-0.5 bg-green-500" /> Registered</div>
-                        </div>
-
-                        {/* Chart Area */}
-                        <div className="absolute inset-0 flex items-end justify-between pt-8">
-                            {stats.timeline.map((point, i) => {
-                                const max = Math.max(...stats.timeline.map(p => p.contacted), 1);
-                                return (
-                                    <div key={point.date} className="group relative flex-1 h-full flex flex-col justify-end gap-1 px-0.5">
-                                        <div className="w-full bg-slate-100 h-full absolute inset-0 opacity-0 group-hover:opacity-10 transition-opacity" />
-
-                                        {/* Registered Line Segment */}
-                                        <div className="w-full bg-green-500 z-30 transition-all" style={{ height: `${(point.registered / max) * 100}%` }} />
-                                        {/* Interested Line Segment */}
-                                        <div className="w-full bg-purple-500 z-20 transition-all" style={{ height: `${(point.interested / max) * 100}%` }} />
-                                        {/* Contacted Line Segment */}
-                                        <div className="w-full bg-blue-500 z-10 transition-all" style={{ height: `${(point.contacted / max) * 100}%` }} />
-
-                                        {/* Tooltip on hover */}
-                                        <div className="absolute -top-16 left-1/2 -translate-x-1/2 bg-slate-900 text-white p-2 rounded text-[10px] hidden group-hover:block z-50 whitespace-nowrap shadow-xl">
-                                            <p className="font-bold border-b border-slate-700 pb-1 mb-1">{point.date}</p>
-                                            <p>Contacted: {point.contacted}</p>
-                                            <p>Interested: {point.interested}</p>
-                                            <p>Registered: {point.registered}</p>
-                                        </div>
-                                    </div>
-                                );
-                            })}
-                        </div>
-                    </div>
-                    <div className="flex justify-between mt-4 text-[10px] text-slate-400 font-medium">
-                        <span>{stats.timeline[0]?.date}</span>
-                        <span>Outreach Activity Trend (Last 30 Days)</span>
-                        <span>{stats.timeline[stats.timeline.length - 1]?.date}</span>
-                    </div>
-                </div>
+                <OutreachPerformanceLineChart timeline={stats.timeline} />
 
                 {/* Team & Admin Section: Active Members, Leaderboard, Flagged */}
                 {currentUser?.isCommitteeMember && (
@@ -502,6 +621,78 @@ export default function Analytics() {
                                     </div>
                                 )}
                             </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* Admin-Only: Full Logs View */}
+                {currentUser?.role === 'Admin' && (
+                    <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                        <div className="p-6 border-b border-slate-100 flex items-center justify-between">
+                            <h3 className="text-sm font-semibold text-slate-500 uppercase tracking-wider flex items-center gap-2">
+                                <ClockIcon className="w-5 h-5 text-blue-500" />
+                                Recent Activity Logs
+                            </h3>
+                            <div className="flex items-center gap-2">
+                                <span className="text-sm font-medium text-slate-600">Filter by User:</span>
+                                <select
+                                    className="text-sm border-slate-200 rounded-lg shadow-sm focus:border-blue-500 focus:ring-blue-500 py-1.5 pl-3 pr-8"
+                                    value={selectedUserFilter}
+                                    onChange={(e) => setSelectedUserFilter(e.target.value)}
+                                >
+                                    <option value="All">All Members</option>
+                                    {stats.realMembers.map(m => (
+                                        <option key={m.name} value={m.name}>{m.name}</option>
+                                    ))}
+                                </select>
+                            </div>
+                        </div>
+                        <div className="overflow-x-auto max-h-96 overflow-y-auto custom-scrollbar">
+                            <table className="w-full text-left text-sm whitespace-nowrap">
+                                <thead className="bg-slate-50 text-slate-500 font-medium text-xs sticky top-0 z-10">
+                                    <tr>
+                                        <th className="px-6 py-4">Date & Time</th>
+                                        <th className="px-6 py-4">Member Name</th>
+                                        <th className="px-6 py-4">Company Name</th>
+                                        <th className="px-6 py-4 w-full">Action / Remark</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100">
+                                    {processedLogs.length > 0 ? processedLogs.map(log => {
+                                        const date = new Date(log.timestamp);
+                                        const dateStr = date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+                                        const timeStr = date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+                                        return (
+                                            <tr key={log.id} className="hover:bg-slate-50 transition-colors">
+                                                <td className="px-6 py-4 text-slate-600">
+                                                    <div className="flex flex-col">
+                                                        <span className="font-semibold text-slate-900">{dateStr}</span>
+                                                        <span className="text-xs text-slate-400">{timeStr}</span>
+                                                    </div>
+                                                </td>
+                                                <td className="px-6 py-4">
+                                                    <div className="flex items-center gap-2">
+                                                        <div className="w-6 h-6 rounded-full bg-blue-50 flex items-center justify-center text-[10px] font-bold text-blue-600">
+                                                            {log.user.charAt(0)}
+                                                        </div>
+                                                        <span className="font-medium text-slate-800">{log.user}</span>
+                                                    </div>
+                                                </td>
+                                                <td className="px-6 py-4 font-medium text-slate-700">{log.companyName}</td>
+                                                <td className="px-6 py-4 text-slate-600 whitespace-normal min-w-[300px]">
+                                                    {log.remark || log.action}
+                                                </td>
+                                            </tr>
+                                        );
+                                    }) : (
+                                        <tr>
+                                            <td colSpan={4} className="px-6 py-8 text-center text-slate-400 text-sm italic">
+                                                No logs found
+                                            </td>
+                                        </tr>
+                                    )}
+                                </tbody>
+                            </table>
                         </div>
                     </div>
                 )}

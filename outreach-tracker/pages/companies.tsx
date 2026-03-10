@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/router';
 import { useCurrentUser } from '../contexts/CurrentUserContext';
 import { useBackgroundTasks } from '../contexts/BackgroundTasksContext';
@@ -8,6 +8,14 @@ import ConfirmModal from '../components/ConfirmModal';
 import AddCompanyModal from '../components/AddCompanyModal';
 import { TableCellsIcon, PlusIcon } from '@heroicons/react/24/outline';
 import { disciplineToDisplay } from '../lib/discipline-mapping';
+import {
+    calculateTimeSlots,
+    getEndTime,
+    checkBlockedPeriodWarnings,
+    formatTime,
+    DEFAULT_SCHEDULE_SETTINGS,
+    ScheduleSettings,
+} from '../lib/schedule-calculator';
 
 interface Company {
     id: string;
@@ -50,11 +58,80 @@ export default function CompaniesPage() {
     const [showAddCompanyModal, setShowAddCompanyModal] = useState(false);
     const { addTask, completeTask, failTask } = useBackgroundTasks();
 
+    // Email schedule state
+    const [scheduleDate, setScheduleDate] = useState('');
+    const [scheduleStartTime, setScheduleStartTime] = useState('');
+    const [scheduleSettings, setScheduleSettings] = useState<ScheduleSettings>(DEFAULT_SCHEDULE_SETTINGS);
+    const [isFetchingSlot, setIsFetchingSlot] = useState(false);
+    const [projectedSlots, setProjectedSlots] = useState<string[] | null>(null);
+    const [scheduleMap, setScheduleMap] = useState<Record<string, { date: string; time: string }>>({});
+
     const showError = (title: string, message: string) => {
         setErrorTitle(title);
         setErrorMessage(message);
         setShowErrorModal(true);
     };
+
+    // Fetch the next available start time + settings whenever the date changes
+    const fetchAvailableSlot = useCallback(async (date: string) => {
+        if (!date) return;
+        setIsFetchingSlot(true);
+        try {
+            const res = await fetch(`/api/email-schedule/available-slots?date=${date}`);
+            if (res.ok) {
+                const json = await res.json();
+                setScheduleStartTime(json.nextStartTime || '08:00');
+                if (json.settings) setScheduleSettings(json.settings);
+            }
+        } catch {
+            setScheduleStartTime('08:00');
+        } finally {
+            setIsFetchingSlot(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        if (scheduleDate) fetchAvailableSlot(scheduleDate);
+    }, [scheduleDate, fetchAvailableSlot]);
+
+    const count = selectedCompanies.size;
+    useEffect(() => {
+        if (!scheduleDate || !scheduleStartTime || count === 0) {
+            setProjectedSlots(null);
+            return;
+        }
+        let cancelled = false;
+        const params = new URLSearchParams({ date: scheduleDate, count: String(count), startTime: scheduleStartTime });
+        fetch(`/api/email-schedule/available-slots?${params}`)
+            .then(res => res.ok ? res.json() : null)
+            .then(json => {
+                if (!cancelled && json?.slots?.length === count) {
+                    setProjectedSlots(json.slots);
+                    if (json.settings) setScheduleSettings(json.settings);
+                } else {
+                    setProjectedSlots(null);
+                }
+            })
+            .catch(() => setProjectedSlots(null));
+        return () => { cancelled = true; };
+    }, [scheduleDate, scheduleStartTime, count]);
+
+    const schedulePreview = (() => {
+        if (!scheduleDate || !scheduleStartTime || count === 0) return null;
+        const slots =
+            projectedSlots && projectedSlots.length === count
+                ? projectedSlots
+                : calculateTimeSlots(
+                    scheduleStartTime,
+                    count,
+                    scheduleSettings.blockedPeriods,
+                    scheduleSettings.emailsPerBatch,
+                    scheduleSettings.batchIntervalMinutes,
+                );
+        const endTime = getEndTime(slots);
+        const warnings = checkBlockedPeriodWarnings(slots, scheduleSettings.blockedPeriods);
+        return { slots, endTime, warnings };
+    })();
 
     const fetchData = async (forceRefresh = false) => {
         setLoading(true);
@@ -109,7 +186,20 @@ export default function CompaniesPage() {
         }
     }, [user, effectiveIsAdmin]);
 
-    // Transform data for AllCompaniesTable component
+    useEffect(() => {
+        if (data.length === 0) return;
+        fetch('/api/email-schedule')
+            .then(res => res.ok ? res.json() : null)
+            .then(json => {
+                const map: Record<string, { date: string; time: string }> = {};
+                (json?.entries || []).forEach((e: { companyId: string; date: string; time: string }) => {
+                    map[e.companyId] = { date: e.date, time: e.time };
+                });
+                setScheduleMap(map);
+            })
+            .catch(() => setScheduleMap({}));
+    }, [data.length]);
+
     const transformedCompanies = data.map(company => ({
         id: company.id,
         name: company.companyName || company.name || '',
@@ -120,32 +210,17 @@ export default function CompaniesPage() {
         lastUpdated: company.lastUpdated || company.lastCompanyActivity || '',
         isFlagged: company.isFlagged,
         discipline: company.discipline || '',
-        targetSponsorshipTier: company.targetSponsorshipTier || ''
+        targetSponsorshipTier: company.targetSponsorshipTier || '',
+        scheduledDate: scheduleMap[company.id]?.date,
+        scheduledTime: scheduleMap[company.id]?.time,
     }));
 
     const handleCompanyClick = (companyId: string) => {
-        router.push(`/companies/${encodeURIComponent(companyId)}`);
+        router.push(`/companies/${encodeURIComponent(companyId)}?from=all`);
     };
 
     const handleBulkAssign = async (assignee: string) => {
         if (!assignee || selectedCompanies.size === 0 || !user?.isAdmin) return;
-
-        // Validation for Unassignment
-        if (assignee === '__UNASSIGN__') {
-            const invalidCompanies = Array.from(selectedCompanies).filter(id => {
-                const company = data.find(c => c.id === id);
-                return company && company.status !== 'To Contact';
-            });
-
-            if (invalidCompanies.length > 0) {
-                showError(
-                    "Action Restricted",
-                    "Unassignment is only allowed for companies with 'To Contact' status.\n\nFor other statuses, please reassign to a new PIC."
-                );
-                setSelectedAssignee(''); // Reset dropdown
-                return;
-            }
-        }
 
         // Store pending assignment and show modal
         setPendingAssignment({ assignee });
@@ -187,10 +262,14 @@ export default function CompaniesPage() {
         setLastSelectedIndex(null);
         setShowConfirmModal(false);
         setPendingAssignment(null);
+        setScheduleDate('');
+        setScheduleStartTime('');
         // Note: We deliberately skip setIsAssigning(true) to avoid blocking the UI
 
         // 3. Background API Call
         const taskId = addTask(`Syncing assignment for ${count} ${count === 1 ? 'company' : 'companies'}...`);
+        const companyNames: Record<string, string> = {};
+        data.forEach(c => { if (selectedCompanies.has(c.id)) companyNames[c.id] = c.companyName || c.name || c.id; });
         try {
             const response = await fetch('/api/bulk-assign', {
                 method: 'POST',
@@ -198,6 +277,8 @@ export default function CompaniesPage() {
                 body: JSON.stringify({
                     companyIds: companiesToUpdate,
                     assignee,
+                    companyNames,
+                    ...(scheduleDate && scheduleStartTime ? { scheduleDate, scheduleStartTime } : {}),
                 }),
             });
 
@@ -259,7 +340,7 @@ export default function CompaniesPage() {
                             </svg>
                             Refresh
                         </button>
-                        {user?.isCommitteeMember && (
+                        {user?.canEditCompanies && (
                             <button
                                 onClick={() => setShowAddCompanyModal(true)}
                                 className="inline-flex items-center gap-2 px-4 py-2.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors shadow-sm"
@@ -284,61 +365,145 @@ export default function CompaniesPage() {
 
             {/* Bulk Action Bar */}
             {effectiveIsAdmin && selectedCompanies.size > 0 && (
-                <div className="fixed bottom-6 left-1/2 transform -translate-x-1/2 bg-blue-600 text-white px-6 py-4 rounded-lg shadow-2xl flex items-center gap-4 z-50 border border-blue-500">
-                    {/* Selection Counter */}
-                    <div className="flex items-center gap-2 px-3 py-1.5 bg-blue-700 rounded-md">
-                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
-                        </svg>
-                        <span className="font-semibold text-lg">{selectedCompanies.size}</span>
-                        <span className="text-blue-100">
-                            {selectedCompanies.size === 1 ? 'company' : 'companies'} selected
-                        </span>
+                <div className="fixed bottom-6 left-1/2 transform -translate-x-1/2 z-50 w-[min(96vw,860px)]">
+                    <div className="bg-blue-600 text-white px-5 py-4 rounded-xl shadow-2xl border border-blue-500 space-y-3">
+                        {/* Row 1: counter + assignee + clear */}
+                        <div className="flex flex-wrap items-center gap-3">
+                            {/* Selection Counter */}
+                            <div className="flex items-center gap-2 px-3 py-1.5 bg-blue-700 rounded-md shrink-0">
+                                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+                                </svg>
+                                <span className="font-semibold text-lg">{selectedCompanies.size}</span>
+                                <span className="text-blue-100">
+                                    {selectedCompanies.size === 1 ? 'company' : 'companies'} selected
+                                </span>
+                            </div>
+
+                            {/* Assignee dropdown */}
+                            <select
+                                className="flex-1 min-w-[160px] px-3 py-2 bg-white text-slate-900 rounded-lg font-medium border-2 border-blue-300 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                                value={selectedAssignee}
+                                onChange={(e) => setSelectedAssignee(e.target.value)}
+                            >
+                                <option value="">Select Assignee...</option>
+                                <option value="__UNASSIGN__" className="text-red-600 font-medium">Unassign (Clear PIC)</option>
+                                <hr />
+                                {committeeMembers.map(member => (
+                                    <option key={member.name} value={member.name}>{member.name}</option>
+                                ))}
+                            </select>
+
+                            <button
+                                onClick={() => handleBulkAssign(selectedAssignee)}
+                                disabled={!selectedAssignee}
+                                className={`px-4 py-2 rounded-lg font-bold transition-all transform active:scale-95 shrink-0 ${selectedAssignee
+                                    ? 'bg-white text-blue-600 hover:bg-blue-50 shadow-md'
+                                    : 'bg-blue-800 text-blue-300 cursor-not-allowed'
+                                    }`}
+                            >
+                                Assign
+                            </button>
+
+                            <div className="h-8 w-px bg-blue-400 hidden sm:block"></div>
+
+                            <button
+                                onClick={() => {
+                                    setSelectedCompanies(new Set());
+                                    setLastSelectedIndex(null);
+                                    setScheduleDate('');
+                                    setScheduleStartTime('');
+                                }}
+                                className="px-3 py-2 bg-blue-500 hover:bg-blue-400 rounded-lg font-medium transition-colors flex items-center gap-1.5 shrink-0"
+                            >
+                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                                Clear
+                            </button>
+                        </div>
+
+                        {/* Row 2: optional schedule (only when assigning a real member) */}
+                        {selectedAssignee && selectedAssignee !== '__UNASSIGN__' && (
+                            <div className="border-t border-blue-500 pt-3 space-y-2">
+                                <p className="text-xs font-semibold text-blue-200 uppercase tracking-wide">
+                                    Schedule Emails (optional)
+                                </p>
+                                <div className="flex flex-wrap items-center gap-3">
+                                    {/* Date picker */}
+                                    <div className="flex flex-col gap-0.5">
+                                        <label className="text-xs text-blue-200">Send Date</label>
+                                        <input
+                                            type="date"
+                                            value={scheduleDate}
+                                            min={new Date().toISOString().slice(0, 10)}
+                                            onChange={e => setScheduleDate(e.target.value)}
+                                            className="px-3 py-1.5 bg-white text-slate-900 rounded-lg text-sm border-2 border-blue-300 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                                        />
+                                    </div>
+
+                                    {/* Start time */}
+                                    {scheduleDate && (
+                                        <div className="flex flex-col gap-0.5">
+                                            <label className="text-xs text-blue-200 flex items-center gap-1">
+                                                Start Time
+                                                {isFetchingSlot && (
+                                                    <span className="text-blue-300 text-[10px]">(loading...)</span>
+                                                )}
+                                            </label>
+                                            <input
+                                                type="time"
+                                                value={scheduleStartTime}
+                                                onChange={e => setScheduleStartTime(e.target.value)}
+                                                className="px-3 py-1.5 bg-white text-slate-900 rounded-lg text-sm border-2 border-blue-300 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                                            />
+                                        </div>
+                                    )}
+
+                                    {/* End time preview */}
+                                    {schedulePreview?.endTime && (
+                                        <div className="flex flex-col gap-0.5">
+                                            <label className="text-xs text-blue-200">End Time</label>
+                                            <div className="px-3 py-1.5 bg-blue-700 rounded-lg text-sm font-medium">
+                                                {formatTime(schedulePreview.endTime)}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Rate info */}
+                                    {scheduleDate && scheduleStartTime && (
+                                        <div className="text-xs text-blue-200 self-end pb-1.5">
+                                            {scheduleSettings.emailsPerBatch} emails / {scheduleSettings.batchIntervalMinutes} min
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* Warnings */}
+                                {schedulePreview && schedulePreview.warnings.length > 0 && (
+                                    <div className="flex flex-col gap-1 mt-1">
+                                        {schedulePreview.warnings.map((w, i) => (
+                                            <div key={i} className="flex items-start gap-2 px-3 py-2 bg-amber-500/20 border border-amber-400/40 rounded-lg text-xs text-amber-200">
+                                                <svg className="w-4 h-4 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                                                </svg>
+                                                {w.message}
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+
+                                {/* Green confirmation when clean */}
+                                {scheduleDate && scheduleStartTime && schedulePreview && schedulePreview.warnings.length === 0 && (
+                                    <div className="flex items-center gap-2 px-3 py-2 bg-green-500/20 border border-green-400/40 rounded-lg text-xs text-green-200">
+                                        <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                        </svg>
+                                        Schedule looks good — {selectedCompanies.size} emails from {formatTime(scheduleStartTime)} to {schedulePreview.endTime ? formatTime(schedulePreview.endTime) : '—'}
+                                    </div>
+                                )}
+                            </div>
+                        )}
                     </div>
-
-                    {/* Assign Dropdown & Button */}
-                    <div className="flex items-center gap-2">
-                        <select
-                            className="px-4 py-2 bg-white text-slate-900 rounded-lg font-medium border-2 border-blue-300 focus:outline-none focus:ring-2 focus:ring-blue-400"
-                            value={selectedAssignee}
-                            onChange={(e) => setSelectedAssignee(e.target.value)}
-                        >
-                            <option value="">Select Assignee...</option>
-                            <option value="__UNASSIGN__" className="text-red-600 font-medium">Unassign (Clear PIC)</option>
-                            <hr />
-                            {committeeMembers.map(member => (
-                                <option key={member.name} value={member.name}>{member.name}</option>
-                            ))}
-                        </select>
-
-                        <button
-                            onClick={() => handleBulkAssign(selectedAssignee)}
-                            disabled={!selectedAssignee}
-                            className={`px-4 py-2 rounded-lg font-bold transition-all transform active:scale-95 ${selectedAssignee
-                                ? 'bg-white text-blue-600 hover:bg-blue-50 shadow-md'
-                                : 'bg-blue-800 text-blue-300 cursor-not-allowed'
-                                }`}
-                        >
-                            Assign
-                        </button>
-                    </div>
-
-                    {/* Divider */}
-                    <div className="h-8 w-px bg-blue-400 mx-2"></div>
-
-                    {/* Clear Selection Button */}
-                    <button
-                        onClick={() => {
-                            setSelectedCompanies(new Set());
-                            setLastSelectedIndex(null);
-                        }}
-                        className="px-4 py-2 bg-blue-500 hover:bg-blue-400 rounded-lg font-medium transition-colors flex items-center gap-2"
-                    >
-                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                        </svg>
-                        Clear
-                    </button>
                 </div>
             )}
 
