@@ -109,9 +109,9 @@ export default function CommitteeWorkspace({
         companies: filteredCompanies.filter(c => c.status === column.id)
     }));
 
-    // Flat list in display order (column order, then by name) for shift-click range selection
+    // Flat list in display order: must match render order (column order, then companies as shown in each column - no sort)
     const companiesInOrder = useMemo(
-        () => groupedCompanies.flatMap(col => [...col.companies].sort((a, b) => a.name.localeCompare(b.name))),
+        () => groupedCompanies.flatMap(col => [...col.companies]),
         [groupedCompanies]
     );
 
@@ -440,7 +440,7 @@ export default function CommitteeWorkspace({
                                         onClick={(e) => handleCompanySelect(company, e)}
                                         onDoubleClick={() => handleCompanyDoubleClick(company.id)}
                                         onMouseLeave={handleNameMouseLeave}
-                                        className={`relative bg-white rounded border py-1.5 px-2 cursor-pointer transition-all hover:shadow-sm min-w-0 flex items-center gap-2 ${isSelected ? 'ring-2 ring-blue-500 border-blue-400 bg-blue-50/50' : ''} ${company.replyNeeded ? 'border-slate-200 border-r-2 border-r-red-300 bg-red-50/50' : company.isStale ? 'border-2 border-amber-300 bg-amber-50/30' : 'border-slate-200'}`}
+                                        className={`relative bg-white rounded border py-1.5 px-2 cursor-pointer transition-all hover:shadow-sm min-w-0 flex items-center gap-2 select-none ${isSelected ? 'ring-2 ring-blue-500 border-blue-400 bg-blue-50/50' : ''} ${company.replyNeeded ? 'border-slate-200 border-r-2 border-r-red-300 bg-red-50/50' : company.isStale ? 'border-2 border-amber-300 bg-amber-50/30' : 'border-slate-200'}`}
                                         role="button"
                                         tabIndex={0}
                                         onKeyDown={(e) => {
@@ -472,7 +472,7 @@ export default function CommitteeWorkspace({
                                         onClick={(e) => handleCompanySelect(company, e)}
                                         onDoubleClick={() => handleCompanyDoubleClick(company.id)}
                                         onMouseLeave={handleNameMouseLeave}
-                                        className={`relative bg-white rounded-lg border p-2.5 cursor-pointer transition-all hover:shadow-sm group min-w-0 flex-shrink-0 ${isSelected ? 'ring-2 ring-blue-500 border-blue-400 bg-blue-50/50' : ''} ${company.replyNeeded ? 'border-red-300 bg-red-50/80' :
+                                        className={`relative bg-white rounded-lg border p-2.5 cursor-pointer transition-all hover:shadow-sm group min-w-0 flex-shrink-0 select-none ${isSelected ? 'ring-2 ring-blue-500 border-blue-400 bg-blue-50/50' : ''} ${company.replyNeeded ? 'border-red-300 bg-red-50/80' :
                                                 company.isStale ? 'border-amber-300 bg-amber-50/80' : 'border-slate-200'
                                             }`}
                                         role="button"

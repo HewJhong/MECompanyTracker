@@ -262,14 +262,14 @@ function ScheduleChip({
             style={style}
             className={`
                 group relative flex items-center gap-2 px-2 py-1.5 rounded-lg border min-w-0 w-full
-                transition-colors touch-none overflow-hidden
+                transition-colors touch-none overflow-hidden select-none
                 ${isSelected ? 'ring-2 ring-indigo-500 border-indigo-300 bg-indigo-50' : 'border-slate-200 hover:border-slate-300 bg-white hover:bg-slate-50'}
                 ${isDragging ? 'opacity-30' : ''}
             `}
         >
             <button
                 type="button"
-                className="flex items-center gap-1.5 min-w-0 flex-1 text-left outline-none overflow-hidden"
+                className="flex items-center gap-1.5 min-w-0 flex-1 text-left outline-none overflow-hidden select-none"
                 onClick={onSelect}
                 {...listeners}
                 {...attributes}
@@ -375,7 +375,7 @@ function EmailScheduleContent() {
     const [centerDate, setCenterDate] = useState<Date>(() => new Date());
 
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-    const [lastSelectedId, setLastSelectedId] = useState<string | null>(null);
+    const [lastSelectedKey, setLastSelectedKey] = useState<string | null>(null);
     const [activeId, setActiveId] = useState<string | null>(null);
 
     const [moveDate, setMoveDate] = useState('');
@@ -501,32 +501,36 @@ function EmailScheduleContent() {
             .sort((a, b) => b.count - a.count);
     }, [allAssignments, entries]);
 
-    const entriesInDocumentOrder = useMemo(() => {
-        const list = [...entries];
-        list.sort((a, b) => {
-            const d = a.date.localeCompare(b.date);
-            if (d !== 0) return d;
-            const t = normalizeTime(a.time).localeCompare(normalizeTime(b.time));
-            if (t !== 0) return t;
-            return a.order - b.order;
-        });
+    // Order used for shift-click range: must match exact render order (visible week only).
+    // Grid renders: for each date in visibleDates, for each slot in visibleTimeSlots, then slot entries.
+    const entriesInVisibleOrder = useMemo(() => {
+        const list: ScheduleEntry[] = [];
+        for (const group of dateGroups) {
+            for (const slot of visibleTimeSlots) {
+                const slotEntries = group.entries
+                    .filter(e => normalizeTime(e.time) === slot.time)
+                    .sort((a, b) => a.order - b.order);
+                list.push(...slotEntries);
+            }
+        }
         return list;
-    }, [entries]);
+    }, [dateGroups, visibleTimeSlots]);
 
     const handleSelectChip = useCallback((entry: ScheduleEntry, e: React.MouseEvent) => {
         const id = entry.companyId;
+        const entryKey = `${id}-${entry.date}`;
         if (e.shiftKey) {
             setSelectedIds(prev => {
-                if (!lastSelectedId) return new Set([id]);
-                const idxLast = entriesInDocumentOrder.findIndex(x => x.companyId === lastSelectedId);
-                const idxCur = entriesInDocumentOrder.findIndex(x => x.companyId === id);
+                if (!lastSelectedKey) return new Set([id]);
+                const idxLast = entriesInVisibleOrder.findIndex(x => `${x.companyId}-${x.date}` === lastSelectedKey);
+                const idxCur = entriesInVisibleOrder.findIndex(x => x.companyId === id && x.date === entry.date);
                 if (idxLast === -1 || idxCur === -1) return new Set([id]);
                 const [lo, hi] = idxLast <= idxCur ? [idxLast, idxCur] : [idxCur, idxLast];
                 const next = new Set(prev);
-                for (let i = lo; i <= hi; i++) next.add(entriesInDocumentOrder[i].companyId);
+                for (let i = lo; i <= hi; i++) next.add(entriesInVisibleOrder[i].companyId);
                 return next;
             });
-            setLastSelectedId(id);
+            setLastSelectedKey(entryKey);
             return;
         }
         if (e.metaKey || e.ctrlKey) {
@@ -536,12 +540,12 @@ function EmailScheduleContent() {
                 else next.add(id);
                 return next;
             });
-            setLastSelectedId(id);
+            setLastSelectedKey(entryKey);
             return;
         }
         setSelectedIds(new Set([id]));
-        setLastSelectedId(id);
-    }, [lastSelectedId, entriesInDocumentOrder]);
+        setLastSelectedKey(entryKey);
+    }, [lastSelectedKey, entriesInVisibleOrder]);
 
     useEffect(() => {
         const onKeyDown = (e: KeyboardEvent) => {
