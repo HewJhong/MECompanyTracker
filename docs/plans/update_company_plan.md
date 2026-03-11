@@ -334,7 +334,7 @@ This plan addresses the company page improvements outlined in `update_company_pl
 
 ---
 
-#### [MODIFY] [CommitteeWorkspace](file:///Users/jinhong/Documents/My%20Projects/ME%20Company%20Tracker/outreach-tracker/components/CommitteeWorkspace.tsx)
+#### [MODIFY] [CommitteeWorkspace](file:///Users/jinhong/Documents/My%20Projects/ME%20Company%20Tracker/outreach-tracker/components/committee-workspace.tsx)
 
 **Changes:**
 

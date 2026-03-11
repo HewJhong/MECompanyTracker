@@ -130,7 +130,7 @@ Add the Email Schedule page to the admin nav:
 
 ## Phase 4: Committee Workspace Integration
 
-### [MODIFY] `components/CommitteeWorkspace.tsx`
+### [MODIFY] `components/committee-workspace.tsx`
 
 - Add `scheduledTime?: string` to the `Company` interface
 - In the **full card view**, show the scheduled time if available:

@@ -39,7 +39,7 @@ The Outreach Tracker UI has been completely refactored with a modern, profession
    - Response rate metrics
    - Aggregate statistics
 
-3. **CommitteeWorkspace.tsx**
+3. **committee-workspace.tsx**
    - 4-column Kanban board
    - Search and filter functionality
    - Visual indicators for stale/flagged items
@@ -195,7 +195,7 @@ outreach-tracker/
 ├── components/
 │   ├── AllCompaniesTable.tsx      ✨ New
 │   ├── CommitteeLeaderboard.tsx   ✨ New
-│   ├── CommitteeWorkspace.tsx     ✨ New
+│   ├── committee-workspace.tsx     ✨ New
 │   ├── CompanyModal.tsx           ✨ New
 │   ├── DashboardStats.tsx         🎨 Enhanced
 │   ├── FlaggedItems.tsx           ✨ New

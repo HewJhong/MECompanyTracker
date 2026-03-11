@@ -92,7 +92,7 @@ January 29, 2026
 - Active Recently: <72 hours (blue)
 - Inactive: >3 days (red)
 
-### 5. **CommitteeWorkspace.tsx** ✅ New Component
+### 5. **committee-workspace.tsx** ✅ New Component
 **Purpose:** Kanban board for committee members to manage assignments
 
 **Features:**
@@ -255,7 +255,7 @@ Layout
     │   ├── CommitteeLeaderboard
     │   └── MemberActivity
     ├── Committee Workspace (committee.tsx)
-    │   └── CommitteeWorkspace
+    │   └── committee-workspace
     └── All Companies (companies.tsx)
         └── AllCompaniesTable
 
@@ -317,7 +317,7 @@ Shared Components:
 - `components/Layout.tsx` (Enhanced)
 - `components/FlaggedItems.tsx` (New)
 - `components/CommitteeLeaderboard.tsx` (New)
-- `components/CommitteeWorkspace.tsx` (New)
+- `components/committee-workspace.tsx` (New)
 - `components/AllCompaniesTable.tsx` (New)
 - `components/CompanyModal.tsx` (New)
 

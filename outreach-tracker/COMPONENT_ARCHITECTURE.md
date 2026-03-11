@@ -198,7 +198,7 @@ App
 │   └── Quick Action Cards
 │
 ├── Committee Page (/committee)
-│   └── CommitteeWorkspace
+│   └── committee-workspace
 │       ├── Search & Filter Controls
 │       └── Kanban Columns
 │           └── Company Cards

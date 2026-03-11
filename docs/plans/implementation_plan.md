@@ -35,7 +35,7 @@ Currently, the tracker assigns a Committee Member as the PIC for a company, but 
 +-------------------------------------------------------------+
 ```
 
-**Committee Workspace "Full" Card View (`components/CommitteeWorkspace.tsx`)**:
+**Committee Workspace "Full" Card View (`components/committee-workspace.tsx`)**:
 ```text
 +-------------------------------------------------------------+
 | ACME Corp                                                [P]| <- [P] is the Red Flag icon (isFlagged)
