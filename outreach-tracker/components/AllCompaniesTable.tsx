@@ -239,7 +239,8 @@ export default function AllCompaniesTable({
             const matchesId = company.id.toLowerCase().includes(columnFilters.id.toLowerCase());
             const matchesName = company.name.toLowerCase().includes(columnFilters.name.toLowerCase());
             const matchesStatus = columnFilters.status.length === 0 || columnFilters.status.includes(company.status);
-            const matchesDiscipline = columnFilters.discipline.length === 0 || (company.discipline && columnFilters.discipline.some((d: string) => company.discipline?.includes(d)));
+            const companyDisciplines = company.discipline ? company.discipline.split(',').map((d: string) => d.trim()).filter(Boolean) : [];
+            const matchesDiscipline = columnFilters.discipline.length === 0 || columnFilters.discipline.some((d: string) => companyDisciplines.includes(d));
             const matchesTier = columnFilters.targetSponsorshipTier.length === 0 || (company.targetSponsorshipTier && columnFilters.targetSponsorshipTier.includes(company.targetSponsorshipTier));
             const matchesAssignee = columnFilters.assignedTo.length === 0 || columnFilters.assignedTo.includes(company.assignedTo);
             const matchesContact =
