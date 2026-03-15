@@ -985,7 +985,7 @@ export default function CompanyDetailPage() {
 
         setCompany({ ...company, contacts: updatedContacts });
 
-        const taskId = addTask(`Removing ${targetContact.name} from currently contacting...`);
+        const taskId = addTask(`Removing ${targetContact.name} from Currently Contacting...`);
 
         try {
             const res = await fetch('/api/set-primary-contact', {
@@ -1001,8 +1001,8 @@ export default function CompanyDetailPage() {
             });
 
             if (res.ok) {
-                fetchData(true);
-                completeTask(taskId, `${targetContact.name} removed from currently contacting`);
+                if (!hasUnsavedChanges) fetchData(true);
+                completeTask(taskId, `${targetContact.name} removed from Currently Contacting`);
             } else {
                 throw new Error('Failed to clear contact methods');
             }
@@ -1042,7 +1042,8 @@ export default function CompanyDetailPage() {
 
         setCompany({ ...company, contacts: updatedContacts });
 
-        const label = isMethodActive ? `Marking ${method} as active for ${targetContact.name}...` : `Removing ${method} for ${targetContact.name}...`;
+        const methodLabel = method.charAt(0).toUpperCase() + method.slice(1);
+        const label = isMethodActive ? `Marking ${methodLabel} as active for ${targetContact.name}...` : `Removing ${methodLabel} for ${targetContact.name}...`;
         const taskId = addTask(label);
 
         try {
@@ -1059,8 +1060,8 @@ export default function CompanyDetailPage() {
             });
 
             if (res.ok) {
-                fetchData(true);
-                completeTask(taskId, isMethodActive ? `${method} marked active for ${targetContact.name}` : `${method} removed`);
+                if (!hasUnsavedChanges) fetchData(true);
+                completeTask(taskId, isMethodActive ? `${methodLabel} marked active for ${targetContact.name}` : `${methodLabel} removed`);
             } else {
                 throw new Error('Failed to update contact method');
             }
