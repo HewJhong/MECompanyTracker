@@ -56,6 +56,33 @@ The workflow uses this secret in the step:
 - **Manual run**  
   In the repo go to **Actions** → **Deploy Outreach Tracker** → **Run workflow** → **Run workflow**.
 
+---
+
+## 5. How to see when the action is triggered and deploying
+
+1. **Open the Actions tab**  
+   On GitHub: open your repo → click **Actions** in the top bar.
+
+2. **Check the workflow run**  
+   - You’ll see a run for **“Deploy Outreach Tracker”** (triggered by your push or by “Run workflow”).  
+   - **Yellow circle** = running.  
+   - **Green check** = succeeded.  
+   - **Red X** = failed.
+
+3. **Open the run for details**  
+   Click the run (e.g. the commit message or “Deploy Outreach Tracker”). You’ll see:
+   - **Build and deploy** job with steps: Checkout → Build → Authenticate → Deploy to Cloud Run → Show service URL.  
+   - Click a step to expand and see logs (e.g. build output, `gcloud` deploy progress).
+
+4. **Optional: get notified**  
+   Repo **Settings** → **Notifications** → enable **Actions** (or **Watch** the repo and choose “Custom” → Actions). You’ll get emails when a workflow fails (and optionally when it succeeds).
+
+So after you push: go to **Actions** and you’ll see the new run and whether it’s in progress or done.
+
+---
+
+## 6. What the workflow does
+
 The workflow will:
 
 1. Check out the code.
@@ -65,7 +92,7 @@ The workflow will:
 
 ---
 
-## 5. Optional: change project or region
+## 7. Optional: change project or region
 
 Edit the `env` block at the top of [`.github/workflows/deploy-outreach-tracker.yml`](../../.github/workflows/deploy-outreach-tracker.yml):
 
@@ -78,7 +105,7 @@ env:
 
 ---
 
-## 6. Optional: Workload Identity Federation (no key file)
+## 8. Optional: Workload Identity Federation (no key file)
 
 For better security you can avoid storing a JSON key and use **Workload Identity Federation** so GitHub OIDC tokens are exchanged for short-lived GCP credentials. Setup is more involved:
 
@@ -99,7 +126,7 @@ If you want to switch to this later, you can update the workflow and delete the 
 
 ---
 
-## 7. Troubleshooting
+## 9. Troubleshooting
 
 | Problem | What to check |
 |--------|----------------|
