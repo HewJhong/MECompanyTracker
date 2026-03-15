@@ -122,6 +122,7 @@ export default function CompanyDetailPage() {
     const [errorMessage, setErrorMessage] = useState('');
     const [showConfirmDeleteModal, setShowConfirmDeleteModal] = useState(false);
     const [contactToDelete, setContactToDelete] = useState<Contact | null>(null);
+    const [copiedContactField, setCopiedContactField] = useState<string | null>(null);
     const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
     const [showUnsavedWarning, setShowUnsavedWarning] = useState(true);
     const [showNavigationModal, setShowNavigationModal] = useState(false);
@@ -389,6 +390,8 @@ export default function CompanyDetailPage() {
             setFollowUpsCompleted(company.followUpsCompleted || 0);
             setLastCompanyActivity(company.lastCompanyActivity || company.lastUpdated || '');
             setSponsorshipTier(company.sponsorshipTier || '');
+            setChannel(company.channel || '');
+            setDaysAttending(company.daysAttending || '');
             setHasUnsavedChanges(false);
         }
     }, [company]);
@@ -883,6 +886,14 @@ export default function CompanyDetailPage() {
         }
     };
 
+    const handleCopyContactField = (text: string, fieldId: string) => {
+        if (!text?.trim()) return;
+        navigator.clipboard.writeText(text.trim()).then(() => {
+            setCopiedContactField(fieldId);
+            setTimeout(() => setCopiedContactField(null), 1500);
+        });
+    };
+
     const startEditingContact = (contact: Contact) => {
         setEditingContactId(contact.id);
         setNewContact({
@@ -1073,6 +1084,8 @@ export default function CompanyDetailPage() {
             setFollowUpsCompleted(company.followUpsCompleted || 0);
             setLastCompanyActivity(company.lastCompanyActivity || company.lastUpdated || '');
             setSponsorshipTier(company.sponsorshipTier || '');
+            setChannel(company.channel || '');
+            setDaysAttending(company.daysAttending || '');
             setRemarks('');
             setIsEditMode(false);
             setHasUnsavedChanges(false);
@@ -1657,8 +1670,28 @@ export default function CompanyDetailPage() {
                                         <div className="flex items-start justify-between">
                                             <div className="flex-1">
                                                 <div className="flex items-center gap-2 flex-wrap">
-                                                    <h4 className="font-semibold text-slate-900">{contact.name}</h4>
-                                                    {contact.role && <span className="text-xs text-slate-500 py-0.5 px-2 bg-slate-100 rounded-full">{contact.role}</span>}
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleCopyContactField(contact.name, `${contact.id}-name`)}
+                                                        title="Click to copy"
+                                                        className="font-semibold text-slate-900 text-left hover:bg-slate-100 rounded px-0.5 -mx-0.5 py-0.5 transition-colors cursor-pointer"
+                                                    >
+                                                        {contact.name}
+                                                    </button>
+                                                    {copiedContactField === `${contact.id}-name` && <span className="text-xs text-green-600 font-medium">Copied!</span>}
+                                                    {contact.role && (
+                                                        <>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => handleCopyContactField(contact.role!, `${contact.id}-role`)}
+                                                                title="Click to copy"
+                                                                className="text-xs text-slate-500 py-0.5 px-2 bg-slate-100 rounded-full hover:bg-slate-200 transition-colors cursor-pointer"
+                                                            >
+                                                                {contact.role}
+                                                            </button>
+                                                            {copiedContactField === `${contact.id}-role` && <span className="text-xs text-green-600 font-medium">Copied!</span>}
+                                                        </>
+                                                    )}
                                                     {contact.isActive && (
                                                         <span className="inline-flex items-center gap-1 text-xs text-blue-700 py-0.5 pl-2 pr-1 bg-blue-100 rounded-full font-medium">
                                                             Currently Contacting
@@ -1679,7 +1712,16 @@ export default function CompanyDetailPage() {
                                                     {contact.phone && (
                                                         <div className="flex items-center gap-1.5 group/method">
                                                             <div className={`text-sm flex items-center gap-1 ${contact.activeMethods?.includes('phone') ? 'text-amber-700 font-medium' : 'text-slate-600'}`}>
-                                                                <PhoneIcon className="w-4 h-4" />{contact.phone}
+                                                                <PhoneIcon className="w-4 h-4 shrink-0" />
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => handleCopyContactField(contact.phone!, `${contact.id}-phone`)}
+                                                                    title="Click to copy"
+                                                                    className="hover:bg-slate-100 rounded px-0.5 -mx-0.5 py-0.5 transition-colors cursor-pointer text-left"
+                                                                >
+                                                                    {contact.phone}
+                                                                </button>
+                                                                {copiedContactField === `${contact.id}-phone` && <span className="text-xs text-green-600 font-medium">Copied!</span>}
                                                             </div>
                                                             {canEdit && (
                                                                 <button
@@ -1701,7 +1743,16 @@ export default function CompanyDetailPage() {
                                                     {contact.email && (
                                                         <div className="flex items-center gap-1.5 group/method">
                                                             <div className={`text-sm flex items-center gap-1 ${contact.activeMethods?.includes('email') ? 'text-amber-700 font-medium' : 'text-slate-600'}`}>
-                                                                <EnvelopeIcon className="w-4 h-4" />{contact.email}
+                                                                <EnvelopeIcon className="w-4 h-4 shrink-0" />
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => handleCopyContactField(contact.email!, `${contact.id}-email`)}
+                                                                    title="Click to copy"
+                                                                    className="hover:bg-slate-100 rounded px-0.5 -mx-0.5 py-0.5 transition-colors cursor-pointer text-left"
+                                                                >
+                                                                    {contact.email}
+                                                                </button>
+                                                                {copiedContactField === `${contact.id}-email` && <span className="text-xs text-green-600 font-medium">Copied!</span>}
                                                             </div>
                                                             {canEdit && (
                                                                 <button
@@ -1721,7 +1772,19 @@ export default function CompanyDetailPage() {
                                                         </div>
                                                     )}
                                                 </div>
-                                                {contact.remark && <p className="text-xs text-slate-500 mt-2 italic">"{contact.remark}"</p>}
+                                                {contact.remark && (
+                                                    <p className="text-xs text-slate-500 mt-2 italic">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleCopyContactField(contact.remark!, `${contact.id}-remark`)}
+                                                            title="Click to copy"
+                                                            className="text-left hover:bg-slate-100 rounded px-0.5 -mx-0.5 py-0.5 transition-colors cursor-pointer"
+                                                        >
+                                                            "{contact.remark}"
+                                                        </button>
+                                                        {copiedContactField === `${contact.id}-remark` && <span className="text-xs text-green-600 font-medium ml-1">Copied!</span>}
+                                                    </p>
+                                                )}
                                             </div>
                                             <div className="flex gap-1">
                                                 {canEdit && (

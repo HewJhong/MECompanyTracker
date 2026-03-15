@@ -133,6 +133,7 @@ export default async function handler(
                     id,
                     companyName: t?.companyName || row[1] || 'Unknown',
                     status: t?.status || 'To Contact',
+                    channel: t?.channel || '',
                     urgencyScore: t?.urgencyScore || 0,
                     pic: t?.assignedPic || 'Unassigned',
                     followUpsCompleted: t?.followUpsCompleted || 0,
@@ -170,7 +171,15 @@ export default async function handler(
 
         const data = Array.from(companyMap.values());
         data.forEach(c => {
-            c.history = historyData.filter(h => h.companyId === c.id);
+            // No filter other than companyId – show all thread history for this company.
+            // Sort newest first so the latest updates appear at the top.
+            const companyHistory = historyData.filter(h => h.companyId === c.id);
+            companyHistory.sort((a, b) => {
+                const tA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
+                const tB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
+                return tB - tA;
+            });
+            c.history = companyHistory;
             const now = Date.now();
             const lu = c.lastUpdated ? new Date(c.lastUpdated).getTime() : 0;
             const la = c.lastCompanyActivity ? new Date(c.lastCompanyActivity).getTime() : 0;

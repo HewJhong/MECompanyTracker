@@ -12,6 +12,20 @@ import {
 } from '@heroicons/react/24/outline';
 import { formatTime } from '../lib/schedule-calculator';
 
+const COLUMN_WIDTHS = {
+    select: 50,
+    id: 120,
+    name: 280,
+    status: 200,
+    discipline: 160,
+    targetTier: 170,
+    contact: 260,
+    assignedTo: 180,
+    scheduled: 170,
+    lastUpdated: 200,
+    followUps: 120,
+} as const;
+
 interface Company {
     id: string;
     name: string;
@@ -443,7 +457,10 @@ export default function AllCompaniesTable({
                     <table className="w-full text-left text-sm" style={{ tableLayout: 'fixed' }}>
                         <thead className="bg-slate-50 border-b border-slate-200 sticky top-0 z-10">
                             <tr>
-                                <th className="px-4 py-3 text-xs font-medium text-slate-600 tracking-wider w-[50px] bg-slate-50">
+                                <th
+                                    className="px-4 py-3 text-xs font-medium text-slate-600 tracking-wider bg-slate-50"
+                                    style={{ width: COLUMN_WIDTHS.select }}
+                                >
                                     <input
                                         type="checkbox"
                                         checked={selectedCompanies.size > 0 && selectedCompanies.size === filteredAndSortedCompanies.length}
@@ -452,75 +469,105 @@ export default function AllCompaniesTable({
                                         title="Select All"
                                     />
                                 </th>
-                                <th className="px-6 py-3 text-xs font-medium text-slate-600 tracking-wider w-[120px] bg-slate-50">
+                                <th
+                                    className="px-6 py-3 text-xs font-medium text-slate-600 tracking-wider bg-slate-50 whitespace-nowrap"
+                                    style={{ width: COLUMN_WIDTHS.id }}
+                                >
                                     <button
                                         onClick={() => handleSort('id')}
-                                        className="flex items-center gap-2 hover:text-slate-900 transition-colors"
+                                        className="flex items-center gap-2 hover:text-slate-900 transition-colors whitespace-nowrap"
                                     >
                                         ID
                                         <SortIcon field="id" />
                                     </button>
                                 </th>
-                                <th className="px-6 py-3 text-xs font-medium text-slate-600 tracking-wider w-[240px] bg-slate-50">
+                                <th
+                                    className="px-6 py-3 text-xs font-medium text-slate-600 tracking-wider bg-slate-50 whitespace-nowrap"
+                                    style={{ width: COLUMN_WIDTHS.name }}
+                                >
                                     <button
                                         onClick={() => handleSort('name')}
-                                        className="flex items-center gap-2 hover:text-slate-900 transition-colors"
+                                        className="flex items-center gap-2 hover:text-slate-900 transition-colors whitespace-nowrap"
                                     >
                                         Company Name
                                         <SortIcon field="name" />
                                     </button>
                                 </th>
-                                <th className="px-6 py-3 text-xs font-medium text-slate-600 tracking-wider w-[180px] bg-slate-50">
+                                <th
+                                    className="px-6 py-3 text-xs font-medium text-slate-600 tracking-wider bg-slate-50 whitespace-nowrap"
+                                    style={{ width: COLUMN_WIDTHS.status }}
+                                >
                                     <button
                                         onClick={() => handleSort('status')}
-                                        className="flex items-center gap-2 hover:text-slate-900 transition-colors"
+                                        className="flex items-center gap-2 hover:text-slate-900 transition-colors whitespace-nowrap"
                                     >
                                         Status
                                         <SortIcon field="status" />
                                     </button>
                                 </th>
-                                <th className="px-6 py-3 text-xs font-medium text-slate-600 tracking-wider w-[120px] bg-slate-50">
+                                <th
+                                    className="px-6 py-3 text-xs font-medium text-slate-600 tracking-wider bg-slate-50 whitespace-nowrap"
+                                    style={{ width: COLUMN_WIDTHS.discipline }}
+                                >
                                     <span>Discipline</span>
                                 </th>
-                                <th className="px-6 py-3 text-xs font-medium text-slate-600 tracking-wider w-[120px] bg-slate-50">
+                                <th
+                                    className="px-6 py-3 text-xs font-medium text-slate-600 tracking-wider bg-slate-50 whitespace-nowrap"
+                                    style={{ width: COLUMN_WIDTHS.targetTier }}
+                                >
                                     <button
                                         onClick={() => handleSort('targetSponsorshipTier')}
-                                        className="flex items-center gap-2 hover:text-slate-900 transition-colors"
+                                        className="flex items-center gap-2 hover:text-slate-900 transition-colors whitespace-nowrap"
                                     >
                                         Target Tier
                                         <SortIcon field="targetSponsorshipTier" />
                                     </button>
                                 </th>
-                                <th className="px-6 py-3 text-xs font-medium text-slate-600 tracking-wider w-[220px] bg-slate-50">
+                                <th
+                                    className="px-6 py-3 text-xs font-medium text-slate-600 tracking-wider bg-slate-50 whitespace-nowrap"
+                                    style={{ width: COLUMN_WIDTHS.contact }}
+                                >
                                     <span>Contact Person</span>
                                 </th>
-                                <th className="px-6 py-3 text-xs font-medium text-slate-600 tracking-wider w-[160px] bg-slate-50">
+                                <th
+                                    className="px-6 py-3 text-xs font-medium text-slate-600 tracking-wider bg-slate-50 whitespace-nowrap"
+                                    style={{ width: COLUMN_WIDTHS.assignedTo }}
+                                >
                                     <button
                                         onClick={() => handleSort('assignedTo')}
-                                        className="flex items-center gap-2 hover:text-slate-900 transition-colors"
+                                        className="flex items-center gap-2 hover:text-slate-900 transition-colors whitespace-nowrap"
                                     >
                                         Assigned To
                                         <SortIcon field="assignedTo" />
                                     </button>
                                 </th>
                                 {showScheduleColumn && (
-                                    <th className="px-6 py-3 text-xs font-medium text-slate-600 tracking-wider w-[140px] bg-slate-50">
+                                    <th
+                                        className="px-6 py-3 text-xs font-medium text-slate-600 tracking-wider bg-slate-50 whitespace-nowrap"
+                                        style={{ width: COLUMN_WIDTHS.scheduled }}
+                                    >
                                         <span>Scheduled</span>
                                     </th>
                                 )}
-                                <th className="px-6 py-3 text-xs font-medium text-slate-600 tracking-wider w-[180px] bg-slate-50">
+                                <th
+                                    className="px-6 py-3 text-xs font-medium text-slate-600 tracking-wider bg-slate-50 whitespace-nowrap"
+                                    style={{ width: COLUMN_WIDTHS.lastUpdated }}
+                                >
                                     <button
                                         onClick={() => handleSort('lastUpdated')}
-                                        className="flex items-center gap-2 hover:text-slate-900 transition-colors"
+                                        className="flex items-center gap-2 hover:text-slate-900 transition-colors whitespace-nowrap"
                                     >
                                         Last Updated
                                         <SortIcon field="lastUpdated" />
                                     </button>
                                 </th>
-                                <th className="px-6 py-3 text-xs font-medium text-slate-600 tracking-wider w-[100px] bg-slate-50">
+                                <th
+                                    className="px-6 py-3 text-xs font-medium text-slate-600 tracking-wider bg-slate-50 whitespace-nowrap"
+                                    style={{ width: COLUMN_WIDTHS.followUps }}
+                                >
                                     <button
                                         onClick={() => handleSort('followUpsCompleted')}
-                                        className="flex items-center gap-2 hover:text-slate-900 transition-colors"
+                                        className="flex items-center gap-2 hover:text-slate-900 transition-colors whitespace-nowrap"
                                     >
                                         Follow Ups
                                         <SortIcon field="followUpsCompleted" />
@@ -529,8 +576,8 @@ export default function AllCompaniesTable({
                             </tr>
                             {/* Filter Row */}
                             <tr className="bg-white border-b border-slate-200">
-                                <th className="px-4 py-2 w-[50px] bg-white"></th>
-                                <th className="px-6 py-2 w-[120px] bg-white">
+                                <th className="px-4 py-2 bg-white" style={{ width: COLUMN_WIDTHS.select }}></th>
+                                <th className="px-6 py-2 bg-white" style={{ width: COLUMN_WIDTHS.id }}>
                                     <input
                                         type="text"
                                         value={columnFilters.id}
@@ -539,7 +586,7 @@ export default function AllCompaniesTable({
                                         className="w-full px-2 py-1 text-xs border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
                                     />
                                 </th>
-                                <th className="px-6 py-2 w-[240px] bg-white">
+                                <th className="px-6 py-2 bg-white" style={{ width: COLUMN_WIDTHS.name }}>
                                     <input
                                         type="text"
                                         value={columnFilters.name}
@@ -548,7 +595,7 @@ export default function AllCompaniesTable({
                                         className="w-full px-2 py-1 text-xs border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
                                     />
                                 </th>
-                                <th className="px-6 py-2 w-[180px] bg-white">
+                                <th className="px-6 py-2 bg-white" style={{ width: COLUMN_WIDTHS.status }}>
                                     <FilterRowMultiSelect
                                         options={statuses}
                                         selected={columnFilters.status}
@@ -556,7 +603,7 @@ export default function AllCompaniesTable({
                                         placeholder="All"
                                     />
                                 </th>
-                                <th className="px-6 py-2 w-[120px] bg-white">
+                                <th className="px-6 py-2 bg-white" style={{ width: COLUMN_WIDTHS.discipline }}>
                                     <FilterRowMultiSelect
                                         options={disciplines}
                                         selected={columnFilters.discipline}
@@ -564,7 +611,7 @@ export default function AllCompaniesTable({
                                         placeholder="All"
                                     />
                                 </th>
-                                <th className="px-6 py-2 w-[120px] bg-white">
+                                <th className="px-6 py-2 bg-white" style={{ width: COLUMN_WIDTHS.targetTier }}>
                                     <FilterRowMultiSelect
                                         options={targetTiers}
                                         selected={columnFilters.targetSponsorshipTier}
@@ -572,7 +619,7 @@ export default function AllCompaniesTable({
                                         placeholder="All"
                                     />
                                 </th>
-                                <th className="px-6 py-2 w-[220px] bg-white">
+                                <th className="px-6 py-2 bg-white" style={{ width: COLUMN_WIDTHS.contact }}>
                                     <input
                                         type="text"
                                         value={columnFilters.contact}
@@ -581,7 +628,7 @@ export default function AllCompaniesTable({
                                         className="w-full px-2 py-1 text-xs border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
                                     />
                                 </th>
-                                <th className="px-6 py-2 w-[160px] bg-white">
+                                <th className="px-6 py-2 bg-white" style={{ width: COLUMN_WIDTHS.assignedTo }}>
                                     <FilterRowMultiSelect
                                         options={assignees}
                                         selected={columnFilters.assignedTo}
@@ -589,9 +636,9 @@ export default function AllCompaniesTable({
                                         placeholder="All"
                                     />
                                 </th>
-                                {showScheduleColumn && <th className="px-6 py-2 w-[140px] bg-white"></th>}
-                                <th className="px-6 py-2 w-[180px] bg-white"></th>
-                                <th className="px-6 py-2 w-[100px] bg-white"></th>
+                                {showScheduleColumn && <th className="px-6 py-2 bg-white" style={{ width: COLUMN_WIDTHS.scheduled }}></th>}
+                                <th className="px-6 py-2 bg-white" style={{ width: COLUMN_WIDTHS.lastUpdated }}></th>
+                                <th className="px-6 py-2 bg-white" style={{ width: COLUMN_WIDTHS.followUps }}></th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
@@ -610,7 +657,7 @@ export default function AllCompaniesTable({
                                         onClick={() => onCompanyClick?.(company.id)}
                                         className="hover:bg-slate-50 transition-colors group cursor-pointer"
                                     >
-                                        <td className="px-4 py-4 w-[50px]">
+                                        <td className="px-4 py-4" style={{ width: COLUMN_WIDTHS.select }}>
                                             <input
                                                 type="checkbox"
                                                 checked={selectedCompanies.has(company.id)}
@@ -621,10 +668,13 @@ export default function AllCompaniesTable({
                                                 className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500 cursor-pointer"
                                             />
                                         </td>
-                                        <td className="px-6 py-4 text-xs font-mono text-slate-500 whitespace-nowrap w-[120px]">
+                                        <td
+                                            className="px-6 py-4 text-xs font-mono text-slate-500 whitespace-nowrap"
+                                            style={{ width: COLUMN_WIDTHS.id }}
+                                        >
                                             {company.id}
                                         </td>
-                                        <td className="px-6 py-4 w-[240px]">
+                                        <td className="px-6 py-4" style={{ width: COLUMN_WIDTHS.name }}>
                                             <div className="flex items-center gap-2">
                                                 {company.isFlagged && (
                                                     <FlagIcon className="w-4 h-4 text-red-500 flex-shrink-0" aria-label="Flagged" />
@@ -632,12 +682,12 @@ export default function AllCompaniesTable({
                                                 <span className="font-medium text-slate-900">{company.name}</span>
                                             </div>
                                         </td>
-                                        <td className="px-6 py-4 w-[180px]">
+                                        <td className="px-6 py-4" style={{ width: COLUMN_WIDTHS.status }}>
                                             <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-medium whitespace-nowrap ${getStatusColor(company.status)}`}>
                                                 {company.status}
                                             </span>
                                         </td>
-                                        <td className="px-6 py-4 w-[120px]">
+                                        <td className="px-6 py-4" style={{ width: COLUMN_WIDTHS.discipline }}>
                                             <div className="flex flex-wrap gap-1">
                                                 {company.discipline ? company.discipline.split(',').map(d => {
                                                     const trimmed = d.trim();
@@ -655,17 +705,20 @@ export default function AllCompaniesTable({
                                                 )}
                                             </div>
                                         </td>
-                                        <td className="px-6 py-4 w-[120px]">
+                                        <td className="px-6 py-4" style={{ width: COLUMN_WIDTHS.targetTier }}>
                                             <span className="text-slate-700">{company.targetSponsorshipTier || 'N/A'}</span>
                                         </td>
-                                        <td className="px-6 py-4 w-[220px]">
+                                        <td className="px-6 py-4" style={{ width: COLUMN_WIDTHS.contact }}>
                                             <div className="text-slate-700 font-medium">{company.contact}</div>
                                         </td>
-                                        <td className="px-6 py-4 text-slate-700 w-[160px]">
+                                        <td className="px-6 py-4 text-slate-700" style={{ width: COLUMN_WIDTHS.assignedTo }}>
                                             {company.assignedTo}
                                         </td>
                                         {showScheduleColumn && (
-                                            <td className="px-6 py-4 w-[140px] text-slate-600 text-xs whitespace-nowrap">
+                                            <td
+                                                className="px-6 py-4 text-slate-600 text-xs whitespace-nowrap"
+                                                style={{ width: COLUMN_WIDTHS.scheduled }}
+                                            >
                                                 {company.scheduledDate && company.scheduledTime ? (
                                                     <span>
                                                         {new Date(company.scheduledDate + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}, {formatTime(company.scheduledTime)}
@@ -675,10 +728,13 @@ export default function AllCompaniesTable({
                                                 )}
                                             </td>
                                         )}
-                                        <td className="px-6 py-4 text-slate-600 w-[180px] whitespace-nowrap">
+                                        <td
+                                            className="px-6 py-4 text-slate-600 whitespace-nowrap"
+                                            style={{ width: COLUMN_WIDTHS.lastUpdated }}
+                                        >
                                             {formatDate(company.lastUpdated)}
                                         </td>
-                                        <td className="px-6 py-4 text-center w-[100px]">
+                                        <td className="px-6 py-4 text-center" style={{ width: COLUMN_WIDTHS.followUps }}>
                                             <span className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-blue-50 text-blue-700 font-semibold text-xs border border-blue-100">
                                                 {company.followUpsCompleted || 0}
                                             </span>

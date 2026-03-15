@@ -182,12 +182,16 @@ export default async function handler(
             requestBody: { values: [[timestamp, user, companyId, updates.companyName || '', JSON.stringify(updates)]] }
         });
 
-        if (remarkText) {
+        // Always log to Thread_History when there are updates so the history panel shows the latest activity.
+        const historyEntryText = remarkText || (trackerUpdates.length > 1 || dbUpdates.length > 0
+            ? `[Update] ${Object.keys(updates).filter(k => updates[k] !== undefined && updates[k] !== '').join(', ')}`
+            : '');
+        if (historyEntryText) {
             await sheets.spreadsheets.values.append({
                 spreadsheetId: spreadsheetId2,
                 range: `Thread_History!A:D`,
                 valueInputOption: 'USER_ENTERED',
-                requestBody: { values: [[actionDate || timestamp, companyId, user, remarkText]] }
+                requestBody: { values: [[actionDate || timestamp, companyId, user, historyEntryText]] }
             });
         }
 
@@ -206,17 +210,17 @@ export default async function handler(
         // Sync daily stats after any updates
         await syncDailyStats(sheets, spreadsheetId2);
 
-        // Verify: Fetch the updated status and follow-up count to confirm save
+        // Verify: Fetch the updated row (A–N) to confirm save; lastUpdate is column N
         const verifyRange = await sheets.spreadsheets.values.get({
             spreadsheetId: spreadsheetId2,
-            range: `${trackerSheetName}!A${trackerRowIndex}:M${trackerRowIndex}`,
+            range: `${trackerSheetName}!A${trackerRowIndex}:N${trackerRowIndex}`,
         });
         const updatedRow = verifyRange.data.values?.[0] || [];
         const verifiedData = {
             status: updatedRow[2],
             followUpsCompleted: parseInt(updatedRow[9]) || 0,
-            lastContact: updatedRow[8],
-            lastUpdated: updatedRow[13],
+            lastContact: updatedRow[8],   // I: Last Committee Contact Date
+            lastUpdated: updatedRow[13],  // N: Last Update
             remark: updatedRow[12],
             daysAttending: updatedRow[11]
         };
