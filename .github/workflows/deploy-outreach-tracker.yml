@@ -1,0 +1,68 @@
+# Deploy Outreach Tracker to Google Cloud Run
+# Runs on push to main or manual trigger.
+# Setup: see docs/deployment/GITHUB_ACTIONS_SETUP.md
+
+name: Deploy Outreach Tracker
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'outreach-tracker/**'
+      - '.github/workflows/deploy-outreach-tracker.yml'
+  workflow_dispatch:  # Allow "Run workflow" from the Actions tab
+
+env:
+  PROJECT_ID: company-tracker-485803
+  REGION: us-central1
+  SERVICE_NAME: outreach-tracker
+
+jobs:
+  deploy:
+    name: Build and deploy
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: outreach-tracker
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build (verify before deploy)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: outreach-tracker/package-lock.json
+        run: |
+          npm ci
+          npm run build
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy ${{ env.SERVICE_NAME }} \
+            --source . \
+            --project ${{ env.PROJECT_ID }} \
+            --region ${{ env.REGION }} \
+            --allow-unauthenticated \
+            --min-instances 1 \
+            --quiet
+        working-directory: outreach-tracker
+
+      - name: Show service URL
+        run: |
+          gcloud run services describe ${{ env.SERVICE_NAME }} \
+            --project ${{ env.PROJECT_ID }} \
+            --region ${{ env.REGION }} \
+            --format='value(status.url)'

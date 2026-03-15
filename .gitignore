@@ -9,6 +9,7 @@
 # Google Cloud / Firebase credentials
 *-firebase-adminsdk-*.json
 company-tracker-*.json
+githubactions_*.json
 *.key.json
 *.credentials.json
 
