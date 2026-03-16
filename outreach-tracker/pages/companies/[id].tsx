@@ -18,6 +18,7 @@ import {
     XMarkIcon,
     ArrowUturnLeftIcon,
     CalendarDaysIcon,
+    TrashIcon,
 } from '@heroicons/react/24/outline';
 import { CheckCircleIcon, XCircleIcon, ClockIcon as ClockIconSolid } from '@heroicons/react/24/solid';
 import { useCurrentUser } from '../../contexts/CurrentUserContext';
@@ -75,6 +76,8 @@ interface Company {
 
 const statusOptions = ['To Contact', 'Contacted', 'Interested', 'Registered', 'Rejected', 'No Reply'];
 const sponsorshipTierOptions = ['Official Partner', 'Gold', 'Silver', 'Bronze'];
+
+const STORAGE_KEY_SELECTION_RESTORE = 'companies_selection_restore';
 // disciplineOptions and priorityOptions are now imported from mapping utilities
 
 export default function CompanyDetailPage() {
@@ -140,6 +143,8 @@ export default function CompanyDetailPage() {
         onConfirm: () => { },
         onCancel: () => { }
     });
+    const [showConfirmDeleteCompanyModal, setShowConfirmDeleteCompanyModal] = useState(false);
+    const [isDeletingCompany, setIsDeletingCompany] = useState(false);
 
     const { addTask, completeTask, failTask, setWarningTask } = useBackgroundTasks();
 
@@ -270,17 +275,9 @@ export default function CompanyDetailPage() {
         setIsSettingSchedule(true);
         const taskId = addTask('Setting outreach schedule...');
         try {
-            const schedRes = await fetch('/api/email-schedule');
-            const schedJson = await schedRes.json();
-            const entries = (schedJson.entries || []) as { companyId: string; date: string }[];
-            const existingDates = [...new Set(entries.filter((e: { companyId: string }) => e.companyId === company.id).map((e: { date: string }) => e.date))];
-            for (const date of existingDates) {
-                await fetch('/api/email-schedule', {
-                    method: 'DELETE',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ companyIds: [company.id], date }),
-                });
-            }
+            // Append the new entry without deleting previous ones — full scheduling history is preserved.
+            // saveEmailScheduleEntries uses companyId|date as its key, so same-date updates overwrite
+            // in place while new dates (follow-ups) always add a new row.
             await fetch('/api/email-schedule', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -366,6 +363,19 @@ export default function CompanyDetailPage() {
             router.events.off('routeChangeStart', handleRouteChange);
         };
     }, [hasUnsavedChanges, router]);
+
+    useEffect(() => {
+        const handleRouteChange = (url: string) => {
+            const pathname = url.split('?')[0];
+            if (pathname !== '/companies') {
+                try {
+                    sessionStorage.removeItem(STORAGE_KEY_SELECTION_RESTORE);
+                } catch (_) {}
+            }
+        };
+        router.events.on('routeChangeStart', handleRouteChange);
+        return () => router.events.off('routeChangeStart', handleRouteChange);
+    }, [router]);
 
     // Sync unsaved changes warning with background task indicator
     useEffect(() => {
@@ -966,6 +976,32 @@ export default function CompanyDetailPage() {
         }
     };
 
+    const confirmDeleteCompany = async () => {
+        if (!company?.id || !effectiveIsAdmin) return;
+        setIsDeletingCompany(true);
+        const taskId = addTask('Deleting company...');
+        try {
+            const res = await fetch('/api/delete-company', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ companyId: company.id, user: currentUser }),
+            });
+            if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                throw new Error(data.message || 'Delete failed');
+            }
+            completeTask(taskId, 'Company deleted');
+            setShowConfirmDeleteCompanyModal(false);
+            router.push('/companies');
+        } catch (err) {
+            console.error('Delete company error:', err);
+            failTask(taskId, err instanceof Error ? err.message : 'Delete failed');
+            showError('Delete Failed', err instanceof Error ? err.message : 'Could not delete the company. Please try again.');
+        } finally {
+            setIsDeletingCompany(false);
+        }
+    };
+
     const handleClearAllContactMethods = async (targetContact: Contact) => {
         if (!company || !targetContact.rowNumber) return;
 
@@ -1138,11 +1174,11 @@ export default function CompanyDetailPage() {
                     <h2 className="text-xl font-semibold text-slate-900 mb-2">Company not found</h2>
                     <p className="text-slate-600 mb-6">The company you're looking for may have been removed or the link is invalid.</p>
                     <Link
-                        href={from === 'committee' ? '/committee' : '/companies'}
+                        href={from === 'committee' ? '/committee' : from === 'email-schedule' ? '/email-schedule' : '/companies'}
                         className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
                     >
                         <ArrowLeftIcon className="w-4 h-4" />
-                        {from === 'committee' ? 'Back to Workspace' : 'Back to All Companies'}
+                        {from === 'committee' ? 'Back to Workspace' : from === 'email-schedule' ? 'Back to Email Schedule' : 'Back to All Companies'}
                     </Link>
                 </div>
             </Layout>
@@ -1160,11 +1196,11 @@ export default function CompanyDetailPage() {
             <div className="max-w-4xl mx-auto">
                 {/* Back link */}
                 <Link
-                    href={from === 'committee' ? '/committee' : '/companies'}
+                    href={from === 'committee' ? '/committee' : from === 'email-schedule' ? '/email-schedule' : '/companies'}
                     className="inline-flex items-center gap-2 text-sm font-medium text-slate-600 hover:text-slate-900 mb-6"
                 >
                     <ArrowLeftIcon className="w-4 h-4" />
-                    {from === 'committee' ? 'Back to Workspace' : 'Back to All Companies'}
+                    {from === 'committee' ? 'Back to Workspace' : from === 'email-schedule' ? 'Back to Email Schedule' : 'Back to All Companies'}
                 </Link>
 
                 {/* Header */}
@@ -1572,6 +1608,24 @@ export default function CompanyDetailPage() {
                                     )}
                                 </div>
                             )}
+
+                            {/* Danger zone: Delete company — admin only */}
+                            {effectiveIsAdmin && (
+                                <div className="pt-6 mt-6 border-t border-red-200">
+                                    <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
+                                        <h4 className="text-sm font-semibold text-red-800 mb-1">Danger zone</h4>
+                                        <p className="text-xs text-red-700 mb-3">Permanently remove this company from the tracker and database. This cannot be undone.</p>
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowConfirmDeleteCompanyModal(true)}
+                                            className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors"
+                                        >
+                                            <TrashIcon className="w-4 h-4" />
+                                            Delete company
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     )}
 
@@ -1915,6 +1969,19 @@ export default function CompanyDetailPage() {
                 cancelText="Cancel"
                 variant="danger"
                 isLoading={isSaving}
+            />
+
+            {/* Delete Company Confirmation Modal */}
+            <ConfirmModal
+                isOpen={showConfirmDeleteCompanyModal}
+                onClose={() => !isDeletingCompany && setShowConfirmDeleteCompanyModal(false)}
+                onConfirm={confirmDeleteCompany}
+                title="Delete company"
+                message={`Are you sure you want to permanently delete ${company?.companyName || company?.name || company?.id}? This will remove the company from the tracker and database and cannot be undone.`}
+                confirmText="Delete company"
+                cancelText="Cancel"
+                variant="danger"
+                isLoading={isDeletingCompany}
             />
 
             {/* Navigation Confirmation Modal */}

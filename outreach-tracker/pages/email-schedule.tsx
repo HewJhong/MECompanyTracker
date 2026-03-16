@@ -1,8 +1,9 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useRouter } from 'next/router';
 import Layout from '../components/Layout';
-import AdminRoute from '../components/AdminRoute';
 import ConfirmModal from '../components/ConfirmModal';
 import { useBackgroundTasks } from '../contexts/BackgroundTasksContext';
+import { useCurrentUser } from '../contexts/CurrentUserContext';
 import {
     DndContext,
     DragOverlay,
@@ -60,6 +61,7 @@ interface CompanyAssignment {
     id: string;
     companyName: string;
     pic: string;
+    status?: string;
 }
 
 type DateGroup = {
@@ -244,17 +246,30 @@ function ScheduleChip({
     entry,
     isSelected,
     isDragging,
+    isContacted,
+    isReadOnly,
     onSelect,
+    onDoubleClick,
 }: {
     entry: ScheduleEntry;
     isSelected: boolean;
     isDragging: boolean;
+    isContacted?: boolean;
+    isReadOnly?: boolean;
     onSelect: (e: React.MouseEvent) => void;
+    onDoubleClick?: () => void;
 }) {
     const { attributes, listeners, setNodeRef, transform } = useDraggable({
         id: entry.companyId,
+        disabled: isReadOnly,
     });
     const style = transform ? { transform: CSS.Translate.toString(transform) } : undefined;
+
+    const chipStyle = isSelected
+        ? 'ring-2 ring-indigo-500 border-indigo-300 bg-indigo-50'
+        : isContacted
+            ? 'border-green-400 bg-green-50 hover:bg-green-100'
+            : 'border-slate-200 hover:border-slate-300 bg-white hover:bg-slate-50';
 
     return (
         <div
@@ -262,30 +277,33 @@ function ScheduleChip({
             style={style}
             className={`
                 group relative flex items-center gap-2 px-2 py-1.5 rounded-lg border min-w-0 w-full
-                transition-colors touch-none overflow-hidden select-none
-                ${isSelected ? 'ring-2 ring-indigo-500 border-indigo-300 bg-indigo-50' : 'border-slate-200 hover:border-slate-300 bg-white hover:bg-slate-50'}
+                transition-colors overflow-hidden select-none
+                ${isReadOnly ? 'cursor-default' : 'touch-none'}
+                ${chipStyle}
                 ${isDragging ? 'opacity-30' : ''}
             `}
         >
             <button
                 type="button"
                 className="flex items-center gap-1.5 min-w-0 flex-1 text-left outline-none overflow-hidden select-none"
-                onClick={onSelect}
-                {...listeners}
-                {...attributes}
+                onClick={isReadOnly ? undefined : onSelect}
+                onDoubleClick={(e) => { e.stopPropagation(); onDoubleClick?.(); }}
+                title={onDoubleClick ? 'Double-click to open company details' : undefined}
+                {...(isReadOnly ? {} : listeners)}
+                {...(isReadOnly ? {} : attributes)}
             >
                 <Bars3Icon className="w-3.5 h-3.5 text-slate-400 shrink-0" aria-hidden />
                 <div className="min-w-0 flex-1 overflow-hidden">
                     <p className="text-xs font-medium text-slate-800 truncate" title={entry.companyName}>
                         {entry.companyName}
                     </p>
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 shrink-0">
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded shrink-0 ${isContacted ? 'bg-green-200 text-green-800' : 'bg-slate-100 text-slate-600'}`}>
                         {entry.pic}
                     </span>
                 </div>
             </button>
-            {isSelected && (
-                <span className="absolute top-1 right-1 text-indigo-600" aria-hidden>
+            {(isSelected || isContacted) && (
+                <span className={`absolute top-1 right-1 ${isSelected ? 'text-indigo-600' : 'text-green-600'}`} aria-hidden title={isContacted ? 'Outreach sent' : undefined}>
                     <CheckCircleIcon className="w-3.5 h-3.5" />
                 </span>
             )}
@@ -301,7 +319,10 @@ function DroppableSlotBlock({
     emailsPerBatch,
     selectedIds,
     activeId,
+    companyStatusMap,
+    isReadOnly,
     onSelectChip,
+    onDoubleClickChip,
 }: {
     date: string;
     slotTime: string;
@@ -310,7 +331,10 @@ function DroppableSlotBlock({
     emailsPerBatch: number;
     selectedIds: Set<string>;
     activeId: string | null;
+    companyStatusMap?: Record<string, string>;
+    isReadOnly?: boolean;
     onSelectChip: (entry: ScheduleEntry, e: React.MouseEvent) => void;
+    onDoubleClickChip?: (entry: ScheduleEntry) => void;
 }) {
     const droppableId = `${date}|${slotTime}`;
     const { setNodeRef, isOver } = useDroppable({
@@ -350,8 +374,11 @@ function DroppableSlotBlock({
                             <ScheduleChip
                                 entry={entry}
                                 isSelected={selectedIds.has(entry.companyId)}
-                                isDragging={activeId !== null && (activeId === entry.companyId || selectedIds.has(entry.companyId))}
+                                isDragging={!isReadOnly && activeId !== null && (activeId === entry.companyId || selectedIds.has(entry.companyId))}
+                                isContacted={companyStatusMap?.[entry.companyId] === 'Contacted'}
+                                isReadOnly={isReadOnly}
                                 onSelect={e => onSelectChip(entry, e)}
+                                onDoubleClick={onDoubleClickChip ? () => onDoubleClickChip(entry) : undefined}
                             />
                         </div>
                     ))
@@ -365,14 +392,33 @@ function DroppableSlotBlock({
     );
 }
 
+const SESSION_KEY_DATE = 'emailScheduleCenterDate';
+const SESSION_KEY_SCROLL = 'emailScheduleScrollY';
+
 function EmailScheduleContent() {
     const { addTask, completeTask, failTask } = useBackgroundTasks();
+    const { user, loading: userLoading, effectiveIsAdmin } = useCurrentUser();
+    const router = useRouter();
+
+    // Redirect unauthenticated users to home
+    useEffect(() => {
+        if (!userLoading && !user) {
+            router.push('/');
+        }
+    }, [userLoading, user, router]);
 
     const [entries, setEntries] = useState<ScheduleEntry[]>([]);
     const [allAssignments, setAllAssignments] = useState<CompanyAssignment[]>([]);
     const [loading, setLoading] = useState(true);
     const [members, setMembers] = useState<CommitteeMember[]>([]);
-    const [centerDate, setCenterDate] = useState<Date>(() => new Date());
+    const [centerDate, setCenterDate] = useState<Date>(() => {
+        if (typeof window !== 'undefined') {
+            const stored = sessionStorage.getItem(SESSION_KEY_DATE);
+            if (stored) return new Date(stored);
+        }
+        return new Date();
+    });
+    const scrollRestoredRef = useRef(false);
 
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
     const [lastSelectedKey, setLastSelectedKey] = useState<string | null>(null);
@@ -408,10 +454,11 @@ function EmailScheduleContent() {
             if (dataRes.ok) {
                 const json = await dataRes.json();
                 const companies = json.companies || [];
-                setAllAssignments(companies.map((c: { id: string; companyName?: string; pic?: string }) => ({
+                setAllAssignments(companies.map((c: { id: string; companyName?: string; pic?: string; status?: string }) => ({
                     id: c.id,
                     companyName: c.companyName || c.id,
                     pic: (c.pic && String(c.pic).trim()) ? String(c.pic).trim() : 'Unassigned',
+                    status: c.status || '',
                 })));
             }
         } catch (e) {
@@ -455,6 +502,30 @@ function EmailScheduleContent() {
         fetchMembers();
     }, [fetchEntries, fetchSettings, fetchMembers]);
 
+    // Restore scroll position when returning from a company detail page.
+    // centerDate is already seeded from sessionStorage during useState initialisation;
+    // here we just restore the Y offset after the page has rendered.
+    useEffect(() => {
+        if (scrollRestoredRef.current) return;
+        scrollRestoredRef.current = true;
+        sessionStorage.removeItem(SESSION_KEY_DATE);
+        const storedY = sessionStorage.getItem(SESSION_KEY_SCROLL);
+        if (storedY !== null) {
+            sessionStorage.removeItem(SESSION_KEY_SCROLL);
+            const y = parseInt(storedY, 10);
+            // Wait one tick for the DOM to paint before scrolling.
+            requestAnimationFrame(() => window.scrollTo({ top: y, behavior: 'instant' as ScrollBehavior }));
+        }
+    }, []);
+
+    const navigateToCompany = useCallback((companyId: string) => {
+        if (typeof window !== 'undefined') {
+            sessionStorage.setItem(SESSION_KEY_DATE, centerDate.toISOString());
+            sessionStorage.setItem(SESSION_KEY_SCROLL, String(window.scrollY));
+        }
+        router.push(`/companies/${encodeURIComponent(companyId)}?from=email-schedule`);
+    }, [router, centerDate]);
+
     const visibleDates = getWeekDates(centerDate);
     const visibleTimeSlots = useMemo(
         () => getVisibleTimeSlots(settings, entries),
@@ -468,6 +539,12 @@ function EmailScheduleContent() {
             .filter(e => e.date === date)
             .sort((a, b) => normalizeTime(a.time).localeCompare(normalizeTime(b.time)) || a.order - b.order),
     })), [visibleDates, entries]);
+
+    const companyStatusMap = useMemo(() => {
+        const map: Record<string, string> = {};
+        allAssignments.forEach(c => { map[c.id] = c.status || ''; });
+        return map;
+    }, [allAssignments]);
 
     const assignmentBalanceStats: PicAssignmentStats[] = useMemo(() => {
         const scheduledByPic = new Map<string, Set<string>>();
@@ -874,6 +951,14 @@ function EmailScheduleContent() {
     const movingCount = activeId ? (selectedIds.has(activeId) ? selectedIds.size : 1) : 0;
     const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
+    if (userLoading || !user) {
+        return (
+            <div className="min-h-screen flex items-center justify-center bg-slate-50">
+                <div className="animate-spin rounded-full h-10 w-10 border-4 border-indigo-600 border-t-transparent" />
+            </div>
+        );
+    }
+
     return (
         <Layout title="Email Schedule | Outreach Tracker">
             <div className="mb-6 flex items-start justify-between gap-4">
@@ -887,6 +972,11 @@ function EmailScheduleContent() {
                     </div>
                 </div>
                 <div className="flex items-center gap-2">
+                    {!effectiveIsAdmin && (
+                        <span className="text-xs font-medium px-2.5 py-1 rounded-full bg-slate-100 text-slate-500 border border-slate-200">
+                            View only
+                        </span>
+                    )}
                     <button
                         onClick={() => fetchEntries()}
                         className="p-2 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-colors"
@@ -896,17 +986,19 @@ function EmailScheduleContent() {
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                         </svg>
                     </button>
-                    <button
-                        onClick={() => setShowSettings(s => !s)}
-                        className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${showSettings ? 'bg-indigo-100 text-indigo-700' : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50'}`}
-                    >
-                        <Cog6ToothIcon className="w-4 h-4" />
-                        Settings
-                    </button>
+                    {effectiveIsAdmin && (
+                        <button
+                            onClick={() => setShowSettings(s => !s)}
+                            className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${showSettings ? 'bg-indigo-100 text-indigo-700' : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50'}`}
+                        >
+                            <Cog6ToothIcon className="w-4 h-4" />
+                            Settings
+                        </button>
+                    )}
                 </div>
             </div>
 
-            {showSettings && (
+            {effectiveIsAdmin && showSettings && (
                 <div className="mb-6 bg-white rounded-xl border border-slate-200 shadow-sm p-6 space-y-6">
                     <div className="flex items-center justify-between">
                         <h2 className="text-lg font-semibold text-slate-900">Schedule Configuration</h2>
@@ -1013,7 +1105,7 @@ function EmailScheduleContent() {
                 </div>
             )}
 
-            {!loading && (members.length > 0 || assignmentBalanceStats.length > 0) && (
+            {effectiveIsAdmin && !loading && (members.length > 0 || assignmentBalanceStats.length > 0) && (
                 <div className="mb-6">
                     <AssignmentBalanceChart stats={assignmentBalanceStats} members={members} />
                 </div>
@@ -1057,6 +1149,10 @@ function EmailScheduleContent() {
                     <span className="text-xs font-medium text-indigo-700">Syncing schedule…</span>
                 </div>
             )}
+            <p className="mb-3 text-xs text-slate-500 flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-sm border border-green-400 bg-green-100" aria-hidden />
+                Green border = outreach sent
+            </p>
                 <DndContext
                     sensors={sensors}
                     onDragStart={handleDragStart}
@@ -1097,7 +1193,10 @@ function EmailScheduleContent() {
                                                     emailsPerBatch={settings.emailsPerBatch}
                                                     selectedIds={selectedIds}
                                                     activeId={activeId}
+                                                    companyStatusMap={companyStatusMap}
+                                                    isReadOnly={!effectiveIsAdmin}
                                                     onSelectChip={handleSelectChip}
+                                                    onDoubleClickChip={(entry) => navigateToCompany(entry.companyId)}
                                                 />
                                             );
                                         })
@@ -1124,7 +1223,7 @@ function EmailScheduleContent() {
                 </>
             )}
 
-            {selectedIds.size >= 1 && (
+            {effectiveIsAdmin && selectedIds.size >= 1 && (
                 <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 w-full max-w-2xl mx-4">
                     <div className="bg-slate-800 text-white rounded-xl shadow-xl p-4 flex flex-col gap-4">
                         <p className="text-sm font-medium">
@@ -1223,9 +1322,5 @@ function EmailScheduleContent() {
 }
 
 export default function EmailSchedulePage() {
-    return (
-        <AdminRoute>
-            <EmailScheduleContent />
-        </AdminRoute>
-    );
+    return <EmailScheduleContent />;
 }

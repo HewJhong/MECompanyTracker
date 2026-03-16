@@ -5,7 +5,6 @@ import { getCommitteeMembers } from '../../lib/committee-members';
 import { getGoogleSheetsClient } from '../../lib/google-sheets';
 import { cache } from '../../lib/cache';
 import { syncDailyStats } from '../../lib/daily-stats';
-import { deleteEmailScheduleEntriesForCompanies } from '../../lib/email-schedule';
 
 export default async function handler(
     req: NextApiRequest,
@@ -179,7 +178,7 @@ export default async function handler(
             spreadsheetId: spreadsheetId2,
             range: `${logSheetName}!A:E`,
             valueInputOption: 'USER_ENTERED',
-            requestBody: { values: [[timestamp, user, companyId, updates.companyName || '', JSON.stringify(updates)]] }
+            requestBody: { values: [[timestamp, user, 'COMPANY_UPDATE', `${companyId} – ${updates.companyName || companyId}`, JSON.stringify(updates)]] }
         });
 
         // Always log to Thread_History when there are updates so the history panel shows the latest activity.
@@ -197,15 +196,9 @@ export default async function handler(
 
         cache.delete('sheet_data');
 
-        // When we record that the scheduled email was sent (first outreach or follow-up), clear that company from the email schedule so the slot is freed for the next round
-        const recordedContact = updates.status === 'Contacted' || updates.hasOwnProperty('followUpsCompleted') || updates.lastContact;
-        if (recordedContact) {
-            try {
-                await deleteEmailScheduleEntriesForCompanies([companyId]);
-            } catch (scheduleErr) {
-                console.warn('Could not clear email schedule for company after contact update:', scheduleErr);
-            }
-        }
+        // Schedule entries are no longer auto-deleted when contact is logged. Entries remain in
+        // Email_Schedule for full history; the Email Schedule page shows them with a green border.
+        // Committee workspace hides scheduled date/time when status is Contacted.
 
         // Sync daily stats after any updates
         await syncDailyStats(sheets, spreadsheetId2);

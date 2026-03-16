@@ -127,39 +127,10 @@ export default async function handler(
             },
         });
 
-        // Log the assignment action to Logs sheet
-        const logEntry = {
-            timestamp: new Date().toISOString(),
-            user: session.user.name || session.user.email,
-            action: 'BULK_ASSIGN',
-            details: `Assigned ${successfulIds.length} companies to ${assignee}`,
-            companyIds: successfulIds.join(', '),
-        };
-
-        try {
-            await sheets.spreadsheets.values.append({
-                spreadsheetId,
-                range: 'Logs_DoNotEdit!A:E',
-                valueInputOption: 'RAW',
-                requestBody: {
-                    values: [[
-                        logEntry.timestamp,
-                        logEntry.user,
-                        logEntry.action,
-                        logEntry.details,
-                        logEntry.companyIds,
-                    ]],
-                },
-            });
-        } catch (logError) {
-            console.error('Failed to log assignment:', logError);
-            // Don't fail the request if logging fails
-        }
-
         // Invalidate cache to ensure fresh data is fetched
         cache.delete('sheet_data');
 
-        // Optionally create email schedule entries
+        // Optionally create email schedule entries (before logging so we can include schedule in log details)
         let scheduleEntries: EmailScheduleEntry[] = [];
         if (scheduleDate && scheduleStartTime && assignee !== '__UNASSIGN__' && successfulIds.length > 0) {
             try {
@@ -177,10 +148,69 @@ export default async function handler(
                     createdBy: actorName,
                 }));
                 await saveEmailScheduleEntries(scheduleEntries);
+
+                // Log each company's schedule to Thread_History
+                const threadTimestamp = new Date().toISOString();
+                const threadRows = scheduleEntries.map(e => [
+                    threadTimestamp,
+                    e.companyId,
+                    actorName,
+                    `Email schedule set for ${e.date} at ${e.time} via bulk assign (assigned to ${assignee})`,
+                ]);
+                try {
+                    await sheets.spreadsheets.values.append({
+                        spreadsheetId,
+                        range: 'Thread_History!A:D',
+                        valueInputOption: 'USER_ENTERED',
+                        requestBody: { values: threadRows },
+                    });
+                } catch (threadErr) {
+                    console.error('Failed to write bulk-assign schedules to Thread_History:', threadErr);
+                }
             } catch (scheduleError) {
                 console.error('Failed to create email schedule entries:', scheduleError);
                 // Don't fail the whole request — schedule creation is additive
             }
+        }
+
+        // Log the assignment action to Logs sheet with full details: companies and (when created) time per company
+        const companyNamesMap = (companyNames as Record<string, string> | undefined) || {};
+        const details =
+            scheduleEntries.length > 0
+                ? `Assigned ${successfulIds.length} companies to ${assignee}; email schedule for ${scheduleDate} (see Data column for per-company times)`
+                : `Assigned ${successfulIds.length} companies to ${assignee}`;
+        const dataColumn =
+            scheduleEntries.length > 0
+                ? scheduleEntries
+                    .map(
+                        (e) =>
+                            `${e.companyId} (${e.companyName || e.companyId}) → ${e.time}`
+                    )
+                    .join('; ')
+                : successfulIds
+                    .map(
+                        (id) =>
+                            `${id} (${companyNamesMap[id] || id})`
+                    )
+                    .join('; ');
+        try {
+            await sheets.spreadsheets.values.append({
+                spreadsheetId,
+                range: 'Logs_DoNotEdit!A:E',
+                valueInputOption: 'RAW',
+                requestBody: {
+                    values: [[
+                        new Date().toISOString(),
+                        session.user.name || session.user.email,
+                        'BULK_ASSIGN',
+                        details,
+                        dataColumn,
+                    ]],
+                },
+            });
+        } catch (logError) {
+            console.error('Failed to log assignment:', logError);
+            // Don't fail the request if logging fails
         }
 
         return res.status(200).json({

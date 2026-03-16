@@ -31,8 +31,8 @@ export default function Layout({ children, title = 'Outreach Tracker' }: LayoutP
         { name: 'Committee Workspace', href: '/committee', icon: UsersIcon, description: 'My assignments' },
         { name: 'All Companies', href: '/companies', icon: TableCellsIcon, description: 'Master database' },
         { name: 'Analytics', href: '/analytics', icon: ChartBarIcon, description: 'Progress insights' },
+        { name: 'Email Schedule', href: '/email-schedule', icon: CalendarDaysIcon, description: 'Email send schedule' },
         ...(effectiveIsAdmin ? [
-            { name: 'Email Schedule', href: '/email-schedule', icon: CalendarDaysIcon, description: 'Email send schedule' },
             { name: 'Settings', href: '/settings', icon: Cog6ToothIcon, description: 'Admin settings' },
         ] : []),
     ];

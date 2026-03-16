@@ -53,6 +53,8 @@ jobs:
 
       - name: Deploy to Cloud Run
         run: |
+          # Ensure Dockerfile is used (--source uses it when present; list for debugging)
+          ls -la Dockerfile 2>/dev/null || true
           gcloud run deploy ${{ env.SERVICE_NAME }} \
             --source . \
             --project ${{ env.PROJECT_ID }} \

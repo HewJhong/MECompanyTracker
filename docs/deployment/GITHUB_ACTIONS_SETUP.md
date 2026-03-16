@@ -17,6 +17,7 @@ You need a service account that can deploy to Cloud Run and submit Cloud Build j
    - **Cloud Run Admin** – deploy and update the service
    - **Service Account User** – required for Cloud Run
    - **Cloud Build Editor** – so `gcloud run deploy --source` can build the image
+   - **Artifact Registry Writer** – required for `gcloud run deploy --source` (images are pushed to the `cloud-run-source-deploy` repository)
    - **Storage Admin** (or **Storage Object Creator**) – for uploading source when using `--source`
 5. Click **Done**. Do **not** grant users access unless you need to.
 
@@ -130,7 +131,8 @@ If you want to switch to this later, you can update the workflow and delete the 
 
 | Problem | What to check |
 |--------|----------------|
-| **Permission denied** | Service account has Cloud Run Admin, Service Account User, Cloud Build Editor, and Storage (see step 1). |
+| **Permission denied** | Service account has Cloud Run Admin, Service Account User, Cloud Build Editor, **Artifact Registry Writer**, and Storage (see step 1). |
+| **`artifactregistry.repositories.get` denied** | Add the **Artifact Registry Writer** role to the service account in IAM. Deploy-from-source uses Artifact Registry; without this role the deploy step fails with PERMISSION_DENIED. |
 | **Build fails in Actions** | Check the "Build (verify before deploy)" step; fix `npm run build` locally. |
 | **Deploy fails** | Check the "Deploy to Cloud Run" step logs; ensure `GCP_SA_KEY` is the full JSON key. |
 | **Workflow doesn’t run on push** | Confirm you pushed under `outreach-tracker/**` or the workflow file, and the branch is `main` (or change `branches` in the workflow). |

@@ -116,8 +116,9 @@ export default function CommitteePage() {
             isFlagged: company.isFlagged,
             isStale: daysSinceUpdate > 7,
             replyNeeded,
-            scheduledTime: scheduled?.time,
-            scheduledDate: scheduled?.date,
+            // Only show scheduled date/time when not Contacted (Contacted = filter to hide in workspace)
+            scheduledTime: company.status === 'Contacted' ? undefined : scheduled?.time,
+            scheduledDate: company.status === 'Contacted' ? undefined : scheduled?.date,
         };
     });
 

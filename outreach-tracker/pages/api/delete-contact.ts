@@ -113,7 +113,7 @@ export default async function handler(
                 spreadsheetId: spreadsheetId2,
                 range: `${logSheetName}!A:E`,
                 valueInputOption: 'USER_ENTERED',
-                requestBody: { values: [[timestamp, user, companyId, 'Contact Deletion', JSON.stringify(contactDetails)]] }
+                requestBody: { values: [[timestamp, user, 'CONTACT_DELETED', `${companyId} – deleted contact row ${rowNumber}`, JSON.stringify(contactDetails)]] }
             });
 
             await sheets.spreadsheets.values.append({

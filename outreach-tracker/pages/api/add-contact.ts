@@ -94,7 +94,7 @@ export default async function handler(
                 spreadsheetId: trackerSpreadsheetId,
                 range: `${logSheetName}!A:E`,
                 valueInputOption: 'USER_ENTERED',
-                requestBody: { values: [[timestamp, user, companyId, 'Contact Added', JSON.stringify(contact)]] }
+                requestBody: { values: [[timestamp, user, 'CONTACT_ADDED', `${companyId} – added contact: ${contact.name || ''}`, JSON.stringify(contact)]] }
             });
 
             if (historyLog) {

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/router';
 import { useCurrentUser } from '../contexts/CurrentUserContext';
 import { useBackgroundTasks } from '../contexts/BackgroundTasksContext';
@@ -16,6 +16,12 @@ import {
     DEFAULT_SCHEDULE_SETTINGS,
     ScheduleSettings,
 } from '../lib/schedule-calculator';
+
+const OUTREACH_STATUSES = ['To Contact', 'Contacted', 'Interested', 'Registered', 'Rejected', 'No Reply'] as const;
+
+const STORAGE_KEY_SELECTION_RESTORE = 'companies_selection_restore';
+const STORAGE_KEY_SELECTION = 'companies_selection';
+const STORAGE_KEY_LAST_SELECTED_INDEX = 'companies_lastSelectedIndex';
 
 interface Company {
     id: string;
@@ -66,6 +72,12 @@ export default function CompaniesPage() {
     const [projectedSlots, setProjectedSlots] = useState<string[] | null>(null);
     const [scheduleMap, setScheduleMap] = useState<Record<string, { date: string; time: string }>>({});
     const [isSyncing, setIsSyncing] = useState(false);
+
+    // Bulk set status
+    const [selectedStatus, setSelectedStatus] = useState('');
+    const [pendingStatusUpdate, setPendingStatusUpdate] = useState<{ status: string } | null>(null);
+    const [showStatusConfirmModal, setShowStatusConfirmModal] = useState(false);
+    const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
 
     const showError = (title: string, message: string) => {
         setErrorTitle(title);
@@ -201,13 +213,38 @@ export default function CompaniesPage() {
             .catch(() => setScheduleMap({}));
     }, [data.length]);
 
+    const hasRestoredSelection = useRef(false);
+    useEffect(() => {
+        if (typeof window === 'undefined' || data.length === 0 || hasRestoredSelection.current) return;
+        hasRestoredSelection.current = true;
+        try {
+            if (sessionStorage.getItem(STORAGE_KEY_SELECTION_RESTORE) !== '1') return;
+            const raw = sessionStorage.getItem(STORAGE_KEY_SELECTION);
+            const ids: string[] = raw ? JSON.parse(raw) : [];
+            const idSet = new Set(data.map(c => c.id));
+            const valid = ids.filter(id => idSet.has(id));
+            if (valid.length > 0) {
+                setSelectedCompanies(new Set(valid));
+            }
+            setLastSelectedIndex(null);
+            sessionStorage.removeItem(STORAGE_KEY_SELECTION_RESTORE);
+            sessionStorage.removeItem(STORAGE_KEY_SELECTION);
+            sessionStorage.removeItem(STORAGE_KEY_LAST_SELECTED_INDEX);
+        } catch (_) {}
+    }, [data]);
+
     const transformedCompanies = data.map(company => ({
         id: company.id,
         name: company.companyName || company.name || '',
         status: company.status,
         assignedTo: company.pic || 'Unassigned',
-        contact: company.contacts?.map(c => c.name).filter(name => name && name.trim() !== '' && name !== 'N/A').join(', ') || '',
+        contact: company.contacts?.map(c => {
+            const name = c.name;
+            if (name && String(name).trim() !== '' && name !== 'N/A') return name;
+            return 'n/a';
+        }).join(', ') || '',
         email: company.contacts?.map(c => c.email).filter(Boolean).join(', ') || '',
+        phone: company.contacts?.flatMap(c => [c.phone, c.landline].filter(Boolean)).join(', ') || '',
         lastUpdated: company.lastUpdated || company.lastCompanyActivity || '',
         isFlagged: company.isFlagged,
         discipline: company.discipline || '',
@@ -217,6 +254,13 @@ export default function CompaniesPage() {
     }));
 
     const handleCompanyClick = (companyId: string) => {
+        if (typeof window !== 'undefined') {
+            try {
+                sessionStorage.setItem(STORAGE_KEY_SELECTION, JSON.stringify(Array.from(selectedCompanies)));
+                sessionStorage.setItem(STORAGE_KEY_LAST_SELECTED_INDEX, String(lastSelectedIndex ?? ''));
+                sessionStorage.setItem(STORAGE_KEY_SELECTION_RESTORE, '1');
+            } catch (_) {}
+        }
         router.push(`/companies/${encodeURIComponent(companyId)}?from=all`);
     };
 
@@ -336,6 +380,69 @@ export default function CompaniesPage() {
         }
     };
 
+    const handleBulkSetStatus = (status: string) => {
+        if (!status || selectedCompanies.size === 0 || !user?.isAdmin) return;
+        setPendingStatusUpdate({ status });
+        setShowStatusConfirmModal(true);
+    };
+
+    const confirmBulkStatusUpdate = async () => {
+        if (!pendingStatusUpdate || selectedCompanies.size === 0) return;
+
+        const { status } = pendingStatusUpdate;
+        const companiesToUpdate = Array.from(selectedCompanies);
+        const count = companiesToUpdate.length;
+
+        setData(prevData => prevData.map(c =>
+            selectedCompanies.has(c.id) ? { ...c, status, lastUpdated: new Date().toISOString() } : c
+        ));
+        setSuccessMessage(`Status set to "${status}" for ${count} ${count === 1 ? 'company' : 'companies'}`);
+        setShowSuccessModal(true);
+        setSelectedCompanies(new Set());
+        setLastSelectedIndex(null);
+        setShowStatusConfirmModal(false);
+        setPendingStatusUpdate(null);
+        setSelectedStatus('');
+
+        const taskId = addTask(`Updating status for ${count} ${count === 1 ? 'company' : 'companies'}...`);
+        setIsUpdatingStatus(true);
+        try {
+            const response = await fetch('/api/bulk-update-status', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ companyIds: companiesToUpdate, status }),
+            });
+
+            if (!response.ok) {
+                const errData = await response.json();
+                throw new Error(errData.error || 'Server error');
+            }
+
+            completeTask(taskId, 'Status updated successfully');
+            setIsSyncing(true);
+            try {
+                const dataRes = await fetch('/api/data?refresh=true');
+                if (dataRes.ok) {
+                    const json = await dataRes.json();
+                    setData(json.companies || []);
+                }
+            } finally {
+                setIsSyncing(false);
+            }
+        } catch (error) {
+            console.error('Bulk status update failed:', error);
+            failTask(taskId, 'Failed to update status');
+            setShowSuccessModal(false);
+            showError(
+                'Update failed',
+                'Status could not be saved to the server. Reloading data…'
+            );
+            fetchData();
+        } finally {
+            setIsUpdatingStatus(false);
+        }
+    };
+
     if (loading && data.length === 0) {
         return (
             <Layout title="All Companies | Outreach Tracker">
@@ -449,12 +556,37 @@ export default function CompaniesPage() {
 
                             <div className="h-8 w-px bg-blue-400 hidden sm:block"></div>
 
+                            {/* Bulk set outreach status */}
+                            <select
+                                className="flex-1 min-w-[140px] px-3 py-2 bg-white text-slate-900 rounded-lg font-medium border-2 border-blue-300 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                                value={selectedStatus}
+                                onChange={(e) => setSelectedStatus(e.target.value)}
+                            >
+                                <option value="">Set status...</option>
+                                {OUTREACH_STATUSES.map(s => (
+                                    <option key={s} value={s}>{s}</option>
+                                ))}
+                            </select>
+                            <button
+                                onClick={() => handleBulkSetStatus(selectedStatus)}
+                                disabled={!selectedStatus}
+                                className={`px-4 py-2 rounded-lg font-bold transition-all transform active:scale-95 shrink-0 ${selectedStatus
+                                    ? 'bg-white text-blue-600 hover:bg-blue-50 shadow-md'
+                                    : 'bg-blue-800 text-blue-300 cursor-not-allowed'
+                                    }`}
+                            >
+                                Set status
+                            </button>
+
+                            <div className="h-8 w-px bg-blue-400 hidden sm:block"></div>
+
                             <button
                                 onClick={() => {
                                     setSelectedCompanies(new Set());
                                     setLastSelectedIndex(null);
                                     setScheduleDate('');
                                     setScheduleStartTime('');
+                                    setSelectedStatus('');
                                 }}
                                 className="px-3 py-2 bg-blue-500 hover:bg-blue-400 rounded-lg font-medium transition-colors flex items-center gap-1.5 shrink-0"
                             >
@@ -556,7 +688,7 @@ export default function CompaniesPage() {
                 </div>
             )}
 
-            {/* Confirmation Modal */}
+            {/* Confirmation Modal (Assign) */}
             <ConfirmModal
                 isOpen={showConfirmModal}
                 onClose={() => {
@@ -573,6 +705,25 @@ export default function CompaniesPage() {
                 cancelText="Cancel"
                 variant={pendingAssignment?.assignee === '__UNASSIGN__' ? "danger" : "warning"}
                 isLoading={isAssigning}
+            />
+
+            {/* Confirmation Modal (Bulk set status) */}
+            <ConfirmModal
+                isOpen={showStatusConfirmModal}
+                onClose={() => {
+                    setShowStatusConfirmModal(false);
+                    setPendingStatusUpdate(null);
+                }}
+                onConfirm={confirmBulkStatusUpdate}
+                title="Confirm bulk status update"
+                message={pendingStatusUpdate
+                    ? `Set outreach status to "${pendingStatusUpdate.status}" for ${selectedCompanies.size} ${selectedCompanies.size === 1 ? 'company' : 'companies'}?`
+                    : ''
+                }
+                confirmText="Set status"
+                cancelText="Cancel"
+                variant="warning"
+                isLoading={isUpdatingStatus}
             />
 
             {/* Success Modal */}

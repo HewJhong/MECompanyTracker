@@ -2,6 +2,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../../../lib/auth';
 import { getCommitteeMembers } from '../../../lib/committee-members';
+import { getGoogleSheetsClient } from '../../../lib/google-sheets';
 import {
     getEmailSchedule,
     saveEmailScheduleEntries,
@@ -9,6 +10,25 @@ import {
     computeTimeSlotsWithExisting,
     EmailScheduleEntry,
 } from '../../../lib/email-schedule';
+
+async function appendThreadHistory(
+    rows: string[][],
+) {
+    if (rows.length === 0) return;
+    try {
+        const spreadsheetId = process.env.SPREADSHEET_ID_2;
+        if (!spreadsheetId) return;
+        const sheets = await getGoogleSheetsClient();
+        await sheets.spreadsheets.values.append({
+            spreadsheetId,
+            range: 'Thread_History!A:D',
+            valueInputOption: 'USER_ENTERED',
+            requestBody: { values: rows },
+        });
+    } catch (err) {
+        console.error('Failed to write email schedule action to Thread_History:', err);
+    }
+}
 
 async function requireAdmin(req: NextApiRequest, res: NextApiResponse): Promise<string | null> {
     const session = await getServerSession(req, res, authOptions);
@@ -73,6 +93,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
             await saveEmailScheduleEntries(entries);
 
+            // Log to Thread_History: one row per company
+            await appendThreadHistory(
+                entries.map(e => [now, e.companyId, actorName, `Email schedule set for ${e.date} at ${e.time} (assigned to ${pic})`])
+            );
+
             return res.status(200).json({ success: true, entries });
         }
 
@@ -102,6 +127,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
             await saveEmailScheduleEntries(toSave);
 
+            // Log to Thread_History: one row per entry
+            const nowPut = new Date().toISOString();
+            await appendThreadHistory(
+                toSave.map(e => [nowPut, e.companyId, actorName, `Email schedule updated to ${e.date} at ${e.time} (assigned to ${e.pic})`])
+            );
+
             return res.status(200).json({ success: true, entries: toSave });
         }
 
@@ -119,6 +150,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             }
 
             await deleteEmailScheduleEntries(companyIds, date);
+
+            // Log to Thread_History: one row per company
+            const nowDel = new Date().toISOString();
+            await appendThreadHistory(
+                companyIds.map(id => [nowDel, id, actorName, `Email schedule removed for ${date}`])
+            );
 
             return res.status(200).json({ success: true });
         }

@@ -84,7 +84,7 @@ export default async function handler(
                 spreadsheetId: spreadsheetId2,
                 range: `${logSheetName}!A:E`,
                 valueInputOption: 'USER_ENTERED',
-                requestBody: { values: [[timestamp, user, companyId, 'Contact Update', JSON.stringify(updates)]] }
+                requestBody: { values: [[timestamp, user, 'CONTACT_UPDATED', `${companyId} – updated contact row ${rowNumber}`, JSON.stringify(updates)]] }
             });
 
             if (historyLog) {
