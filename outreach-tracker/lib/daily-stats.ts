@@ -20,7 +20,7 @@ export async function syncDailyStats(sheets: sheets_v4.Sheets, spreadsheetId: st
         const rows = dataRange.data.values || [];
 
         // 3. Aggregate counts
-        let toContact = 0, contacted = 0, interested = 0, registered = 0, noReply = 0, rejected = 0;
+        let toContact = 0, contacted = 0, toFollowUp = 0, interested = 0, registered = 0, noReply = 0, rejected = 0;
         let total = 0; // Active tracking total
 
         rows.forEach((row) => {
@@ -36,6 +36,7 @@ export async function syncDailyStats(sheets: sheets_v4.Sheets, spreadsheetId: st
             let status = 'To Contact'; // Default
 
             if (lower === 'contacted') status = 'Contacted';
+            else if (lower === 'to follow up') status = 'To Follow Up';
             else if (lower === 'interested') status = 'Interested';
             else if (lower === 'registered' || lower === 'completed') status = 'Registered';
             else if (lower === 'no reply') status = 'No Reply';
@@ -44,6 +45,7 @@ export async function syncDailyStats(sheets: sheets_v4.Sheets, spreadsheetId: st
 
             if (status === 'To Contact') toContact++;
             else if (status === 'Contacted') contacted++;
+            else if (status === 'To Follow Up') toFollowUp++;
             else if (status === 'Interested') interested++;
             else if (status === 'Registered') registered++;
             else if (status === 'No Reply') noReply++;
@@ -71,10 +73,10 @@ export async function syncDailyStats(sheets: sheets_v4.Sheets, spreadsheetId: st
             // Add headers
             await sheets.spreadsheets.values.update({
                 spreadsheetId,
-                range: `${STATS_SHEET_NAME}!A1:H1`,
+                range: `${STATS_SHEET_NAME}!A1:I1`,
                 valueInputOption: 'USER_ENTERED',
                 requestBody: {
-                    values: [['Date', 'Total', 'To Contact', 'Contacted', 'Interested', 'Registered', 'No Reply', 'Rejected']]
+                    values: [['Date', 'Total', 'To Contact', 'Contacted', 'To Follow Up', 'Interested', 'Registered', 'No Reply', 'Rejected']]
                 }
             });
         }
@@ -88,14 +90,14 @@ export async function syncDailyStats(sheets: sheets_v4.Sheets, spreadsheetId: st
         const existingRows = existingStatsData.data.values || [];
         const rowIndex = existingRows.findIndex(row => row[0] === dateStr);
 
-        const newValues = [dateStr, total, toContact, contacted, interested, registered, noReply, rejected];
+        const newValues = [dateStr, total, toContact, contacted, toFollowUp, interested, registered, noReply, rejected];
 
         if (rowIndex !== -1) {
             // Update existing row for today (rowIndex is 0-indexed relative to data, but sheets are 1-indexed)
             const targetRow = rowIndex + 1; // Correct row number
             await sheets.spreadsheets.values.update({
                 spreadsheetId,
-                range: `${STATS_SHEET_NAME}!A${targetRow}:H${targetRow}`,
+                range: `${STATS_SHEET_NAME}!A${targetRow}:I${targetRow}`,
                 valueInputOption: 'USER_ENTERED',
                 requestBody: { values: [newValues] }
             });
@@ -104,7 +106,7 @@ export async function syncDailyStats(sheets: sheets_v4.Sheets, spreadsheetId: st
             // Append new row
             await sheets.spreadsheets.values.append({
                 spreadsheetId,
-                range: `${STATS_SHEET_NAME}!A:H`,
+                range: `${STATS_SHEET_NAME}!A:I`,
                 valueInputOption: 'USER_ENTERED',
                 insertDataOption: 'INSERT_ROWS',
                 requestBody: { values: [newValues] }

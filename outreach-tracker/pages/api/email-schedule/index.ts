@@ -62,12 +62,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             const actorName = await requireAdmin(req, res);
             if (!actorName) return;
 
-            const { companyIds, companyNames, pic, date, startTime } = req.body as {
+            const { companyIds, companyNames, pic, date, startTime, note } = req.body as {
                 companyIds: string[];
                 companyNames?: Record<string, string>;
                 pic: string;
                 date: string;
                 startTime: string;
+                note?: string;
             };
 
             if (!Array.isArray(companyIds) || companyIds.length === 0) {
@@ -89,6 +90,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 order: i,
                 createdAt: now,
                 createdBy: actorName,
+                note: note?.trim() || undefined,
             }));
 
             await saveEmailScheduleEntries(entries);
@@ -106,7 +108,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             if (!actorName) return;
 
             const { entries } = req.body as {
-                entries: Array<{ companyId: string; companyName?: string; pic: string; date: string; time: string; order?: number }>;
+                entries: Array<{ companyId: string; companyName?: string; pic: string; date: string; time: string; order?: number; note?: string; completed?: string }>;
             };
 
             if (!Array.isArray(entries) || entries.length === 0) {
@@ -123,6 +125,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 order: e.order ?? i,
                 createdAt: now,
                 createdBy: actorName,
+                note: e.note?.trim() || undefined,
+                completed: e.completed || undefined,
             }));
 
             await saveEmailScheduleEntries(toSave);

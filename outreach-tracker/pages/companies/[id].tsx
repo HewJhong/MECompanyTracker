@@ -108,10 +108,14 @@ export default function CompanyDetailPage() {
     const [channel, setChannel] = useState('');
     const [scheduledDate, setScheduledDate] = useState<string>('');
     const [scheduledTime, setScheduledTime] = useState<string>('');
+    const [scheduleEntries, setScheduleEntries] = useState<{ companyId: string; date: string; time: string; note?: string; completed?: string }[]>([]);
     const [outreachScheduleDate, setOutreachScheduleDate] = useState('');
     const [outreachScheduleTime, setOutreachScheduleTime] = useState('');
+    const [outreachScheduleNote, setOutreachScheduleNote] = useState('');
     const [isFetchingScheduleSlot, setIsFetchingScheduleSlot] = useState(false);
     const [isSettingSchedule, setIsSettingSchedule] = useState(false);
+    const [freeNote, setFreeNote] = useState('');
+    const [isSavingNote, setIsSavingNote] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
     const [successMessage, setSuccessMessage] = useState('');
     const [showAddContact, setShowAddContact] = useState(false);
@@ -225,25 +229,29 @@ export default function CompanyDetailPage() {
         if (user) fetchCommitteeMembers();
     }, [companyId, user]);
 
-    // Fetch email schedule for this company (admin schedule section)
+    // Fetch email schedule for this company (admin schedule section) — loads ALL entries
     const fetchScheduleForCompany = useCallback(async () => {
         if (!company?.id) return;
         try {
             const res = await fetch('/api/email-schedule');
             if (!res.ok) return;
             const json = await res.json();
-            const entries = (json.entries || []) as { companyId: string; date: string; time: string }[];
-            const entry = entries.find((e: { companyId: string }) => e.companyId === company.id);
-            if (entry) {
-                setScheduledDate(entry.date);
-                setScheduledTime(entry.time);
-                setOutreachScheduleDate(entry.date);
-                setOutreachScheduleTime(entry.time);
+            const allEntries = (json.entries || []) as { companyId: string; date: string; time: string; note?: string; completed?: string }[];
+            const companyEntries = allEntries
+                .filter(e => e.companyId === company.id)
+                .sort((a, b) => a.date.localeCompare(b.date));
+            setScheduleEntries(companyEntries);
+            // Keep scheduledDate/Time pointing at most recent entry for backward-compat
+            const last = companyEntries[companyEntries.length - 1];
+            if (last) {
+                setScheduledDate(last.date);
+                setScheduledTime(last.time);
             } else {
                 setScheduledDate('');
                 setScheduledTime('');
             }
         } catch {
+            setScheduleEntries([]);
             setScheduledDate('');
             setScheduledTime('');
         }
@@ -272,12 +280,16 @@ export default function CompanyDetailPage() {
             showError('Assign PIC first', 'Please assign this company to a committee member before setting the outreach schedule.');
             return;
         }
+
+        // Capture before save — used to detect second schedule and early-stage guard
+        const isSecondSchedule = scheduleEntries.length > 0;
+        const isEarlyStage = ['To Contact', 'Contacted'].includes(status);
+
         setIsSettingSchedule(true);
         const taskId = addTask('Setting outreach schedule...');
         try {
-            // Append the new entry without deleting previous ones — full scheduling history is preserved.
-            // saveEmailScheduleEntries uses companyId|date as its key, so same-date updates overwrite
-            // in place while new dates (follow-ups) always add a new row.
+            // saveEmailScheduleEntries uses companyId|date as key: same-date updates overwrite,
+            // new dates (follow-ups) always add a new row — full scheduling history is preserved.
             await fetch('/api/email-schedule', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -287,10 +299,50 @@ export default function CompanyDetailPage() {
                     pic,
                     date: outreachScheduleDate,
                     startTime: outreachScheduleTime,
+                    note: outreachScheduleNote.trim() || undefined,
                 }),
             });
             setScheduledDate(outreachScheduleDate);
             setScheduledTime(outreachScheduleTime);
+
+            // Auto-set "To Follow Up" when scheduling a second outreach for early-stage companies
+            if (isSecondSchedule && isEarlyStage && status !== 'To Follow Up') {
+                try {
+                    await fetch('/api/update', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            companyId: company.id,
+                            updates: { status: 'To Follow Up' },
+                            user: currentUser,
+                            remark: '[Auto] Status set to To Follow Up after second outreach scheduled',
+                        }),
+                    });
+                    setStatus('To Follow Up');
+                } catch (statusErr) {
+                    console.error('Failed to auto-set To Follow Up status', statusErr);
+                }
+            }
+
+            // Append note to remarks if provided
+            if (outreachScheduleNote.trim()) {
+                try {
+                    await fetch('/api/update', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            companyId: company.id,
+                            updates: {},
+                            user: currentUser,
+                            remark: `[Follow-up Note] ${outreachScheduleNote.trim()}`,
+                        }),
+                    });
+                } catch (noteErr) {
+                    console.error('Failed to append schedule note to remarks', noteErr);
+                }
+            }
+
+            setOutreachScheduleNote('');
             completeTask(taskId, 'Outreach schedule set');
             fetchScheduleForCompany();
         } catch (err) {
@@ -299,7 +351,7 @@ export default function CompanyDetailPage() {
         } finally {
             setIsSettingSchedule(false);
         }
-    }, [company, effectiveIsAdmin, outreachScheduleDate, outreachScheduleTime, assignedTo, addTask, completeTask, failTask, showError, fetchScheduleForCompany]);
+    }, [company, effectiveIsAdmin, outreachScheduleDate, outreachScheduleTime, outreachScheduleNote, assignedTo, scheduleEntries, status, currentUser, addTask, completeTask, failTask, showError, fetchScheduleForCompany]);
 
     const handleClearOutreachSchedule = useCallback(async () => {
         if (!company || !effectiveIsAdmin) return;
@@ -319,8 +371,10 @@ export default function CompanyDetailPage() {
             }
             setScheduledDate('');
             setScheduledTime('');
+            setScheduleEntries([]);
             setOutreachScheduleDate('');
             setOutreachScheduleTime('');
+            setOutreachScheduleNote('');
             completeTask(taskId, 'Schedule cleared');
             fetchScheduleForCompany();
         } catch (err) {
@@ -330,6 +384,66 @@ export default function CompanyDetailPage() {
             setIsSettingSchedule(false);
         }
     }, [company, effectiveIsAdmin, addTask, completeTask, failTask, fetchScheduleForCompany]);
+
+    // Mark the most recent incomplete schedule entry as completed after outreach is logged
+    const markScheduleEntryCompleted = useCallback(async () => {
+        if (!company) return;
+        const incompleteEntries = scheduleEntries
+            .filter(e => e.completed !== 'Y')
+            .sort((a, b) => b.date.localeCompare(a.date));
+        const toMark = incompleteEntries[0];
+        if (!toMark) return;
+        try {
+            await fetch('/api/email-schedule', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    entries: [{
+                        companyId: toMark.companyId,
+                        companyName: company.companyName || company.name || toMark.companyId,
+                        pic: assignedTo || '',
+                        date: toMark.date,
+                        time: toMark.time,
+                        note: toMark.note,
+                        completed: 'Y',
+                    }],
+                }),
+            });
+            fetchScheduleForCompany();
+        } catch (err) {
+            console.error('Failed to mark schedule entry as completed', err);
+        }
+    }, [company, scheduleEntries, assignedTo, fetchScheduleForCompany]);
+
+    const handleAddNote = useCallback(async () => {
+        if (!company || !freeNote.trim()) return;
+        setIsSavingNote(true);
+        const taskId = addTask('Saving note...');
+        try {
+            const res = await fetch('/api/update', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    companyId: company.id,
+                    updates: {},
+                    user: currentUser,
+                    remark: `[Note] ${freeNote.trim()}`,
+                }),
+            });
+            if (res.ok) {
+                setFreeNote('');
+                completeTask(taskId, 'Note saved');
+                fetchData(true);
+            } else {
+                throw new Error('Save failed');
+            }
+        } catch (err) {
+            console.error('Failed to save note', err);
+            failTask(taskId, 'Failed to save note');
+        } finally {
+            setIsSavingNote(false);
+        }
+    }, [company, freeNote, currentUser, addTask, completeTask, failTask]);
 
     const handleConfirmNavigation = () => {
         setHasUnsavedChanges(false);
@@ -735,6 +849,11 @@ export default function CompanyDetailPage() {
                 fetchData(true);
                 setHasUnsavedChanges(false);
                 completeTask(taskId, 'Changes saved successfully');
+                // If this save included an outreach or follow-up log, mark the nearest schedule entry completed
+                const isOutreachLog = finalRemark.startsWith('[Outreach') || finalRemark.startsWith('[Follow-up');
+                if (isOutreachLog) {
+                    markScheduleEntryCompleted();
+                }
             } else {
                 throw new Error('Update failed');
             }
@@ -1148,6 +1267,7 @@ export default function CompanyDetailPage() {
         const colors: Record<string, string> = {
             'To Contact': 'bg-slate-100 text-slate-700',
             'Contacted': 'bg-blue-100 text-blue-700',
+            'To Follow Up': 'bg-amber-100 text-amber-700',
             'Interested': 'bg-purple-100 text-purple-700',
             'Registered': 'bg-green-100 text-green-700',
             'Rejected': 'bg-red-100 text-red-700',
@@ -1256,12 +1376,16 @@ export default function CompanyDetailPage() {
                                         REPLY OVERDUE
                                     </span>
                                 )}
-                                {scheduledDate && scheduledTime && (
-                                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-indigo-100 text-indigo-700 text-xs font-medium border border-indigo-200">
-                                        <CalendarDaysIcon className="w-3 h-3" />
-                                        {scheduledDate} {formatTime(scheduledTime)}
-                                    </span>
-                                )}
+                                {(() => {
+                                    const hasIncompleteFollowUp = scheduleEntries.some(e => e.completed !== 'Y');
+                                    const isLaterStage = ['Interested', 'Registered'].includes(status);
+                                    return hasIncompleteFollowUp && isLaterStage ? (
+                                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-100 text-amber-700 text-xs font-bold border border-amber-200">
+                                            <CalendarDaysIcon className="w-3 h-3" />
+                                            Follow-up scheduled
+                                        </span>
+                                    ) : null;
+                                })()}
                             </div>
                             <div className="flex items-center gap-3 mt-2 flex-wrap">
                                 <span className={`inline-flex px-3 py-1 rounded-full text-xs font-medium ${getStatusColor(company.status)}`}>
@@ -1438,6 +1562,30 @@ export default function CompanyDetailPage() {
                                 )}
                             </div>
 
+                            {/* Quick note — save a free-form remark with no interaction side-effects */}
+                            {canEdit && (
+                                <div className="pt-3 border-t border-slate-100">
+                                    <label className="block text-xs font-medium text-slate-500 mb-1.5">Quick note</label>
+                                    <div className="flex gap-2">
+                                        <textarea
+                                            rows={2}
+                                            value={freeNote}
+                                            onChange={e => setFreeNote(e.target.value)}
+                                            placeholder="Add a note without logging an interaction…"
+                                            className="flex-1 px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 resize-none"
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={handleAddNote}
+                                            disabled={!freeNote.trim() || isSavingNote}
+                                            className="self-end px-3 py-2 bg-slate-700 text-white text-sm font-medium rounded-lg hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                                        >
+                                            {isSavingNote ? 'Saving…' : 'Add note'}
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+
                             {/* Quick Actions Replaced by InteractionSection */}
                             <InteractionSection
                                 status={status}
@@ -1552,22 +1700,35 @@ export default function CompanyDetailPage() {
                                         <CalendarDaysIcon className="w-5 h-5 text-indigo-600" aria-hidden />
                                         <label className="block text-sm font-medium text-slate-700">Outreach schedule</label>
                                     </div>
-                                    {scheduledDate && scheduledTime ? (
-                                        <div className="flex flex-wrap items-center gap-3 mb-3">
-                                            <span className="text-sm text-slate-600">
-                                                Scheduled: <strong>{scheduledDate}</strong> at {formatTime(scheduledTime)}
-                                            </span>
+
+                                    {/* All existing schedule entries */}
+                                    {scheduleEntries.length > 0 && (
+                                        <div className="mb-3 space-y-1.5">
+                                            {scheduleEntries.map((entry, idx) => (
+                                                <div key={`${entry.date}-${idx}`} className="flex flex-wrap items-start gap-2 text-sm">
+                                                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border ${entry.completed === 'Y' ? 'bg-green-50 text-green-700 border-green-200' : 'bg-slate-50 text-slate-600 border-slate-200'}`}>
+                                                        <CalendarDaysIcon className="w-3 h-3" />
+                                                        {entry.date} at {formatTime(entry.time)}
+                                                        <span className="ml-1">{entry.completed === 'Y' ? '✓ Completed' : '· Pending'}</span>
+                                                    </span>
+                                                    {entry.note && (
+                                                        <span className="text-xs text-slate-500 italic self-center">— {entry.note}</span>
+                                                    )}
+                                                </div>
+                                            ))}
                                             <button
                                                 type="button"
                                                 onClick={handleClearOutreachSchedule}
                                                 disabled={isSettingSchedule}
-                                                className="text-sm font-medium text-red-600 hover:text-red-700 disabled:opacity-50"
+                                                className="mt-1 text-xs font-medium text-red-600 hover:text-red-700 disabled:opacity-50"
                                             >
-                                                Clear schedule
+                                                Clear all schedules
                                             </button>
                                         </div>
-                                    ) : null}
-                                    <div className="flex flex-wrap items-center gap-3">
+                                    )}
+
+                                    {/* New schedule form */}
+                                    <div className="flex flex-wrap items-end gap-3">
                                         <div className="flex flex-col gap-0.5">
                                             <label className="text-xs text-slate-500">Date</label>
                                             <input
@@ -1603,6 +1764,18 @@ export default function CompanyDetailPage() {
                                             </button>
                                         </div>
                                     </div>
+                                    {outreachScheduleDate && (
+                                        <div className="mt-2">
+                                            <label className="text-xs text-slate-500">Note (optional)</label>
+                                            <input
+                                                type="text"
+                                                value={outreachScheduleNote}
+                                                onChange={e => setOutreachScheduleNote(e.target.value)}
+                                                placeholder="e.g. Payment reminder, event update…"
+                                                className="mt-0.5 w-full px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                                            />
+                                        </div>
+                                    )}
                                     {(!assignedTo?.trim() || assignedTo === 'Unassigned') && (
                                         <p className="mt-2 text-xs text-slate-500">Assign the company to a committee member above before setting the schedule.</p>
                                     )}

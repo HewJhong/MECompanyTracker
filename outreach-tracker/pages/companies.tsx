@@ -17,7 +17,7 @@ import {
     ScheduleSettings,
 } from '../lib/schedule-calculator';
 
-const OUTREACH_STATUSES = ['To Contact', 'Contacted', 'Interested', 'Registered', 'Rejected', 'No Reply'] as const;
+const OUTREACH_STATUSES = ['To Contact', 'Contacted', 'To Follow Up', 'Interested', 'Registered', 'Rejected', 'No Reply'] as const;
 
 const STORAGE_KEY_SELECTION_RESTORE = 'companies_selection_restore';
 const STORAGE_KEY_SELECTION = 'companies_selection';

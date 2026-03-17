@@ -49,6 +49,8 @@ interface ScheduleEntry {
     date: string;
     time: string;
     order: number;
+    note?: string;
+    completed?: string;
 }
 
 interface CommitteeMember {
@@ -247,7 +249,9 @@ function ScheduleChip({
     isSelected,
     isDragging,
     isContacted,
+    isCompleted,
     isReadOnly,
+    viewMode,
     onSelect,
     onDoubleClick,
 }: {
@@ -255,7 +259,9 @@ function ScheduleChip({
     isSelected: boolean;
     isDragging: boolean;
     isContacted?: boolean;
+    isCompleted?: boolean;
     isReadOnly?: boolean;
+    viewMode?: 'full' | 'compact';
     onSelect: (e: React.MouseEvent) => void;
     onDoubleClick?: () => void;
 }) {
@@ -265,9 +271,10 @@ function ScheduleChip({
     });
     const style = transform ? { transform: CSS.Translate.toString(transform) } : undefined;
 
+    const isDone = isCompleted || isContacted;
     const chipStyle = isSelected
         ? 'ring-2 ring-indigo-500 border-indigo-300 bg-indigo-50'
-        : isContacted
+        : isDone
             ? 'border-green-400 bg-green-50 hover:bg-green-100'
             : 'border-slate-200 hover:border-slate-300 bg-white hover:bg-slate-50';
 
@@ -297,13 +304,18 @@ function ScheduleChip({
                     <p className="text-xs font-medium text-slate-800 truncate" title={entry.companyName}>
                         {entry.companyName}
                     </p>
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded shrink-0 ${isContacted ? 'bg-green-200 text-green-800' : 'bg-slate-100 text-slate-600'}`}>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded shrink-0 ${isDone ? 'bg-green-200 text-green-800' : 'bg-slate-100 text-slate-600'}`}>
                         {entry.pic}
                     </span>
+                    {viewMode === 'full' && entry.note && (
+                        <p className="text-[10px] text-slate-500 italic truncate mt-0.5" title={entry.note}>
+                            {entry.note}
+                        </p>
+                    )}
                 </div>
             </button>
-            {(isSelected || isContacted) && (
-                <span className={`absolute top-1 right-1 ${isSelected ? 'text-indigo-600' : 'text-green-600'}`} aria-hidden title={isContacted ? 'Outreach sent' : undefined}>
+            {(isSelected || isDone) && (
+                <span className={`absolute top-1 right-1 ${isSelected ? 'text-indigo-600' : 'text-green-600'}`} aria-hidden title={isDone ? 'Outreach sent' : undefined}>
                     <CheckCircleIcon className="w-3.5 h-3.5" />
                 </span>
             )}
@@ -321,6 +333,7 @@ function DroppableSlotBlock({
     activeId,
     companyStatusMap,
     isReadOnly,
+    viewMode,
     onSelectChip,
     onDoubleClickChip,
 }: {
@@ -333,6 +346,7 @@ function DroppableSlotBlock({
     activeId: string | null;
     companyStatusMap?: Record<string, string>;
     isReadOnly?: boolean;
+    viewMode?: 'full' | 'compact';
     onSelectChip: (entry: ScheduleEntry, e: React.MouseEvent) => void;
     onDoubleClickChip?: (entry: ScheduleEntry) => void;
 }) {
@@ -370,13 +384,15 @@ function DroppableSlotBlock({
             <div className="flex-1 flex flex-col gap-1.5 py-2 pr-2 min-w-0 w-0">
                 {hasAny ? (
                     sortedEntries.map(entry => (
-                        <div key={`${entry.companyId}-${entry.date}`} className="min-h-[40px] w-full flex items-center">
+                        <div key={`${entry.companyId}-${entry.date}`} className={`w-full flex items-center ${viewMode === 'full' && entry.note ? 'min-h-[52px]' : 'min-h-[40px]'}`}>
                             <ScheduleChip
                                 entry={entry}
                                 isSelected={selectedIds.has(entry.companyId)}
                                 isDragging={!isReadOnly && activeId !== null && (activeId === entry.companyId || selectedIds.has(entry.companyId))}
                                 isContacted={companyStatusMap?.[entry.companyId] === 'Contacted'}
+                                isCompleted={entry.completed === 'Y'}
                                 isReadOnly={isReadOnly}
+                                viewMode={viewMode}
                                 onSelect={e => onSelectChip(entry, e)}
                                 onDoubleClick={onDoubleClickChip ? () => onDoubleClickChip(entry) : undefined}
                             />
@@ -431,6 +447,7 @@ function EmailScheduleContent() {
     const [bulkDeleteCount, setBulkDeleteCount] = useState<number | null>(null);
     const [showSettings, setShowSettings] = useState(false);
     const [settings, setSettings] = useState<ScheduleSettings>(DEFAULT_SCHEDULE_SETTINGS);
+    const [viewMode, setViewMode] = useState<'full' | 'compact'>('compact');
     const [savingSettings, setSavingSettings] = useState(false);
     const [settingsSaved, setSettingsSaved] = useState(false);
     const [gridSyncing, setGridSyncing] = useState(false);
@@ -986,6 +1003,17 @@ function EmailScheduleContent() {
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                         </svg>
                     </button>
+                    <button
+                        onClick={() => setViewMode(v => v === 'compact' ? 'full' : 'compact')}
+                        className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors border ${viewMode === 'full' ? 'bg-indigo-50 text-indigo-700 border-indigo-200' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'}`}
+                        title={viewMode === 'full' ? 'Switch to compact view' : 'Switch to full view (shows notes)'}
+                    >
+                        {viewMode === 'full' ? (
+                            <><svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" /></svg>Compact</>
+                        ) : (
+                            <><svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5h18M3 10h18M3 15h18M3 20h18" /></svg>Full</>
+                        )}
+                    </button>
                     {effectiveIsAdmin && (
                         <button
                             onClick={() => setShowSettings(s => !s)}
@@ -1195,6 +1223,7 @@ function EmailScheduleContent() {
                                                     activeId={activeId}
                                                     companyStatusMap={companyStatusMap}
                                                     isReadOnly={!effectiveIsAdmin}
+                                                    viewMode={viewMode}
                                                     onSelectChip={handleSelectChip}
                                                     onDoubleClickChip={(entry) => navigateToCompany(entry.companyId)}
                                                 />

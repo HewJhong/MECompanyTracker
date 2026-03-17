@@ -48,6 +48,7 @@ function getNowDatetimeLocal(): string {
 const statusColumns = [
     { id: 'To Contact', label: 'To Contact', color: 'bg-slate-100 border-slate-300', accent: 'border-l-slate-400' },
     { id: 'Contacted', label: 'Contacted', color: 'bg-blue-50 border-blue-300', accent: 'border-l-blue-400' },
+    { id: 'To Follow Up', label: 'To Follow Up', color: 'bg-amber-50 border-amber-300', accent: 'border-l-amber-400' },
     { id: 'Interested', label: 'Interested', color: 'bg-orange-50 border-orange-300', accent: 'border-l-orange-400' },
     { id: 'Registered', label: 'Registered', color: 'bg-green-50 border-green-300', accent: 'border-l-green-400' },
     { id: 'Rejected', label: 'Rejected', color: 'bg-red-50 border-red-300', accent: 'border-l-red-400' },

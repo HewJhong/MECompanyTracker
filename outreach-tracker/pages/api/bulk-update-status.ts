@@ -5,7 +5,7 @@ import { getCommitteeMembers } from '../../lib/committee-members';
 import { getGoogleSheetsClient } from '../../lib/google-sheets';
 import { cache } from '../../lib/cache';
 
-const ALLOWED_STATUSES = ['To Contact', 'Contacted', 'Interested', 'Registered', 'Rejected', 'No Reply'] as const;
+const ALLOWED_STATUSES = ['To Contact', 'Contacted', 'To Follow Up', 'Interested', 'Registered', 'Rejected', 'No Reply'] as const;
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
     if (req.method !== 'POST') {

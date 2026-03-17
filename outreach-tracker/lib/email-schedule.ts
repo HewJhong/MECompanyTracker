@@ -25,6 +25,8 @@ export interface EmailScheduleEntry {
     order: number;
     createdAt?: string;
     createdBy?: string;
+    note?: string;      // Optional follow-up purpose / context (col I)
+    completed?: string; // 'Y' when outreach has been sent, blank otherwise (col J)
 }
 
 function getSpreadsheetId(): string {
@@ -46,7 +48,7 @@ export async function getEmailSchedule(date?: string): Promise<EmailScheduleEntr
 
         const response = await sheets.spreadsheets.values.get({
             spreadsheetId,
-            range: `${SCHEDULE_SHEET}!A2:H`,
+            range: `${SCHEDULE_SHEET}!A2:J`,
         });
 
         const rows = response.data.values || [];
@@ -61,6 +63,8 @@ export async function getEmailSchedule(date?: string): Promise<EmailScheduleEntr
                 order: parseInt(row[5] || '0', 10),
                 createdAt: String(row[6] || '').trim(),
                 createdBy: String(row[7] || '').trim(),
+                note: String(row[8] || '').trim() || undefined,
+                completed: String(row[9] || '').trim() || undefined,
             }));
 
         if (date) {
@@ -139,7 +143,7 @@ export async function saveEmailScheduleEntries(
     try {
         const response = await sheets.spreadsheets.values.get({
             spreadsheetId,
-            range: `${SCHEDULE_SHEET}!A2:H`,
+            range: `${SCHEDULE_SHEET}!A2:J`,
         });
         existingRows = (response.data.values || []) as string[][];
     } catch {
@@ -169,10 +173,12 @@ export async function saveEmailScheduleEntries(
             String(entry.order),
             entry.createdAt || new Date().toISOString(),
             entry.createdBy || '',
+            entry.note ?? '',
+            entry.completed ?? '',
         ];
 
         if (rowNum !== undefined) {
-            updates.push({ range: `${SCHEDULE_SHEET}!A${rowNum}:H${rowNum}`, values: [rowValues] });
+            updates.push({ range: `${SCHEDULE_SHEET}!A${rowNum}:J${rowNum}`, values: [rowValues] });
         } else {
             appends.push(rowValues);
         }
@@ -191,7 +197,7 @@ export async function saveEmailScheduleEntries(
     if (appends.length > 0) {
         await sheets.spreadsheets.values.append({
             spreadsheetId,
-            range: `${SCHEDULE_SHEET}!A:H`,
+            range: `${SCHEDULE_SHEET}!A:J`,
             valueInputOption: 'RAW',
             requestBody: { values: appends },
         });
@@ -238,7 +244,7 @@ export async function deleteEmailScheduleEntries(
 
     const response = await sheets.spreadsheets.values.get({
         spreadsheetId,
-        range: `${SCHEDULE_SHEET}!A2:H`,
+        range: `${SCHEDULE_SHEET}!A2:J`,
     });
 
     const rows = (response.data.values || []) as string[][];
@@ -248,7 +254,7 @@ export async function deleteEmailScheduleEntries(
     const clearRequests: string[] = [];
     rows.forEach((row, i) => {
         if (row[0] && idsToDelete.has(row[0]) && row[3] === date) {
-            clearRequests.push(`${SCHEDULE_SHEET}!A${i + 2}:H${i + 2}`);
+            clearRequests.push(`${SCHEDULE_SHEET}!A${i + 2}:J${i + 2}`);
         }
     });
 
@@ -277,7 +283,7 @@ export async function deleteEmailScheduleEntriesForCompanies(
 
     const response = await sheets.spreadsheets.values.get({
         spreadsheetId,
-        range: `${SCHEDULE_SHEET}!A2:H`,
+        range: `${SCHEDULE_SHEET}!A2:J`,
     });
 
     const rows = (response.data.values || []) as string[][];
@@ -287,7 +293,7 @@ export async function deleteEmailScheduleEntriesForCompanies(
     rows.forEach((row, i) => {
         const companyId = row[0] ? String(row[0]).trim() : '';
         if (companyId && idsToDelete.has(companyId)) {
-            clearRequests.push(`${SCHEDULE_SHEET}!A${i + 2}:H${i + 2}`);
+            clearRequests.push(`${SCHEDULE_SHEET}!A${i + 2}:J${i + 2}`);
         }
     });
 
