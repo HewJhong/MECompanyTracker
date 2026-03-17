@@ -18,6 +18,7 @@ You need a service account that can deploy to Cloud Run and submit Cloud Build j
    - **Service Account User** – required for Cloud Run
    - **Cloud Build Editor** – so `gcloud run deploy --source` can build the image
    - **Artifact Registry Writer** – required for `gcloud run deploy --source` (images are pushed to the `cloud-run-source-deploy` repository)
+   - **Service Usage Consumer** – required so the caller can use project APIs (e.g. Cloud Build); without it you get "Caller does not have required permission to use project"
    - **Storage Admin** (or **Storage Object Creator**) – for uploading source when using `--source`
 5. Click **Done**. Do **not** grant users access unless you need to.
 
@@ -131,8 +132,9 @@ If you want to switch to this later, you can update the workflow and delete the 
 
 | Problem | What to check |
 |--------|----------------|
-| **Permission denied** | Service account has Cloud Run Admin, Service Account User, Cloud Build Editor, **Artifact Registry Writer**, and Storage (see step 1). |
+| **Permission denied** | Service account has Cloud Run Admin, Service Account User, Cloud Build Editor, **Artifact Registry Writer**, **Service Usage Consumer**, and Storage (see step 1). |
 | **`artifactregistry.repositories.get` denied** | Add the **Artifact Registry Writer** role to the service account in IAM. Deploy-from-source uses Artifact Registry; without this role the deploy step fails with PERMISSION_DENIED. |
+| **"Caller does not have required permission to use project" / "default service account is missing required IAM permissions"** | Add the **Service Usage Consumer** role to the GitHub Actions service account. This allows the caller to use project APIs (e.g. Cloud Build). If the build still fails, ensure the project’s **default Cloud Build service account** has the permissions described in [Cloud Run build service account](https://cloud.google.com/run/docs/configuring/services/build-service-account). |
 | **Build fails in Actions** | Check the "Build (verify before deploy)" step; fix `npm run build` locally. |
 | **Deploy fails** | Check the "Deploy to Cloud Run" step logs; ensure `GCP_SA_KEY` is the full JSON key. |
 | **Workflow doesn’t run on push** | Confirm you pushed under `outreach-tracker/**` or the workflow file, and the branch is `main` (or change `branches` in the workflow). |

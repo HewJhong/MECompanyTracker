@@ -37,6 +37,37 @@ gcloud run deploy outreach-tracker \
 
 ---
 
+## Temporary maintenance mode (disable writes)
+
+Enable maintenance mode (blocks all non-GET `/api/*` calls and shows a maintenance page):
+
+```bash
+gcloud run services update outreach-tracker \
+  --project company-tracker-485803 \
+  --region us-central1 \
+  --set-env-vars MAINTENANCE_MODE=1
+```
+
+Disable maintenance mode:
+
+```bash
+gcloud run services update outreach-tracker \
+  --project company-tracker-485803 \
+  --region us-central1 \
+  --update-env-vars MAINTENANCE_MODE=0
+```
+
+Or remove the env var entirely:
+
+```bash
+gcloud run services update outreach-tracker \
+  --project company-tracker-485803 \
+  --region us-central1 \
+  --remove-env-vars MAINTENANCE_MODE
+```
+
+---
+
 ## Better ways to deploy
 
 | Approach | When to use |
