@@ -114,7 +114,6 @@ export default function CompanyDetailPage() {
     const [outreachScheduleNote, setOutreachScheduleNote] = useState('');
     const [isFetchingScheduleSlot, setIsFetchingScheduleSlot] = useState(false);
     const [isSettingSchedule, setIsSettingSchedule] = useState(false);
-    const [freeNote, setFreeNote] = useState('');
     const [isSavingNote, setIsSavingNote] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
     const [successMessage, setSuccessMessage] = useState('');
@@ -416,7 +415,7 @@ export default function CompanyDetailPage() {
     }, [company, scheduleEntries, assignedTo, fetchScheduleForCompany]);
 
     const handleAddNote = useCallback(async () => {
-        if (!company || !freeNote.trim()) return;
+        if (!company || !remarks.trim()) return;
         setIsSavingNote(true);
         const taskId = addTask('Saving note...');
         try {
@@ -427,11 +426,11 @@ export default function CompanyDetailPage() {
                     companyId: company.id,
                     updates: {},
                     user: currentUser,
-                    remark: `[Note] ${freeNote.trim()}`,
+                    remark: `[Note] ${remarks.trim()}`,
                 }),
             });
             if (res.ok) {
-                setFreeNote('');
+                setRemarks('');
                 completeTask(taskId, 'Note saved');
                 fetchData(true);
             } else {
@@ -443,7 +442,7 @@ export default function CompanyDetailPage() {
         } finally {
             setIsSavingNote(false);
         }
-    }, [company, freeNote, currentUser, addTask, completeTask, failTask]);
+    }, [company, remarks, currentUser, addTask, completeTask, failTask]);
 
     const handleConfirmNavigation = () => {
         setHasUnsavedChanges(false);
@@ -1557,34 +1556,26 @@ export default function CompanyDetailPage() {
                                     placeholder={status === 'Rejected' ? 'Please provide rejection reason...' : 'Add context about this update...'}
                                     className={`w-full px-4 py-2.5 border rounded-lg focus:outline-none focus:ring-2 resize-none disabled:bg-slate-50 disabled:cursor-not-allowed ${status === 'Rejected' ? 'border-red-300 focus:ring-red-500' : 'border-slate-300 focus:ring-blue-500'}`}
                                 />
+                                {canEdit && (
+                                    <div className="mt-2 flex items-center gap-2">
+                                        <button
+                                            type="button"
+                                            onClick={handleAddNote}
+                                            disabled={!remarks.trim() || isSavingNote}
+                                            className="px-3 py-1.5 bg-slate-700 text-white text-xs font-medium rounded-lg hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed"
+                                            title="Save this text as a [Note] remark (no interaction log)"
+                                        >
+                                            {isSavingNote ? 'Saving note…' : 'Add note only'}
+                                        </button>
+                                        <span className="text-[11px] text-slate-500">
+                                            Saves as <span className="font-mono">[Note]</span> without changing status or follow-up count.
+                                        </span>
+                                    </div>
+                                )}
                                 {status === 'Rejected' && !remarks.trim() && (
                                     <p className="mt-1 text-xs text-red-600">A rejection reason is required when marking as Rejected.</p>
                                 )}
                             </div>
-
-                            {/* Quick note — save a free-form remark with no interaction side-effects */}
-                            {canEdit && (
-                                <div className="pt-3 border-t border-slate-100">
-                                    <label className="block text-xs font-medium text-slate-500 mb-1.5">Quick note</label>
-                                    <div className="flex gap-2">
-                                        <textarea
-                                            rows={2}
-                                            value={freeNote}
-                                            onChange={e => setFreeNote(e.target.value)}
-                                            placeholder="Add a note without logging an interaction…"
-                                            className="flex-1 px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 resize-none"
-                                        />
-                                        <button
-                                            type="button"
-                                            onClick={handleAddNote}
-                                            disabled={!freeNote.trim() || isSavingNote}
-                                            className="self-end px-3 py-2 bg-slate-700 text-white text-sm font-medium rounded-lg hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
-                                        >
-                                            {isSavingNote ? 'Saving…' : 'Add note'}
-                                        </button>
-                                    </div>
-                                </div>
-                            )}
 
                             {/* Quick Actions Replaced by InteractionSection */}
                             <InteractionSection

@@ -248,7 +248,6 @@ function ScheduleChip({
     entry,
     isSelected,
     isDragging,
-    isContacted,
     isCompleted,
     isReadOnly,
     viewMode,
@@ -258,7 +257,6 @@ function ScheduleChip({
     entry: ScheduleEntry;
     isSelected: boolean;
     isDragging: boolean;
-    isContacted?: boolean;
     isCompleted?: boolean;
     isReadOnly?: boolean;
     viewMode?: 'full' | 'compact';
@@ -271,7 +269,7 @@ function ScheduleChip({
     });
     const style = transform ? { transform: CSS.Translate.toString(transform) } : undefined;
 
-    const isDone = isCompleted || isContacted;
+    const isDone = isCompleted === true;
     const chipStyle = isSelected
         ? 'ring-2 ring-indigo-500 border-indigo-300 bg-indigo-50'
         : isDone
@@ -315,7 +313,7 @@ function ScheduleChip({
                 </div>
             </button>
             {(isSelected || isDone) && (
-                <span className={`absolute top-1 right-1 ${isSelected ? 'text-indigo-600' : 'text-green-600'}`} aria-hidden title={isDone ? 'Outreach sent' : undefined}>
+                <span className={`absolute top-1 right-1 ${isSelected ? 'text-indigo-600' : 'text-green-600'}`} aria-hidden title={isDone ? 'Completed' : undefined}>
                     <CheckCircleIcon className="w-3.5 h-3.5" />
                 </span>
             )}
@@ -331,7 +329,6 @@ function DroppableSlotBlock({
     emailsPerBatch,
     selectedIds,
     activeId,
-    companyStatusMap,
     isReadOnly,
     viewMode,
     onSelectChip,
@@ -344,7 +341,6 @@ function DroppableSlotBlock({
     emailsPerBatch: number;
     selectedIds: Set<string>;
     activeId: string | null;
-    companyStatusMap?: Record<string, string>;
     isReadOnly?: boolean;
     viewMode?: 'full' | 'compact';
     onSelectChip: (entry: ScheduleEntry, e: React.MouseEvent) => void;
@@ -389,7 +385,6 @@ function DroppableSlotBlock({
                                 entry={entry}
                                 isSelected={selectedIds.has(entry.companyId)}
                                 isDragging={!isReadOnly && activeId !== null && (activeId === entry.companyId || selectedIds.has(entry.companyId))}
-                                isContacted={companyStatusMap?.[entry.companyId] === 'Contacted'}
                                 isCompleted={entry.completed === 'Y'}
                                 isReadOnly={isReadOnly}
                                 viewMode={viewMode}
@@ -556,12 +551,6 @@ function EmailScheduleContent() {
             .filter(e => e.date === date)
             .sort((a, b) => normalizeTime(a.time).localeCompare(normalizeTime(b.time)) || a.order - b.order),
     })), [visibleDates, entries]);
-
-    const companyStatusMap = useMemo(() => {
-        const map: Record<string, string> = {};
-        allAssignments.forEach(c => { map[c.id] = c.status || ''; });
-        return map;
-    }, [allAssignments]);
 
     const assignmentBalanceStats: PicAssignmentStats[] = useMemo(() => {
         const scheduledByPic = new Map<string, Set<string>>();
@@ -1179,7 +1168,7 @@ function EmailScheduleContent() {
             )}
             <p className="mb-3 text-xs text-slate-500 flex items-center gap-1.5">
                 <span className="w-2 h-2 rounded-sm border border-green-400 bg-green-100" aria-hidden />
-                Green border = outreach sent
+                Green border = email sent
             </p>
                 <DndContext
                     sensors={sensors}
@@ -1221,7 +1210,6 @@ function EmailScheduleContent() {
                                                     emailsPerBatch={settings.emailsPerBatch}
                                                     selectedIds={selectedIds}
                                                     activeId={activeId}
-                                                    companyStatusMap={companyStatusMap}
                                                     isReadOnly={!effectiveIsAdmin}
                                                     viewMode={viewMode}
                                                     onSelectChip={handleSelectChip}
