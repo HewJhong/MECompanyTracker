@@ -1839,8 +1839,14 @@ export default function CompanyDetailPage() {
                                     {/* All existing schedule entries */}
                                     {scheduleEntries.length > 0 && (
                                         <div className="mb-3 space-y-1.5">
-                                            {scheduleEntries.map((entry, idx) => (
-                                                <div key={`${entry.date}-${entry.time}-${idx}`} className="flex items-center gap-2 text-sm flex-wrap">
+                                            {scheduleEntries.map((entry, idx) => {
+                                                const scheduledMs = entry?.date && entry?.time ? new Date(`${entry.date}T${entry.time}`).getTime() : NaN;
+                                                const isPast = Number.isFinite(scheduledMs) && scheduledMs <= Date.now();
+                                                const isCompleted = entry.completed === 'Y';
+                                                const canEdit = !isPast && !isCompleted;
+                                                const rowKey = `schedule-${entry.date ?? ''}-${entry.time ?? ''}-${idx}`;
+                                                return (
+                                                <div key={rowKey} className="flex items-center gap-2 text-sm flex-wrap">
                                                     {editingScheduleEntryIndex === idx ? (
                                                         <div className="flex flex-wrap items-end gap-2 p-2 bg-slate-50 rounded-lg border border-slate-200 w-full">
                                                             <div className="flex flex-col gap-0.5">
@@ -1895,7 +1901,7 @@ export default function CompanyDetailPage() {
                                                         <>
                                                             <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border shrink-0 ${entry.completed === 'Y' ? 'bg-green-50 text-green-700 border-green-200' : 'bg-slate-50 text-slate-600 border-slate-200'}`}>
                                                                 <CalendarDaysIcon className="w-3 h-3" />
-                                                                {entry.date} at {formatTime(entry.time)}
+                                                                {entry.date ?? '—'} at {entry.time ? formatTime(entry.time) : '—'}
                                                                 <span className="ml-1">{entry.completed === 'Y' ? '✓ Completed' : '· Pending'}</span>
                                                             </span>
                                                             {entry.note && (
@@ -1905,9 +1911,9 @@ export default function CompanyDetailPage() {
                                                                 <button
                                                                     type="button"
                                                                     onClick={() => handleStartEditScheduleEntry(entry, idx)}
-                                                                    disabled={isSettingSchedule}
-                                                                    className="p-1 text-slate-500 hover:text-indigo-600 rounded hover:bg-indigo-50 disabled:opacity-50"
-                                                                    title="Edit"
+                                                                    disabled={isSettingSchedule || !canEdit}
+                                                                    className="p-1 text-slate-500 hover:text-indigo-600 rounded hover:bg-indigo-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                                                                    title={canEdit ? 'Edit' : isCompleted ? 'Completed entries cannot be edited' : 'Past schedule cannot be edited'}
                                                                 >
                                                                     <PencilSquareIcon className="w-3.5 h-3.5" />
                                                                 </button>
@@ -1924,7 +1930,8 @@ export default function CompanyDetailPage() {
                                                         </>
                                                     )}
                                                 </div>
-                                            ))}
+                                                );
+                                            })}
                                             <button
                                                 type="button"
                                                 onClick={handleClearOutreachSchedule}
