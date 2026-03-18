@@ -36,8 +36,8 @@ export default function CommitteePage() {
     const { user, loading: userLoading } = useCurrentUser();
     const [data, setData] = useState<Company[]>([]);
     const [loading, setLoading] = useState(true);
-    // scheduleMap: companyId → next pending schedule { date, time, isOverdue }
-    const [scheduleMap, setScheduleMap] = useState<Record<string, { date: string; time: string; isOverdue: boolean }>>({});
+    // scheduleMap: companyId → next pending schedule { date, time, isOverdue, note? }
+    const [scheduleMap, setScheduleMap] = useState<Record<string, { date: string; time: string; isOverdue: boolean; note?: string }>>({});
 
     // Redirect to home if not authenticated
     useEffect(() => {
@@ -60,9 +60,9 @@ export default function CommitteePage() {
             if (schedRes.ok) {
                 const schedData = await schedRes.json();
                 const now = Date.now();
-                const map: Record<string, { date: string; time: string; isOverdue: boolean }> = {};
+                const map: Record<string, { date: string; time: string; isOverdue: boolean; note?: string }> = {};
                 const bestTsByCompany: Record<string, number> = {};
-                (schedData.entries || []).forEach((e: { companyId: string; date: string; time: string; completed?: string }) => {
+                (schedData.entries || []).forEach((e: { companyId: string; date: string; time: string; completed?: string; note?: string }) => {
                     if (!e?.companyId || !e?.date || !e?.time) return;
                     if (e.completed === 'Y') return;
                     const ts = new Date(`${e.date}T${e.time}`).getTime();
@@ -70,7 +70,7 @@ export default function CommitteePage() {
                     const prev = bestTsByCompany[e.companyId];
                     if (prev === undefined || ts < prev) {
                         bestTsByCompany[e.companyId] = ts;
-                        map[e.companyId] = { date: e.date, time: e.time, isOverdue: ts < now };
+                        map[e.companyId] = { date: e.date, time: e.time, isOverdue: ts < now, note: e.note?.trim() || undefined };
                     }
                 });
                 setScheduleMap(map);
@@ -140,6 +140,7 @@ export default function CommitteePage() {
             scheduledTime: showSchedule ? scheduled?.time : undefined,
             scheduledDate: showSchedule ? scheduled?.date : undefined,
             scheduledIsOverdue: showSchedule ? scheduled?.isOverdue : undefined,
+            scheduleNote: showSchedule ? scheduled?.note : undefined,
         };
     });
 

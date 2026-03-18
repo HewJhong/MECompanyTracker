@@ -123,6 +123,10 @@ export default function CompanyDetailPage() {
     const [outreachScheduleNote, setOutreachScheduleNote] = useState('');
     const [isFetchingScheduleSlot, setIsFetchingScheduleSlot] = useState(false);
     const [isSettingSchedule, setIsSettingSchedule] = useState(false);
+    const [editingScheduleEntryIndex, setEditingScheduleEntryIndex] = useState<number | null>(null);
+    const [editScheduleDate, setEditScheduleDate] = useState('');
+    const [editScheduleTime, setEditScheduleTime] = useState('');
+    const [editScheduleNote, setEditScheduleNote] = useState('');
     const [isSavingNote, setIsSavingNote] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
     const [successMessage, setSuccessMessage] = useState('');
@@ -157,6 +161,8 @@ export default function CompanyDetailPage() {
     });
     const [showConfirmDeleteCompanyModal, setShowConfirmDeleteCompanyModal] = useState(false);
     const [isDeletingCompany, setIsDeletingCompany] = useState(false);
+    const [showConfirmDeleteScheduleEntryModal, setShowConfirmDeleteScheduleEntryModal] = useState(false);
+    const [scheduleEntryToDelete, setScheduleEntryToDelete] = useState<{ date: string; time: string; note?: string } | null>(null);
 
     const { addTask, completeTask, failTask, setWarningTask } = useBackgroundTasks();
 
@@ -393,6 +399,103 @@ export default function CompanyDetailPage() {
             setIsSettingSchedule(false);
         }
     }, [company, effectiveIsAdmin, addTask, completeTask, failTask, fetchScheduleForCompany]);
+
+    const handleDeleteScheduleEntry = useCallback(async (entry: { date: string; time: string; note?: string }) => {
+        if (!company || !effectiveIsAdmin) return;
+        setIsSettingSchedule(true);
+        const taskId = addTask('Removing schedule entry...');
+        try {
+            await fetch('/api/email-schedule', {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ companyIds: [company.id], date: entry.date }),
+            });
+            setEditingScheduleEntryIndex(null);
+            completeTask(taskId, 'Schedule entry removed');
+            fetchScheduleForCompany();
+        } catch (err) {
+            console.error('Delete schedule entry failed', err);
+            failTask(taskId, 'Failed to remove entry');
+        } finally {
+            setIsSettingSchedule(false);
+        }
+    }, [company, effectiveIsAdmin, addTask, completeTask, failTask, fetchScheduleForCompany]);
+
+    const handleStartEditScheduleEntry = useCallback((entry: { date: string; time: string; note?: string }, index: number) => {
+        setEditingScheduleEntryIndex(index);
+        setEditScheduleDate(entry.date);
+        setEditScheduleTime(entry.time);
+        setEditScheduleNote(entry.note ?? '');
+    }, []);
+
+    const handleCancelEditScheduleEntry = useCallback(() => {
+        setEditingScheduleEntryIndex(null);
+        setEditScheduleDate('');
+        setEditScheduleTime('');
+        setEditScheduleNote('');
+    }, []);
+
+    const handleSaveScheduleEntryEdit = useCallback(async () => {
+        if (!company || !effectiveIsAdmin || editingScheduleEntryIndex === null) return;
+        const entry = scheduleEntries[editingScheduleEntryIndex];
+        if (!entry) return;
+        const newDate = editScheduleDate.trim();
+        const newTime = editScheduleTime.trim();
+        const newNote = editScheduleNote.trim() || undefined;
+        if (!newDate || !newTime) return;
+
+        setIsSettingSchedule(true);
+        const taskId = addTask('Updating schedule entry...');
+        try {
+            const pic = assignedTo?.trim() || '';
+            if (newDate === entry.date) {
+                await fetch('/api/email-schedule', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        entries: [{
+                            companyId: company.id,
+                            companyName: company.companyName || company.name || company.id,
+                            pic,
+                            date: newDate,
+                            time: newTime,
+                            note: newNote,
+                            completed: entry.completed,
+                        }],
+                    }),
+                });
+            } else {
+                await fetch('/api/email-schedule', {
+                    method: 'DELETE',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ companyIds: [company.id], date: entry.date }),
+                });
+                await fetch('/api/email-schedule', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        companyIds: [company.id],
+                        companyNames: { [company.id]: company.companyName || company.name || company.id },
+                        pic,
+                        date: newDate,
+                        startTime: newTime,
+                        note: newNote,
+                    }),
+                });
+            }
+            setEditingScheduleEntryIndex(null);
+            setEditScheduleDate('');
+            setEditScheduleTime('');
+            setEditScheduleNote('');
+            completeTask(taskId, 'Schedule entry updated');
+            fetchScheduleForCompany();
+        } catch (err) {
+            console.error('Update schedule entry failed', err);
+            failTask(taskId, 'Failed to update entry');
+        } finally {
+            setIsSettingSchedule(false);
+        }
+    }, [company, effectiveIsAdmin, scheduleEntries, editingScheduleEntryIndex, editScheduleDate, editScheduleTime, editScheduleNote, assignedTo, addTask, completeTask, failTask, fetchScheduleForCompany]);
 
     // Mark the most recent incomplete schedule entry as completed after outreach is logged
     const markScheduleEntryCompleted = useCallback(async () => {
@@ -1737,14 +1840,88 @@ export default function CompanyDetailPage() {
                                     {scheduleEntries.length > 0 && (
                                         <div className="mb-3 space-y-1.5">
                                             {scheduleEntries.map((entry, idx) => (
-                                                <div key={`${entry.date}-${idx}`} className="flex flex-wrap items-start gap-2 text-sm">
-                                                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border ${entry.completed === 'Y' ? 'bg-green-50 text-green-700 border-green-200' : 'bg-slate-50 text-slate-600 border-slate-200'}`}>
-                                                        <CalendarDaysIcon className="w-3 h-3" />
-                                                        {entry.date} at {formatTime(entry.time)}
-                                                        <span className="ml-1">{entry.completed === 'Y' ? '✓ Completed' : '· Pending'}</span>
-                                                    </span>
-                                                    {entry.note && (
-                                                        <span className="text-xs text-slate-500 italic self-center">— {entry.note}</span>
+                                                <div key={`${entry.date}-${entry.time}-${idx}`} className="flex items-center gap-2 text-sm flex-wrap">
+                                                    {editingScheduleEntryIndex === idx ? (
+                                                        <div className="flex flex-wrap items-end gap-2 p-2 bg-slate-50 rounded-lg border border-slate-200 w-full">
+                                                            <div className="flex flex-col gap-0.5">
+                                                                <label className="text-xs text-slate-500">Date</label>
+                                                                <input
+                                                                    type="date"
+                                                                    value={editScheduleDate}
+                                                                    min={new Date().toISOString().slice(0, 10)}
+                                                                    onChange={e => setEditScheduleDate(e.target.value)}
+                                                                    className="px-2 py-1 border border-slate-300 rounded text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                                                                />
+                                                            </div>
+                                                            <div className="flex flex-col gap-0.5">
+                                                                <label className="text-xs text-slate-500">Time</label>
+                                                                <input
+                                                                    type="time"
+                                                                    value={editScheduleTime}
+                                                                    onChange={e => setEditScheduleTime(e.target.value)}
+                                                                    className="px-2 py-1 border border-slate-300 rounded text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                                                                />
+                                                            </div>
+                                                            <div className="flex flex-col gap-0.5 flex-1 min-w-[140px]">
+                                                                <label className="text-xs text-slate-500">Note</label>
+                                                                <input
+                                                                    type="text"
+                                                                    value={editScheduleNote}
+                                                                    onChange={e => setEditScheduleNote(e.target.value)}
+                                                                    placeholder="Optional"
+                                                                    className="px-2 py-1 border border-slate-300 rounded text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                                                                />
+                                                            </div>
+                                                            <div className="flex items-center gap-1">
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={handleSaveScheduleEntryEdit}
+                                                                    disabled={isSettingSchedule || !editScheduleDate.trim() || !editScheduleTime.trim()}
+                                                                    className="px-2 py-1 bg-indigo-600 text-white text-xs font-medium rounded hover:bg-indigo-700 disabled:opacity-50"
+                                                                >
+                                                                    Save
+                                                                </button>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={handleCancelEditScheduleEntry}
+                                                                    disabled={isSettingSchedule}
+                                                                    className="px-2 py-1 text-slate-600 hover:text-slate-800 text-xs font-medium rounded border border-slate-300 hover:bg-slate-50 disabled:opacity-50"
+                                                                >
+                                                                    Cancel
+                                                                </button>
+                                                            </div>
+                                                        </div>
+                                                    ) : (
+                                                        <>
+                                                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border shrink-0 ${entry.completed === 'Y' ? 'bg-green-50 text-green-700 border-green-200' : 'bg-slate-50 text-slate-600 border-slate-200'}`}>
+                                                                <CalendarDaysIcon className="w-3 h-3" />
+                                                                {entry.date} at {formatTime(entry.time)}
+                                                                <span className="ml-1">{entry.completed === 'Y' ? '✓ Completed' : '· Pending'}</span>
+                                                            </span>
+                                                            {entry.note && (
+                                                                <span className="text-xs text-slate-500 italic">— {entry.note}</span>
+                                                            )}
+                                                            <span className="inline-flex items-center gap-1 ml-auto shrink-0">
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => handleStartEditScheduleEntry(entry, idx)}
+                                                                    disabled={isSettingSchedule}
+                                                                    className="p-1 text-slate-500 hover:text-indigo-600 rounded hover:bg-indigo-50 disabled:opacity-50"
+                                                                    title="Edit"
+                                                                >
+                                                                    <PencilSquareIcon className="w-3.5 h-3.5" />
+                                                                </button>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => { setScheduleEntryToDelete(entry); setShowConfirmDeleteScheduleEntryModal(true); }}
+                                                                    disabled={isSettingSchedule}
+                                                                    className="p-1 text-slate-500 hover:text-red-600 rounded hover:bg-red-50 disabled:opacity-50"
+                                                                    title="Delete"
+                                                                >
+                                                                    <TrashIcon className="w-3.5 h-3.5" />
+                                                                </button>
+                                                            </span>
+                                                        </>
                                                     )}
                                                 </div>
                                             ))}
@@ -2174,6 +2351,28 @@ export default function CompanyDetailPage() {
                 cancelText="Cancel"
                 variant="danger"
                 isLoading={isSaving}
+            />
+
+            {/* Delete schedule entry confirmation */}
+            <ConfirmModal
+                isOpen={showConfirmDeleteScheduleEntryModal}
+                onClose={() => {
+                    setShowConfirmDeleteScheduleEntryModal(false);
+                    setScheduleEntryToDelete(null);
+                }}
+                onConfirm={() => {
+                    if (scheduleEntryToDelete) {
+                        handleDeleteScheduleEntry(scheduleEntryToDelete);
+                        setShowConfirmDeleteScheduleEntryModal(false);
+                        setScheduleEntryToDelete(null);
+                    }
+                }}
+                title="Remove schedule entry"
+                message={scheduleEntryToDelete ? `Remove ${scheduleEntryToDelete.date} at ${formatTime(scheduleEntryToDelete.time)} from the outreach schedule?` : ''}
+                confirmText="Remove"
+                cancelText="Cancel"
+                variant="danger"
+                isLoading={isSettingSchedule}
             />
 
             {/* Delete Company Confirmation Modal */}

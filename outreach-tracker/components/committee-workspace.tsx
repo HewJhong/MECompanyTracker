@@ -26,6 +26,7 @@ interface Company {
     scheduledTime?: string;
     scheduledDate?: string;
     scheduledIsOverdue?: boolean;
+    scheduleNote?: string;
     followUpsCompleted?: number;
     lastContact?: string;
     previousResponse?: string;
@@ -499,11 +500,18 @@ export default function CommitteeWorkspace({
                                             )}
                                         </div>
                                         {company.scheduledTime && (
-                                            <div className="flex items-center gap-1 mt-0.5">
-                                                <ClockIcon className={`w-3 h-3 flex-shrink-0 ${company.scheduledIsOverdue ? 'text-red-400' : 'text-indigo-400'}`} />
-                                                <span className={`text-[10px] font-medium ${company.scheduledIsOverdue ? 'text-red-600' : 'text-indigo-500'}`}>
-                                                    {company.scheduledDate} {company.scheduledTime}
-                                                </span>
+                                            <div className="flex flex-col gap-0.5 mt-0.5">
+                                                <div className="flex items-center gap-1">
+                                                    <ClockIcon className={`w-3 h-3 flex-shrink-0 ${company.scheduledIsOverdue ? 'text-red-400' : 'text-indigo-400'}`} />
+                                                    <span className={`text-[10px] font-medium ${company.scheduledIsOverdue ? 'text-red-600' : 'text-indigo-500'}`}>
+                                                        {company.scheduledDate} {company.scheduledTime}
+                                                    </span>
+                                                </div>
+                                                {company.scheduleNote && (
+                                                    <p className="text-[10px] text-slate-500 italic truncate pl-4" title={company.scheduleNote}>
+                                                        {company.scheduleNote}
+                                                    </p>
+                                                )}
                                             </div>
                                         )}
                                         <div className="flex items-center justify-between gap-1.5 mt-0.5 min-w-0">
