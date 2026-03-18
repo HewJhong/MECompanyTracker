@@ -1,4 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { getServerSession } from 'next-auth/next';
+import { authOptions } from '../../lib/auth';
 import { getCommitteeMembers } from '../../lib/committee-members';
 
 export default async function handler(
@@ -10,6 +12,10 @@ export default async function handler(
     }
 
     try {
+        const session = await getServerSession(req, res, authOptions);
+        if (!session?.user?.email) {
+            return res.status(401).json({ error: 'Unauthorized' });
+        }
         const members = await getCommitteeMembers();
         return res.status(200).json({ members });
     } catch (error) {

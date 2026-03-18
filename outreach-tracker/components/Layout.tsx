@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import Head from 'next/head';
 import {
     HomeIcon,
@@ -24,7 +24,18 @@ interface LayoutProps {
 export default function Layout({ children, title = 'Outreach Tracker' }: LayoutProps) {
     const [sidebarOpen, setSidebarOpen] = useState(false);
     const router = useRouter();
-    const { user, effectiveIsAdmin, viewAsMember, setViewAsMember } = useCurrentUser();
+    const { user, realUser, isImpersonating, impersonatedEmail, startImpersonation, stopImpersonation } = useCurrentUser();
+    const [impersonateEmail, setImpersonateEmail] = useState('');
+    const [committeeMembers, setCommitteeMembers] = useState<Array<{ name: string; email: string; role: string }>>([]);
+    const [committeeMembersLoading, setCommitteeMembersLoading] = useState(false);
+    const [impersonateBusy, setImpersonateBusy] = useState(false);
+    const [impersonateError, setImpersonateError] = useState<string | null>(null);
+    const canImpersonate = Boolean(realUser?.isSuperAdmin);
+
+    const effectiveDisplayName = useMemo(() => {
+        if (!user) return 'Guest';
+        return user.name || user.email || 'Guest';
+    }, [user]);
 
     const navItems = [
         { name: 'Dashboard', href: '/', icon: HomeIcon, description: 'Command center overview' },
@@ -32,10 +43,38 @@ export default function Layout({ children, title = 'Outreach Tracker' }: LayoutP
         { name: 'All Companies', href: '/companies', icon: TableCellsIcon, description: 'Master database' },
         { name: 'Analytics', href: '/analytics', icon: ChartBarIcon, description: 'Progress insights' },
         { name: 'Email Schedule', href: '/email-schedule', icon: CalendarDaysIcon, description: 'Email send schedule' },
-        ...(effectiveIsAdmin ? [
+        ...(user?.isAdmin ? [
             { name: 'Settings', href: '/settings', icon: Cog6ToothIcon, description: 'Admin settings' },
         ] : []),
     ];
+
+    useEffect(() => {
+        if (!canImpersonate) return;
+        let cancelled = false;
+        setCommitteeMembersLoading(true);
+        fetch('/api/committee-members')
+            .then((res) => res.ok ? res.json() : null)
+            .then((json) => {
+                if (cancelled) return;
+                const members = (json?.members || []) as Array<{ name: string; email: string; role: string }>;
+                const normalized = members
+                    .filter(m => m?.email && String(m.email).trim() !== '')
+                    .map(m => ({
+                        name: String(m.name || '').trim(),
+                        email: String(m.email || '').trim(),
+                        role: String(m.role || '').trim(),
+                    }))
+                    .sort((a, b) => (a.name || a.email).localeCompare(b.name || b.email));
+                setCommitteeMembers(normalized);
+            })
+            .catch(() => {
+                if (!cancelled) setCommitteeMembers([]);
+            })
+            .finally(() => {
+                if (!cancelled) setCommitteeMembersLoading(false);
+            });
+        return () => { cancelled = true; };
+    }, [canImpersonate]);
 
     return (
         <div className="min-h-screen bg-slate-50 flex">
@@ -115,14 +154,14 @@ export default function Layout({ children, title = 'Outreach Tracker' }: LayoutP
 
                 {/* User Profile */}
                 <div className="p-4 border-t border-slate-800/50 space-y-2">
-                    {effectiveIsAdmin ? (
+                    {user?.isAdmin ? (
                         <Link href="/settings">
                             <div className="flex items-center gap-3 p-3 bg-slate-800/30 rounded-xl hover:bg-slate-800/50 transition-colors cursor-pointer">
                                 <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white text-sm font-bold ring-2 ring-slate-700">
-                                    {user?.name ? user.name.charAt(0).toUpperCase() : 'G'}
+                                    {effectiveDisplayName ? effectiveDisplayName.charAt(0).toUpperCase() : 'G'}
                                 </div>
                                 <div className="flex-1 min-w-0">
-                                    <p className="text-sm font-medium text-white truncate">{user?.name ?? 'Guest'}</p>
+                                    <p className="text-sm font-medium text-white truncate">{effectiveDisplayName}</p>
                                     <p className="text-xs text-slate-400 truncate">{user?.role ?? 'Committee Member'}</p>
                                 </div>
                                 <Cog6ToothIcon className="w-5 h-5 text-slate-500" />
@@ -131,22 +170,79 @@ export default function Layout({ children, title = 'Outreach Tracker' }: LayoutP
                     ) : (
                         <div className="flex items-center gap-3 p-3 bg-slate-800/30 rounded-xl">
                             <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white text-sm font-bold ring-2 ring-slate-700">
-                                {user?.name ? user.name.charAt(0).toUpperCase() : 'G'}
+                                {effectiveDisplayName ? effectiveDisplayName.charAt(0).toUpperCase() : 'G'}
                             </div>
                             <div className="flex-1 min-w-0">
-                                <p className="text-sm font-medium text-white truncate">{user?.name ?? 'Guest'}</p>
+                                <p className="text-sm font-medium text-white truncate">{effectiveDisplayName}</p>
                                 <p className="text-xs text-slate-400 truncate">{user?.role ?? 'Committee Member'}</p>
                             </div>
                         </div>
                     )}
-                    {user?.isAdmin && (
-                        <button
-                            type="button"
-                            onClick={() => setViewAsMember(!viewAsMember)}
-                            className="w-full text-left px-3 py-2 text-xs font-medium text-slate-400 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors"
-                        >
-                            {viewAsMember ? 'Exit member view' : 'View as member'}
-                        </button>
+                    {canImpersonate && (
+                        <div className="space-y-2">
+                            <div className="px-1">
+                                <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
+                                    Impersonation
+                                </p>
+                                <p className="text-[11px] text-slate-500">
+                                    You are signed in as {realUser?.email}
+                                </p>
+                            </div>
+                            {isImpersonating ? (
+                                <button
+                                    type="button"
+                                    onClick={async () => {
+                                        setImpersonateBusy(true);
+                                        setImpersonateError(null);
+                                        const ok = await stopImpersonation();
+                                        if (!ok) setImpersonateError('Failed to exit impersonation');
+                                        setImpersonateBusy(false);
+                                    }}
+                                    disabled={impersonateBusy}
+                                    className="w-full text-left px-3 py-2 text-xs font-medium text-amber-300 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors disabled:opacity-60"
+                                >
+                                    Exit impersonation
+                                </button>
+                            ) : (
+                                <div className="space-y-2">
+                                    <select
+                                        value={impersonateEmail}
+                                        onChange={(e) => setImpersonateEmail(e.target.value)}
+                                        className="w-full px-3 py-2 text-xs rounded-lg bg-slate-950/40 border border-slate-700/60 text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500/60"
+                                    >
+                                        <option value="">
+                                            {committeeMembersLoading ? 'Loading members…' : 'Select a committee member…'}
+                                        </option>
+                                        {committeeMembers.map((m) => (
+                                            <option key={m.email} value={m.email}>
+                                                {m.name ? `${m.name} — ${m.email}` : m.email}
+                                            </option>
+                                        ))}
+                                    </select>
+                                    <button
+                                        type="button"
+                                        onClick={async () => {
+                                            const email = impersonateEmail.trim();
+                                            if (!email) return;
+                                            setImpersonateBusy(true);
+                                            setImpersonateError(null);
+                                            const ok = await startImpersonation(email);
+                                            if (!ok) setImpersonateError('Failed to start impersonation');
+                                            setImpersonateBusy(false);
+                                        }}
+                                        disabled={impersonateBusy || !impersonateEmail.trim()}
+                                        className="w-full text-left px-3 py-2 text-xs font-medium text-slate-300 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors disabled:opacity-60"
+                                    >
+                                        Impersonate member
+                                    </button>
+                                </div>
+                            )}
+                            {impersonateError && (
+                                <div className="px-3 py-2 text-[11px] text-red-300 bg-red-500/10 border border-red-500/20 rounded-lg">
+                                    {impersonateError}
+                                </div>
+                            )}
+                        </div>
                     )}
                     <button
                         type="button"
@@ -175,15 +271,24 @@ export default function Layout({ children, title = 'Outreach Tracker' }: LayoutP
 
                 {/* Page Content */}
                 <main className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto">
-                    {viewAsMember && user?.isAdmin && (
+                    {isImpersonating && canImpersonate && (
                         <div className="max-w-[1600px] mx-auto mb-4 flex items-center justify-between gap-2 px-4 py-2 bg-amber-100 border border-amber-300 rounded-lg text-amber-800 text-sm">
-                            <span className="font-medium">Viewing as member</span>
+                            <span className="font-medium">
+                                Impersonating {impersonatedEmail || user?.email || 'member'}
+                            </span>
                             <button
                                 type="button"
-                                onClick={() => setViewAsMember(false)}
-                                className="font-medium text-amber-700 hover:text-amber-900 underline"
+                                onClick={async () => {
+                                    setImpersonateBusy(true);
+                                    setImpersonateError(null);
+                                    const ok = await stopImpersonation();
+                                    if (!ok) setImpersonateError('Failed to exit impersonation');
+                                    setImpersonateBusy(false);
+                                }}
+                                disabled={impersonateBusy}
+                                className="font-medium text-amber-700 hover:text-amber-900 underline disabled:opacity-60"
                             >
-                                Exit member view
+                                Exit impersonation
                             </button>
                         </div>
                     )}

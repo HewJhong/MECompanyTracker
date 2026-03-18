@@ -413,7 +413,7 @@ const SESSION_KEY_SCROLL = 'emailScheduleScrollY';
 
 function EmailScheduleContent() {
     const { addTask, completeTask, failTask } = useBackgroundTasks();
-    const { user, loading: userLoading, effectiveIsAdmin } = useCurrentUser();
+    const { user, loading: userLoading } = useCurrentUser();
     const router = useRouter();
 
     // Redirect unauthenticated users to home
@@ -983,7 +983,7 @@ function EmailScheduleContent() {
                     </div>
                 </div>
                 <div className="flex items-center gap-2">
-                    {!effectiveIsAdmin && (
+                    {!user?.isAdmin && (
                         <span className="text-xs font-medium px-2.5 py-1 rounded-full bg-slate-100 text-slate-500 border border-slate-200">
                             View only
                         </span>
@@ -1008,7 +1008,7 @@ function EmailScheduleContent() {
                             <><svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5h18M3 10h18M3 15h18M3 20h18" /></svg>Full</>
                         )}
                     </button>
-                    {effectiveIsAdmin && (
+                    {user?.isAdmin && (
                         <button
                             onClick={() => setShowSettings(s => !s)}
                             className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${showSettings ? 'bg-indigo-100 text-indigo-700' : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50'}`}
@@ -1020,7 +1020,7 @@ function EmailScheduleContent() {
                 </div>
             </div>
 
-            {effectiveIsAdmin && showSettings && (
+            {user?.isAdmin && showSettings && (
                 <div className="mb-6 bg-white rounded-xl border border-slate-200 shadow-sm p-6 space-y-6">
                     <div className="flex items-center justify-between">
                         <h2 className="text-lg font-semibold text-slate-900">Schedule Configuration</h2>
@@ -1127,7 +1127,7 @@ function EmailScheduleContent() {
                 </div>
             )}
 
-            {effectiveIsAdmin && !loading && (members.length > 0 || assignmentBalanceStats.length > 0) && (
+            {user?.isAdmin && !loading && (members.length > 0 || assignmentBalanceStats.length > 0) && (
                 <div className="mb-6">
                     <AssignmentBalanceChart stats={assignmentBalanceStats} members={members} />
                 </div>
@@ -1215,7 +1215,7 @@ function EmailScheduleContent() {
                                                     emailsPerBatch={settings.emailsPerBatch}
                                                     selectedIds={selectedIds}
                                                     activeId={activeId}
-                                                    isReadOnly={!effectiveIsAdmin}
+                                                    isReadOnly={!user?.isAdmin}
                                                     viewMode={viewMode}
                                                     onSelectChip={handleSelectChip}
                                                     onDoubleClickChip={(entry) => navigateToCompany(entry.companyId)}
@@ -1245,7 +1245,7 @@ function EmailScheduleContent() {
                 </>
             )}
 
-            {effectiveIsAdmin && selectedIds.size >= 1 && (
+            {user?.isAdmin && selectedIds.size >= 1 && (
                 <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 w-full max-w-2xl mx-4">
                     <div className="bg-slate-800 text-white rounded-xl shadow-xl p-4 flex flex-col gap-4">
                         <p className="text-sm font-medium">

@@ -1,8 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getServerSession } from 'next-auth/next';
-import { authOptions } from '../../../lib/auth';
 import { getGoogleSheetsClient } from '../../../lib/google-sheets';
 import { cache } from '../../../lib/cache';
+import { requireEffectiveAdmin } from '../../../lib/authz';
 
 export default async function handler(
     req: NextApiRequest,
@@ -13,11 +12,8 @@ export default async function handler(
     }
 
     try {
-        // 1. Authentication check
-        const session = await getServerSession(req, res, authOptions);
-        if (!session) {
-            return res.status(401).json({ message: 'Unauthorized' });
-        }
+        const ctx = await requireEffectiveAdmin(req, res);
+        if (!ctx) return;
 
         // 2. Get Google Sheets client
         const sheets = await getGoogleSheetsClient();

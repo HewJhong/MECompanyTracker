@@ -1,5 +1,9 @@
 # Admin vs Member User Interfaces — Implementation Plan
 
+## Status: Updated
+
+The optional **“view as member”** UI-masking mode described below has been replaced by **SuperAdmin impersonation** (server-authoritative, per-member). Role-based UI concepts still apply, but any “effective role” should now be derived from **impersonation state**, not localStorage toggles.
+
 ## 1. Feature/Task Overview
 
 - **Purpose:** Define and implement distinct user interfaces for **Admin**, **Member**, and **Unlisted (read-only)** users so that navigation, page access, and write actions (add company, edit company/contacts, bulk assign) are shown or hidden according to role. Optionally, allow admins to **view as member** to experience the member UI.

@@ -1,24 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getServerSession } from 'next-auth/next';
-import { authOptions } from '../../../lib/auth';
-import { getCommitteeMembers } from '../../../lib/committee-members';
 import { getEmailScheduleSettings, saveEmailScheduleSettings } from '../../../lib/email-schedule';
 import { ScheduleSettings } from '../../../lib/schedule-calculator';
-
-async function requireAdmin(req: NextApiRequest, res: NextApiResponse): Promise<boolean> {
-    const session = await getServerSession(req, res, authOptions);
-    if (!session?.user?.email) {
-        res.status(401).json({ error: 'Unauthorized' });
-        return false;
-    }
-    const members = await getCommitteeMembers();
-    const user = members.find(m => m.email.toLowerCase().trim() === session.user!.email!.toLowerCase().trim());
-    if (!user || user.role?.toLowerCase() !== 'admin') {
-        res.status(403).json({ error: 'Admin access required' });
-        return false;
-    }
-    return true;
-}
+import { requireEffectiveAdmin } from '../../../lib/authz';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
     try {
@@ -28,8 +11,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         }
 
         if (req.method === 'POST') {
-            const isAdmin = await requireAdmin(req, res);
-            if (!isAdmin) return;
+            const ctx = await requireEffectiveAdmin(req, res);
+            if (!ctx) return;
 
             const { settings } = req.body as { settings: ScheduleSettings };
 

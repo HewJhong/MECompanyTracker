@@ -1,5 +1,9 @@
 # Settings Admin-Only & View-as-Member Implementation Plan
 
+## Status: Superseded
+
+This plan’s **“View as member”** approach (UI-only role masking via localStorage) has been **superseded** by **SuperAdmin impersonation** (server-authoritative, per-member effective identity). Settings being admin-only remains valid, but do not implement or re-introduce the old view-as-member toggle.
+
 ## 1. Feature/Task Overview
 
 - **Purpose:** (1) Make Settings admin-only and hide it from non-admins. (2) Let admins optionally view the platform as a member to see the member interface and controls. (3) Keep Add Company available to both admins and members. (4) Allow company-detail edits for admins and members; keep unlisted users read-only (no Add Company, no edits).

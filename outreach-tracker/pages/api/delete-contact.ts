@@ -1,9 +1,8 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getServerSession } from 'next-auth/next';
-import { authOptions } from '../../lib/auth';
-import { getCommitteeMembers } from '../../lib/committee-members';
 import { getGoogleSheetsClient } from '../../lib/google-sheets';
 import { cache } from '../../lib/cache';
+import { requireEffectiveCanEditCompanies } from '../../lib/authz';
+import { formatActorLabel } from '../../lib/authz';
 
 export default async function handler(
     req: NextApiRequest,
@@ -13,18 +12,8 @@ export default async function handler(
         return res.status(405).json({ message: 'Method not allowed' });
     }
 
-    const session = await getServerSession(req, res, authOptions);
-    if (!session?.user?.email) {
-        return res.status(401).json({ message: 'Unauthorized' });
-    }
-    const members = await getCommitteeMembers();
-    const email = session.user.email.toLowerCase().trim();
-    const committeeUser = members.find(m => m.email.toLowerCase().trim() === email);
-    const roleLower = committeeUser?.role?.toLowerCase() || '';
-    const canEditCompanies = committeeUser && (roleLower === 'admin' || roleLower === 'member' || roleLower === 'committee member');
-    if (!canEditCompanies) {
-        return res.status(403).json({ message: 'Not authorized to modify data' });
-    }
+    const ctx = await requireEffectiveCanEditCompanies(req, res);
+    if (!ctx) return;
 
     const { rowNumber, companyId, user, historyLog } = req.body;
 
@@ -113,14 +102,14 @@ export default async function handler(
                 spreadsheetId: spreadsheetId2,
                 range: `${logSheetName}!A:E`,
                 valueInputOption: 'USER_ENTERED',
-                requestBody: { values: [[timestamp, user, 'CONTACT_DELETED', `${companyId} – deleted contact row ${rowNumber}`, JSON.stringify(contactDetails)]] }
+                requestBody: { values: [[timestamp, formatActorLabel(ctx), 'CONTACT_DELETED', `${companyId} – deleted contact row ${rowNumber}`, JSON.stringify(contactDetails)]] }
             });
 
             await sheets.spreadsheets.values.append({
                 spreadsheetId: spreadsheetId2,
                 range: `Thread_History!A:D`,
                 valueInputOption: 'USER_ENTERED',
-                requestBody: { values: [[timestamp, companyId, user, historyLog || `Deleted contact row ${rowNumber}`]] }
+                requestBody: { values: [[timestamp, companyId, formatActorLabel(ctx), historyLog || `Deleted contact row ${rowNumber}`]] }
             });
         }
 

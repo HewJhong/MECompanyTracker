@@ -1,30 +1,22 @@
-# Deploy Outreach Tracker to Google Cloud Run
+# Deploy Outreach Tracker (Cloud Run) — commands
 
-## Recommended: use the deploy script
+## Deploy (recommended)
 
-From the **repo root**:
+From repo root:
 
 ```bash
 ./outreach-tracker/deploy.sh
 ```
 
-Or from `outreach-tracker/`:
-
-```bash
-./deploy.sh
-```
-
-The script builds locally first (so you catch errors before deploy), then runs `gcloud run deploy`. Override project/region with env vars if needed:
+Override project/region if needed:
 
 ```bash
 GCLOUD_PROJECT=company-tracker-485803 GCLOUD_REGION=us-central1 ./outreach-tracker/deploy.sh
 ```
 
----
+## Deploy (manual one-off)
 
-## One-off command (manual deploy)
-
-From the **outreach-tracker** directory:
+From `outreach-tracker/`:
 
 ```bash
 gcloud run deploy outreach-tracker \
@@ -35,49 +27,97 @@ gcloud run deploy outreach-tracker \
   --min-instances 1
 ```
 
----
+## Set production config (env vars + secrets)
 
-## Temporary maintenance mode (disable writes)
+Notes:
+- `outreach-tracker/.env.local` is **local-only** (gitignored). Cloud Run uses its own env vars/secrets.
+- Prefer Secret Manager for sensitive values (private keys, OAuth client secret, NextAuth secret).
+- Use `--update-env-vars` / `--update-secrets` for small changes. Use `--set-*` only when you intend to replace the full set.
 
-Enable maintenance mode (blocks all non-GET `/api/*` calls and shows a maintenance page):
-
-```bash
-gcloud run services update outreach-tracker \
-  --project company-tracker-485803 \
-  --region us-central1 \
-  --set-env-vars MAINTENANCE_MODE=1
-```
-
-Disable maintenance mode:
+### Update a few env vars (safe, non-destructive)
 
 ```bash
 gcloud run services update outreach-tracker \
   --project company-tracker-485803 \
   --region us-central1 \
-  --update-env-vars MAINTENANCE_MODE=0
+  --update-env-vars "SPREADSHEET_ID_1=...,SPREADSHEET_ID_2=...,GOOGLE_OAUTH_CLIENT_ID=..." \
+  --quiet
 ```
 
-Or remove the env var entirely:
+### Update secret bindings (safe, non-destructive)
 
 ```bash
 gcloud run services update outreach-tracker \
   --project company-tracker-485803 \
   --region us-central1 \
-  --remove-env-vars MAINTENANCE_MODE
+  --update-secrets "GOOGLE_PRIVATE_KEY=your-secret:latest,GOOGLE_OAUTH_CLIENT_SECRET=your-secret:latest,NEXTAUTH_SECRET=your-secret:latest" \
+  --quiet
 ```
 
----
+## Maintenance mode (disable writes)
 
-## Better ways to deploy
+Enable:
 
-| Approach | When to use |
-|----------|-------------|
-| **`deploy.sh`** | Day-to-day updates: one command, local build first, same options every time. |
-| **Cloud Build trigger** | Deploy on every push to `main` (or a release branch). Build and deploy in the cloud; no need to run gcloud from your machine. |
-| **GitHub Actions** | Same as above, with workflows in the repo (e.g. run tests, then deploy to Cloud Run). |
+```bash
+gcloud run services update outreach-tracker \
+  --project company-tracker-485803 \
+  --region us-central1 \
+  --update-env-vars MAINTENANCE_MODE=1 \
+  --quiet
+```
 
-To add a **Cloud Build trigger**: In Google Cloud Console → Cloud Build → Triggers, create a trigger that runs on push to your repo and uses a `cloudbuild.yaml` that runs `gcloud run deploy` (or builds the image and deploys). Your existing Dockerfile in `outreach-tracker/` can be used by Cloud Build.
+Disable:
 
-**GitHub Actions** is set up. See **[GitHub Actions setup guide](GITHUB_ACTIONS_SETUP.md)** for creating the GCP service account, adding the `GCP_SA_KEY` secret, and when the workflow runs.
+```bash
+gcloud run services update outreach-tracker \
+  --project company-tracker-485803 \
+  --region us-central1 \
+  --update-env-vars MAINTENANCE_MODE=0 \
+  --quiet
+```
 
-For now, using **`./outreach-tracker/deploy.sh`** is the simplest improvement: consistent command, local build first, and easy to extend (e.g. run lint, tag revision, or update env vars).
+Remove entirely:
+
+```bash
+gcloud run services update outreach-tracker \
+  --project company-tracker-485803 \
+  --region us-central1 \
+  --remove-env-vars MAINTENANCE_MODE \
+  --quiet
+```
+
+## Troubleshooting
+
+### Build fails with buildpacks (wrong build context)
+
+Run deploy from `outreach-tracker/` (or use the script):
+
+```bash
+cd outreach-tracker
+gcloud run deploy outreach-tracker \
+  --source . \
+  --project company-tracker-485803 \
+  --region us-central1 \
+  --allow-unauthenticated \
+  --min-instances 1
+```
+
+### Google sign-in redirects to localhost
+
+Set `NEXTAUTH_URL` to the Cloud Run service URL:
+
+```bash
+SERVICE_URL=$(gcloud run services describe outreach-tracker \
+  --project company-tracker-485803 \
+  --region us-central1 \
+  --format='value(status.url)')
+
+gcloud run services update outreach-tracker \
+  --project company-tracker-485803 \
+  --region us-central1 \
+  --update-env-vars "NEXTAUTH_URL=${SERVICE_URL}" \
+  --quiet
+```
+
+Also ensure your Google OAuth client has the redirect URI:
+`https://YOUR-SERVICE-URL/api/auth/callback/google`

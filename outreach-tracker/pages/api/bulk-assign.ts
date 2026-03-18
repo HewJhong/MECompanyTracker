@@ -1,10 +1,8 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getServerSession } from "next-auth/next";
-import { authOptions } from '../../lib/auth';
-import { getCommitteeMembers } from '../../lib/committee-members';
 import { getGoogleSheetsClient } from '../../lib/google-sheets';
 import { cache } from '../../lib/cache';
 import { saveEmailScheduleEntries, computeTimeSlotsWithExisting, EmailScheduleEntry } from '../../lib/email-schedule';
+import { formatActorLabel, requireEffectiveAdmin } from '../../lib/authz';
 
 export default async function handler(
     req: NextApiRequest,
@@ -15,21 +13,8 @@ export default async function handler(
     }
 
     try {
-        // Check admin permission
-        const session = await getServerSession(req, res, authOptions);
-
-        if (!session || !session.user || !session.user.email) {
-            return res.status(401).json({ error: 'Unauthorized' });
-        }
-
-        // Fetch user from Committee_Members sheet
-        const members = await getCommitteeMembers();
-        const userEmail = session.user.email.toLowerCase().trim();
-        const user = members.find(m => m.email.toLowerCase().trim() === userEmail);
-
-        if (!user || user.role?.toLowerCase() !== 'admin') {
-            return res.status(403).json({ error: 'Admin access required' });
-        }
+        const ctx = await requireEffectiveAdmin(req, res);
+        if (!ctx) return;
 
         const { companyIds, assignee, companyNames, scheduleDate, scheduleStartTime } = req.body;
 
@@ -136,7 +121,7 @@ export default async function handler(
             try {
                 const { slots } = await computeTimeSlotsWithExisting(scheduleDate, scheduleStartTime, successfulIds.length);
                 const now = new Date().toISOString();
-                const actorName = session.user.name || session.user.email || 'Admin';
+                const actorName = formatActorLabel(ctx);
                 scheduleEntries = successfulIds.map((id, i) => ({
                     companyId: id,
                     companyName: (companyNames as Record<string, string> | undefined)?.[id] || id,
@@ -201,7 +186,7 @@ export default async function handler(
                 requestBody: {
                     values: [[
                         new Date().toISOString(),
-                        session.user.name || session.user.email,
+                                formatActorLabel(ctx),
                         'BULK_ASSIGN',
                         details,
                         dataColumn,
