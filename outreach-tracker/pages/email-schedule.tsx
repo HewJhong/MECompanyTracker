@@ -53,6 +53,11 @@ interface ScheduleEntry {
     completed?: string;
 }
 
+/** Unique id for one schedule block (one company in one date/time slot). */
+function entryId(e: ScheduleEntry): string {
+    return `${e.companyId}|${e.date}|${e.time}`;
+}
+
 interface CommitteeMember {
     name: string;
     email: string;
@@ -264,7 +269,7 @@ function ScheduleChip({
     onDoubleClick?: () => void;
 }) {
     const { attributes, listeners, setNodeRef, transform } = useDraggable({
-        id: entry.companyId,
+        id: entryId(entry),
         disabled: isReadOnly,
     });
     const style = transform ? { transform: CSS.Translate.toString(transform) } : undefined;
@@ -380,11 +385,11 @@ function DroppableSlotBlock({
             <div className="flex-1 flex flex-col gap-1.5 py-2 pr-2 min-w-0 w-0">
                 {hasAny ? (
                     sortedEntries.map(entry => (
-                        <div key={`${entry.companyId}-${entry.date}`} className={`w-full flex items-center ${viewMode === 'full' && entry.note ? 'min-h-[52px]' : 'min-h-[40px]'}`}>
+                        <div key={entryId(entry)} className={`w-full flex items-center ${viewMode === 'full' && entry.note ? 'min-h-[52px]' : 'min-h-[40px]'}`}>
                             <ScheduleChip
                                 entry={entry}
-                                isSelected={selectedIds.has(entry.companyId)}
-                                isDragging={!isReadOnly && activeId !== null && (activeId === entry.companyId || selectedIds.has(entry.companyId))}
+                                isSelected={selectedIds.has(entryId(entry))}
+                                isDragging={!isReadOnly && activeId !== null && (activeId === entryId(entry) || selectedIds.has(entryId(entry)))}
                                 isCompleted={entry.completed === 'Y'}
                                 isReadOnly={isReadOnly}
                                 viewMode={viewMode}
@@ -600,20 +605,19 @@ function EmailScheduleContent() {
     }, [dateGroups, visibleTimeSlots]);
 
     const handleSelectChip = useCallback((entry: ScheduleEntry, e: React.MouseEvent) => {
-        const id = entry.companyId;
-        const entryKey = `${id}-${entry.date}`;
+        const id = entryId(entry);
         if (e.shiftKey) {
             setSelectedIds(prev => {
                 if (!lastSelectedKey) return new Set([id]);
-                const idxLast = entriesInVisibleOrder.findIndex(x => `${x.companyId}-${x.date}` === lastSelectedKey);
-                const idxCur = entriesInVisibleOrder.findIndex(x => x.companyId === id && x.date === entry.date);
+                const idxLast = entriesInVisibleOrder.findIndex(x => entryId(x) === lastSelectedKey);
+                const idxCur = entriesInVisibleOrder.findIndex(x => entryId(x) === id);
                 if (idxLast === -1 || idxCur === -1) return new Set([id]);
                 const [lo, hi] = idxLast <= idxCur ? [idxLast, idxCur] : [idxCur, idxLast];
                 const next = new Set(prev);
-                for (let i = lo; i <= hi; i++) next.add(entriesInVisibleOrder[i].companyId);
+                for (let i = lo; i <= hi; i++) next.add(entryId(entriesInVisibleOrder[i]));
                 return next;
             });
-            setLastSelectedKey(entryKey);
+            setLastSelectedKey(id);
             return;
         }
         if (e.metaKey || e.ctrlKey) {
@@ -623,11 +627,11 @@ function EmailScheduleContent() {
                 else next.add(id);
                 return next;
             });
-            setLastSelectedKey(entryKey);
+            setLastSelectedKey(id);
             return;
         }
         setSelectedIds(new Set([id]));
-        setLastSelectedKey(entryKey);
+        setLastSelectedKey(id);
     }, [lastSelectedKey, entriesInVisibleOrder]);
 
     useEffect(() => {
@@ -639,10 +643,11 @@ function EmailScheduleContent() {
     }, []);
 
     const handleDragStart = useCallback((event: DragStartEvent) => {
-        setActiveId(event.active.id as string);
+        const id = event.active.id as string;
+        setActiveId(id);
         setSelectedIds(prev => {
-            if (prev.has(event.active.id as string)) return prev;
-            return new Set([event.active.id as string]);
+            if (prev.has(id)) return prev;
+            return new Set([id]);
         });
     }, []);
 
@@ -668,7 +673,7 @@ function EmailScheduleContent() {
             const freshEntries = await fetchScheduleEntriesFromApi();
             setEntries(freshEntries);
 
-            const movingEntries = freshEntries.filter(e => movingIds.has(e.companyId));
+            const movingEntries = freshEntries.filter(e => movingIds.has(entryId(e)));
             if (movingEntries.length === 0) {
                 completeTask(taskId, 'Schedule updated');
                 setSelectedIds(new Set());
@@ -684,7 +689,7 @@ function EmailScheduleContent() {
             }
 
             const emailsPerBatch = settings.emailsPerBatch;
-            const entriesOnTargetDate = freshEntries.filter(e => e.date === targetDate && !movingIds.has(e.companyId));
+            const entriesOnTargetDate = freshEntries.filter(e => e.date === targetDate && !movingIds.has(entryId(e)));
             const occupancy = new Map<string, number>();
             entriesOnTargetDate.forEach(e => {
                 const t = normalizeTime(e.time);
@@ -707,7 +712,7 @@ function EmailScheduleContent() {
             const oldDates = [...new Set(movingEntries.map(e => e.date))];
 
             setEntries(prev => {
-                let next = prev.filter(e => !movingIds.has(e.companyId));
+                let next = prev.filter(e => !movingIds.has(entryId(e)));
                 next = [...next, ...newEntries];
                 next.sort((a, b) => a.date.localeCompare(b.date) || normalizeTime(a.time).localeCompare(normalizeTime(b.time)) || a.order - b.order);
                 return next;
@@ -739,7 +744,7 @@ function EmailScheduleContent() {
     }, [selectedIds, settings, visibleTimeSlots, addTask, completeTask, failTask, fetchEntries]);
 
     const selectedEntries = useMemo(
-        () => entries.filter(e => selectedIds.has(e.companyId)),
+        () => entries.filter(e => selectedIds.has(entryId(e))),
         [entries, selectedIds],
     );
 
@@ -780,7 +785,7 @@ function EmailScheduleContent() {
             setEntries(freshEntries);
 
             const movingIds = new Set(selectedIds);
-            const movingEntries = freshEntries.filter(e => movingIds.has(e.companyId));
+            const movingEntries = freshEntries.filter(e => movingIds.has(entryId(e)));
             if (movingEntries.length === 0) {
                 completeTask(taskId, 'Schedule updated');
                 setSelectedIds(new Set());
@@ -789,7 +794,7 @@ function EmailScheduleContent() {
                 return;
             }
 
-            const entriesOnTargetDate = freshEntries.filter(e => e.date === targetDate && !movingIds.has(e.companyId));
+            const entriesOnTargetDate = freshEntries.filter(e => e.date === targetDate && !movingIds.has(entryId(e)));
             const occupancy = new Map<string, number>();
             entriesOnTargetDate.forEach(e => {
                 const t = normalizeTime(e.time);
@@ -813,7 +818,7 @@ function EmailScheduleContent() {
             const oldDates = [...new Set(movingEntries.map(e => e.date))];
 
             setEntries(prev => {
-                let next = prev.filter(e => !movingIds.has(e.companyId));
+                let next = prev.filter(e => !movingIds.has(entryId(e)));
                 next = [...next, ...newEntries];
                 next.sort((a, b) => a.date.localeCompare(b.date) || normalizeTime(a.time).localeCompare(normalizeTime(b.time)) || a.order - b.order);
                 return next;
@@ -888,7 +893,7 @@ function EmailScheduleContent() {
         setBulkDeleteCount(null);
         const taskId = addTask('Removing from schedule...');
         const movingIds = new Set(selectedIds);
-        setEntries(prev => prev.filter(e => !movingIds.has(e.companyId)));
+        setEntries(prev => prev.filter(e => !movingIds.has(entryId(e))));
         setSelectedIds(new Set());
         try {
             const byDate = new Map<string, string[]>();
@@ -953,7 +958,7 @@ function EmailScheduleContent() {
 
     const isToday = (dateStr: string) => dateStr === new Date().toISOString().slice(0, 10);
 
-    const activeEntry = activeId ? entries.find(e => e.companyId === activeId) : null;
+    const activeEntry = activeId ? entries.find(e => entryId(e) === activeId) : null;
     const movingCount = activeId ? (selectedIds.has(activeId) ? selectedIds.size : 1) : 0;
     const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 

@@ -50,6 +50,14 @@ interface HistoryEntry {
     remark?: string;
 }
 
+function parseIsoLikeTimestamp(value?: string): number | null {
+    if (!value || !/^\d{4}-\d{2}-\d{2}(?:[T\s]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})?)?$/.test(value)) {
+        return null;
+    }
+    const timestamp = new Date(value).getTime();
+    return Number.isNaN(timestamp) ? null : timestamp;
+}
+
 interface Company {
     id: string;
     companyName: string;
@@ -102,6 +110,7 @@ export default function CompanyDetailPage() {
     const [assignedTo, setAssignedTo] = useState('');
     const [followUpsCompleted, setFollowUpsCompleted] = useState(0);
     const [lastCompanyActivity, setLastCompanyActivity] = useState('');
+    const [lastCommitteeContact, setLastCommitteeContact] = useState('');
     const [sponsorshipTier, setSponsorshipTier] = useState('');
     const [companyResponseDate, setCompanyResponseDate] = useState('');
     const [daysAttending, setDaysAttending] = useState('');
@@ -190,6 +199,7 @@ export default function CompanyDetailPage() {
                 setAssignedTo(found.assignedPic || found.pic || 'Unassigned');
                 setFollowUpsCompleted(found.followUpsCompleted || 0);
                 setLastCompanyActivity(found.lastCompanyActivity || found.lastUpdated || '');
+                setLastCommitteeContact(found.lastContact || '');
                 setSponsorshipTier(found.sponsorshipTier || '');
                 setDaysAttending(found.daysAttending || '');
                 setChannel(found.channel || '');
@@ -512,6 +522,7 @@ export default function CompanyDetailPage() {
             setAssignedTo(company.pic || 'Unassigned');
             setFollowUpsCompleted(company.followUpsCompleted || 0);
             setLastCompanyActivity(company.lastCompanyActivity || company.lastUpdated || '');
+            setLastCommitteeContact(company.lastContact || '');
             setSponsorshipTier(company.sponsorshipTier || '');
             setChannel(company.channel || '');
             setDaysAttending(company.daysAttending || '');
@@ -529,19 +540,38 @@ export default function CompanyDetailPage() {
     const isCompanyStalled = lastCompanyActivity ? (Date.now() - new Date(lastCompanyActivity).getTime()) / (1000 * 60 * 60 * 24) > 7 : false;
     // Follow-up due: only show when status is Contacted and it's been at least 3 days since last committee contact (lastContact = when we last contacted them)
     const lastCommitteeContactDate = company?.lastContact || '';
-    const isFollowUpDue = company?.status === 'Contacted' && lastCommitteeContactDate && (Date.now() - new Date(lastCommitteeContactDate).getTime()) / (1000 * 60 * 60 * 24) >= 3;
+    const lastCommitteeContactTimestamp = parseIsoLikeTimestamp(lastCommitteeContactDate);
+    const isFollowUpDue = company?.status === 'Contacted'
+        && lastCommitteeContactTimestamp !== null
+        && (Date.now() - lastCommitteeContactTimestamp) / (1000 * 60 * 60 * 24) >= 3;
 
     // Warning Logic: Company Replied > Committee Contact > 3 Days
     const needsReplyWarning = (() => {
-        if (!company?.previousResponse) return false;
+        if (!company?.previousResponse || !company.lastContact) return false;
 
-        const lastCommitteeContactTime = company.lastContact ? new Date(company.lastContact).getTime() : 0;
-        const lastCompanyReplyDate = new Date(company.previousResponse).getTime();
+        const lastCommitteeContactTime = parseIsoLikeTimestamp(company.lastContact);
+        const lastCompanyReplyDate = parseIsoLikeTimestamp(company.previousResponse);
+        if (lastCommitteeContactTime === null || lastCompanyReplyDate === null) return false;
 
         const daysSinceReply = (Date.now() - lastCompanyReplyDate) / (1000 * 60 * 60 * 24);
 
         // Return true if company replied AFTER we last contacted them AND it's been > 3 days
         return (lastCompanyReplyDate > lastCommitteeContactTime) && (daysSinceReply > 3);
+    })();
+
+    const nextPendingEmailSchedule = (() => {
+        const now = Date.now();
+        const pending = scheduleEntries
+            .filter(e => e.completed !== 'Y')
+            .map(e => {
+                const dt = new Date(`${e.date}T${e.time}`);
+                return { ...e, ts: dt.getTime() };
+            })
+            .filter(e => Number.isFinite(e.ts))
+            .sort((a, b) => a.ts - b.ts);
+        const next = pending[0] || null;
+        if (!next) return null;
+        return { ...next, isOverdue: next.ts < now };
     })();
 
     // Success messages now shown via background tasks only
@@ -565,6 +595,7 @@ export default function CompanyDetailPage() {
         }
         setFollowUpsCompleted(newCount);
         setLastCompanyActivity(timestamp);
+        setLastCommitteeContact(timestamp);
 
         // Append prefix to remarks if not already there
         setRemarks(prev => {
@@ -606,6 +637,7 @@ export default function CompanyDetailPage() {
 
         // Stage changes locally
         setLastCompanyActivity(timestamp);
+        setLastCommitteeContact(timestamp);
 
         setRemarks(prev => {
             const trimmed = prev.trim();
@@ -790,7 +822,9 @@ export default function CompanyDetailPage() {
             targetSponsorshipTier: priorityToDatabase(targetSponsorshipTier),
             pic: assignedTo,
             followUpsCompleted,
-            lastContact: lastCompanyActivity,
+            // Keep committee contact separate from company activity to avoid overwriting
+            // Last Committee Contact Date with Previous Response timestamps on save.
+            lastContact: lastCommitteeContact,
             daysAttending,
             channel,
             ...(status === 'Interested' || status === 'Registered' ? { sponsorshipTier } : {}),
@@ -823,8 +857,7 @@ export default function CompanyDetailPage() {
                         lastContact: newCompanyState.lastContact,
                         daysAttending: newCompanyState.daysAttending,
                         channel: newCompanyState.channel,
-                        ...(status === 'Interested' || status === 'Registered' ? { sponsorshipTier } : {}),
-                        ...((status === 'Interested' || status === 'Registered') && companyResponseDate ? { previousResponse: new Date(companyResponseDate).toISOString() } : {})
+                        ...(status === 'Interested' || status === 'Registered' ? { sponsorshipTier } : {})
                     },
                     user: currentUser,
                     remark: finalRemark
@@ -843,6 +876,7 @@ export default function CompanyDetailPage() {
                     } : null);
                     setStatus(result.verifiedData.status);
                     setFollowUpsCompleted(result.verifiedData.followUpsCompleted);
+                    setLastCommitteeContact(result.verifiedData.lastContact || '');
                 }
                 // Background fetch to ensure consistency
                 fetchData(true);
@@ -1238,6 +1272,7 @@ export default function CompanyDetailPage() {
             setAssignedTo(company.pic || 'Unassigned');
             setFollowUpsCompleted(company.followUpsCompleted || 0);
             setLastCompanyActivity(company.lastCompanyActivity || company.lastUpdated || '');
+            setLastCommitteeContact(company.lastContact || '');
             setSponsorshipTier(company.sponsorshipTier || '');
             setChannel(company.channel || '');
             setDaysAttending(company.daysAttending || '');
@@ -1373,6 +1408,12 @@ export default function CompanyDetailPage() {
                                     <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-red-100 text-red-700 text-xs font-bold border border-red-200 animate-pulse">
                                         <ExclamationTriangleIcon className="w-3 h-3" />
                                         REPLY OVERDUE
+                                    </span>
+                                )}
+                                {nextPendingEmailSchedule && (
+                                    <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold border ${nextPendingEmailSchedule.isOverdue ? 'bg-red-50 text-red-700 border-red-200' : 'bg-indigo-50 text-indigo-700 border-indigo-200'}`}>
+                                        <ClockIcon className="w-3 h-3" />
+                                        {new Date(nextPendingEmailSchedule.date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}, {formatTime(nextPendingEmailSchedule.time)}
                                     </span>
                                 )}
                                 {(() => {

@@ -23,13 +23,21 @@ interface Company {
     lastContact?: string;
 }
 
+function parseIsoLikeTimestamp(value?: string): number | null {
+    if (!value || !/^\d{4}-\d{2}-\d{2}(?:[T\s]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})?)?$/.test(value)) {
+        return null;
+    }
+    const timestamp = new Date(value).getTime();
+    return Number.isNaN(timestamp) ? null : timestamp;
+}
+
 export default function CommitteePage() {
     const router = useRouter();
     const { user, loading: userLoading } = useCurrentUser();
     const [data, setData] = useState<Company[]>([]);
     const [loading, setLoading] = useState(true);
-    // scheduleMap: companyId → { date, time }
-    const [scheduleMap, setScheduleMap] = useState<Record<string, { date: string; time: string }>>({});
+    // scheduleMap: companyId → next pending schedule { date, time, isOverdue }
+    const [scheduleMap, setScheduleMap] = useState<Record<string, { date: string; time: string; isOverdue: boolean }>>({});
 
     // Redirect to home if not authenticated
     useEffect(() => {
@@ -51,9 +59,19 @@ export default function CommitteePage() {
 
             if (schedRes.ok) {
                 const schedData = await schedRes.json();
-                const map: Record<string, { date: string; time: string }> = {};
-                (schedData.entries || []).forEach((e: { companyId: string; date: string; time: string }) => {
-                    map[e.companyId] = { date: e.date, time: e.time };
+                const now = Date.now();
+                const map: Record<string, { date: string; time: string; isOverdue: boolean }> = {};
+                const bestTsByCompany: Record<string, number> = {};
+                (schedData.entries || []).forEach((e: { companyId: string; date: string; time: string; completed?: string }) => {
+                    if (!e?.companyId || !e?.date || !e?.time) return;
+                    if (e.completed === 'Y') return;
+                    const ts = new Date(`${e.date}T${e.time}`).getTime();
+                    if (!Number.isFinite(ts)) return;
+                    const prev = bestTsByCompany[e.companyId];
+                    if (prev === undefined || ts < prev) {
+                        bestTsByCompany[e.companyId] = ts;
+                        map[e.companyId] = { date: e.date, time: e.time, isOverdue: ts < now };
+                    }
                 });
                 setScheduleMap(map);
             }
@@ -80,10 +98,11 @@ export default function CommitteePage() {
 
         // Warning Logic: Company Replied > Committee Contact > 3 Days
         const replyNeeded = (() => {
-            if (!company.previousResponse) return false;
+            if (!company.previousResponse || !company.lastContact) return false;
 
-            const lastCommitteeContactDate = company.lastCompanyActivity ? new Date(company.lastCompanyActivity).getTime() : 0;
-            const lastCompanyReplyDate = new Date(company.previousResponse).getTime();
+            const lastCommitteeContactDate = parseIsoLikeTimestamp(company.lastContact);
+            const lastCompanyReplyDate = parseIsoLikeTimestamp(company.previousResponse);
+            if (lastCommitteeContactDate === null || lastCompanyReplyDate === null) return false;
 
             const daysSinceReply = (Date.now() - lastCompanyReplyDate) / (1000 * 60 * 60 * 24);
 
@@ -91,6 +110,7 @@ export default function CommitteePage() {
         })();
 
         const scheduled = scheduleMap[company.id];
+        const showSchedule = !!(scheduled?.date && scheduled?.time);
 
         return {
             id: company.id,
@@ -116,9 +136,10 @@ export default function CommitteePage() {
             isFlagged: company.isFlagged,
             isStale: daysSinceUpdate > 7,
             replyNeeded,
-            // Only show scheduled date/time when not Contacted (Contacted = filter to hide in workspace)
-            scheduledTime: company.status === 'Contacted' ? undefined : scheduled?.time,
-            scheduledDate: company.status === 'Contacted' ? undefined : scheduled?.date,
+            // Show schedule badge for next pending schedule (overdue will be red)
+            scheduledTime: showSchedule ? scheduled?.time : undefined,
+            scheduledDate: showSchedule ? scheduled?.date : undefined,
+            scheduledIsOverdue: showSchedule ? scheduled?.isOverdue : undefined,
         };
     });
 

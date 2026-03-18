@@ -70,7 +70,7 @@ export default function CompaniesPage() {
     const [scheduleSettings, setScheduleSettings] = useState<ScheduleSettings>(DEFAULT_SCHEDULE_SETTINGS);
     const [isFetchingSlot, setIsFetchingSlot] = useState(false);
     const [projectedSlots, setProjectedSlots] = useState<string[] | null>(null);
-    const [scheduleMap, setScheduleMap] = useState<Record<string, { date: string; time: string }>>({});
+    const [scheduleMap, setScheduleMap] = useState<Record<string, { date: string; time: string; isOverdue: boolean }>>({});
     const [isSyncing, setIsSyncing] = useState(false);
 
     // Bulk set status
@@ -204,9 +204,19 @@ export default function CompaniesPage() {
         fetch('/api/email-schedule')
             .then(res => res.ok ? res.json() : null)
             .then(json => {
-                const map: Record<string, { date: string; time: string }> = {};
-                (json?.entries || []).forEach((e: { companyId: string; date: string; time: string }) => {
-                    map[e.companyId] = { date: e.date, time: e.time };
+                const now = Date.now();
+                const map: Record<string, { date: string; time: string; isOverdue: boolean }> = {};
+                const bestTsByCompany: Record<string, number> = {};
+                (json?.entries || []).forEach((e: { companyId: string; date: string; time: string; completed?: string }) => {
+                    if (!e?.companyId || !e?.date || !e?.time) return;
+                    if (e.completed === 'Y') return;
+                    const ts = new Date(`${e.date}T${e.time}`).getTime();
+                    if (!Number.isFinite(ts)) return;
+                    const prev = bestTsByCompany[e.companyId];
+                    if (prev === undefined || ts < prev) {
+                        bestTsByCompany[e.companyId] = ts;
+                        map[e.companyId] = { date: e.date, time: e.time, isOverdue: ts < now };
+                    }
                 });
                 setScheduleMap(map);
             })
@@ -251,6 +261,7 @@ export default function CompaniesPage() {
         targetSponsorshipTier: company.targetSponsorshipTier || '',
         scheduledDate: scheduleMap[company.id]?.date,
         scheduledTime: scheduleMap[company.id]?.time,
+        scheduledIsOverdue: scheduleMap[company.id]?.isOverdue,
     }));
 
     const handleCompanyClick = (companyId: string) => {
@@ -302,7 +313,7 @@ export default function CompaniesPage() {
             setScheduleMap(prev => {
                 const next = { ...prev };
                 schedulePreview.slots.forEach((slot, i) => {
-                    if (companyIds[i]) next[companyIds[i]] = { date: scheduleDate, time: slot };
+                    if (companyIds[i]) next[companyIds[i]] = { date: scheduleDate, time: slot, isOverdue: false };
                 });
                 return next;
             });
@@ -358,9 +369,19 @@ export default function CompaniesPage() {
                 }
                 if (scheduleRes.ok) {
                     const json = await scheduleRes.json();
-                    const map: Record<string, { date: string; time: string }> = {};
-                    (json?.entries || []).forEach((e: { companyId: string; date: string; time: string }) => {
-                        map[e.companyId] = { date: e.date, time: e.time };
+                    const now = Date.now();
+                    const map: Record<string, { date: string; time: string; isOverdue: boolean }> = {};
+                    const bestTsByCompany: Record<string, number> = {};
+                    (json?.entries || []).forEach((e: { companyId: string; date: string; time: string; completed?: string }) => {
+                        if (!e?.companyId || !e?.date || !e?.time) return;
+                        if (e.completed === 'Y') return;
+                        const ts = new Date(`${e.date}T${e.time}`).getTime();
+                        if (!Number.isFinite(ts)) return;
+                        const prev = bestTsByCompany[e.companyId];
+                        if (prev === undefined || ts < prev) {
+                            bestTsByCompany[e.companyId] = ts;
+                            map[e.companyId] = { date: e.date, time: e.time, isOverdue: ts < now };
+                        }
                     });
                     setScheduleMap(map);
                 }

@@ -82,16 +82,20 @@ export default async function handler(
             values: [[timestamp]]
         });
 
-        Object.entries(updates).forEach(([key, value]) => {
-            if (TRACKER_MAP[key]) {
+        // previousResponse (Column F) is historical and must not be overwritten by app updates
+        const keysToWrite = Object.keys(updates).filter(k => k !== 'previousResponse');
+        keysToWrite.forEach((key) => {
+            const col = TRACKER_MAP[key];
+            if (col) {
                 trackerUpdates.push({
-                    range: `${trackerSheetName}!${TRACKER_MAP[key]}${trackerRowIndex}`,
-                    values: [[value]]
+                    range: `${trackerSheetName}!${col}${trackerRowIndex}`,
+                    values: [[(updates as Record<string, unknown>)[key]]]
                 });
             }
         });
 
         // Automatic "No Reply" transition logic - SKIP if status is being manually updated
+        // Uses last company contact (H) or last committee contact (I), whichever is more recent
         let remarkText = remark;
         if (!updates.status) {
             const currentDataRange = await sheets.spreadsheets.values.get({
@@ -99,11 +103,16 @@ export default async function handler(
                 range: `${trackerSheetName}!F${trackerRowIndex}:J${trackerRowIndex}`,
             });
             const currentData = currentDataRange.data.values?.[0] || [];
-            const currentPreviousResponse = currentData[0]; // F: Previous Response
-            const currentFollowUps = parseInt(updates.followUpsCompleted?.toString() || currentData[4]) || 0; // J: Follow-up Count (index 4 in range F:J)
+            const lastCompanyContact = currentData[2]; // H
+            const lastContact = currentData[3];         // I (committee contact)
+            const currentFollowUps = parseInt(updates.followUpsCompleted?.toString() || currentData[4]) || 0; // J
 
-            if (currentFollowUps >= 3 && currentPreviousResponse) {
-                const daysSinceResponse = (Date.now() - new Date(currentPreviousResponse).getTime()) / (1000 * 60 * 60 * 24);
+            const tsCompany = lastCompanyContact ? new Date(lastCompanyContact).getTime() : 0;
+            const tsCommittee = lastContact ? new Date(lastContact).getTime() : 0;
+            const lastContactDate = Math.max(tsCompany, tsCommittee);
+
+            if (currentFollowUps >= 3 && lastContactDate > 0) {
+                const daysSinceResponse = (Date.now() - lastContactDate) / (1000 * 60 * 60 * 24);
                 if (daysSinceResponse > 3) {
                     trackerUpdates.push({
                         range: `${trackerSheetName}!${TRACKER_MAP['status']}${trackerRowIndex}`,

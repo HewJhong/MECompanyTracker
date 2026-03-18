@@ -160,6 +160,7 @@ interface Company {
     followUpsCompleted?: number;
     scheduledDate?: string;
     scheduledTime?: string;
+    scheduledIsOverdue?: boolean;
 }
 
 interface AllCompaniesTableProps {
@@ -995,9 +996,9 @@ export default function AllCompaniesTable({
                                             </td>
                                         )}
                                         {col.scheduled && (
-                                            <td className="px-6 py-4 text-slate-600 text-xs whitespace-nowrap" style={{ width: COLUMN_WIDTHS.scheduled }}>
+                                            <td className="px-6 py-4 text-xs whitespace-nowrap" style={{ width: COLUMN_WIDTHS.scheduled }}>
                                                 {company.scheduledDate && company.scheduledTime ? (
-                                                    <span>
+                                                    <span className={company.scheduledIsOverdue ? 'text-red-700 font-semibold' : 'text-slate-600'}>
                                                         {new Date(company.scheduledDate + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}, {formatTime(company.scheduledTime)}
                                                     </span>
                                                 ) : (

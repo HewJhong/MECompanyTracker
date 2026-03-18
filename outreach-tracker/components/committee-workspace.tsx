@@ -25,6 +25,7 @@ interface Company {
     replyNeeded?: boolean;
     scheduledTime?: string;
     scheduledDate?: string;
+    scheduledIsOverdue?: boolean;
     followUpsCompleted?: number;
     lastContact?: string;
     previousResponse?: string;
@@ -268,7 +269,7 @@ export default function CommitteeWorkspace({
                     body: JSON.stringify({
                         companyId: c.id,
                         user: memberName,
-                        updates: { status: 'Interested', previousResponse: timestamp },
+                        updates: { status: 'Interested' },
                         remark: remarkText,
                         actionDate: timestamp,
                     }),
@@ -499,8 +500,8 @@ export default function CommitteeWorkspace({
                                         </div>
                                         {company.scheduledTime && (
                                             <div className="flex items-center gap-1 mt-0.5">
-                                                <ClockIcon className="w-3 h-3 text-indigo-400 flex-shrink-0" />
-                                                <span className="text-[10px] text-indigo-500 font-medium">
+                                                <ClockIcon className={`w-3 h-3 flex-shrink-0 ${company.scheduledIsOverdue ? 'text-red-400' : 'text-indigo-400'}`} />
+                                                <span className={`text-[10px] font-medium ${company.scheduledIsOverdue ? 'text-red-600' : 'text-indigo-500'}`}>
                                                     {company.scheduledDate} {company.scheduledTime}
                                                 </span>
                                             </div>
