@@ -15,10 +15,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const ctx = await requireEffectiveCanEditCompanies(req, res);
     if (!ctx) return;
 
-    const { companyId, user } = req.body as { companyId: string; user: string };
+        const { companyId, user } = req.body as { companyId: string; user: string };
     if (!companyId || !user) {
         return res.status(400).json({ message: 'Missing companyId or user' });
     }
+    console.log(`[ARCHIVE] Request to archive companyId: "${companyId}"`);
 
     const databaseSpreadsheetId = process.env.SPREADSHEET_ID_1;
     const trackerSpreadsheetId = process.env.SPREADSHEET_ID_2;
@@ -45,9 +46,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         const trackerRows = (trackerColA.data.values || []) as string[][];
         const trackerRowIndex = trackerRows.findIndex(row => row[0] && String(row[0]).trim() === String(companyId).trim());
         if (trackerRowIndex === -1) {
+            console.log(`[ARCHIVE] Company not found in tracker: "${companyId}"`);
             return res.status(404).json({ message: 'Company not found in tracker' });
         }
-        const trackerRowNum = trackerRowIndex + 2;
+        // A:A includes header; index i = sheet row i+1
+        const trackerRowNum = trackerRowIndex + 1;
+        const matchedId = trackerRows[trackerRowIndex]?.[0]?.toString().trim();
+        console.log(`[ARCHIVE] Tracker match: companyId="${companyId}" found at arrayIndex=${trackerRowIndex}, sheetRow=${trackerRowNum}, rowIdInSheet="${matchedId}"`);
 
         // Set column P (Deleted) to "Y" in Tracker
         await sheets.spreadsheets.values.update({
@@ -56,6 +61,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             valueInputOption: 'USER_ENTERED',
             requestBody: { values: [['Y']] },
         });
+        console.log(`[ARCHIVE] Set Tracker P${trackerRowNum}=Y for companyId="${companyId}"`);
 
         // 2. Set column P (Deleted) to "Y" in Database for all rows with this companyId
         if (databaseSpreadsheetId) {
@@ -70,10 +76,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 const dbRowNumbers: number[] = [];
                 dbRows.forEach((row, i) => {
                     if (row[0] && String(row[0]).trim() === String(companyId).trim()) {
-                        dbRowNumbers.push(i + 2); // 1-based row number
+                        dbRowNumbers.push(i + 1); // A:A includes header; index i = sheet row i+1
                     }
                 });
                 if (dbRowNumbers.length > 0) {
+                    console.log(`[ARCHIVE] Updating Database: companyId="${companyId}", rows=${dbRowNumbers.join(', ')}`);
                     const data = dbRowNumbers.map(rowNum => ({
                         range: `${dbSheetName}!P${rowNum}`,
                         values: [['Y']],

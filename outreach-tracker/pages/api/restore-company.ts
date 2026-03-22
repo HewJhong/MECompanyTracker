@@ -17,6 +17,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (!companyId || !user) {
         return res.status(400).json({ message: 'Missing companyId or user' });
     }
+    console.log(`[RESTORE] Request to restore companyId: "${companyId}"`);
 
     const databaseSpreadsheetId = process.env.SPREADSHEET_ID_1;
     const trackerSpreadsheetId = process.env.SPREADSHEET_ID_2;
@@ -50,8 +51,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         if (!deleted) {
             return res.status(400).json({ message: 'Company is not deleted' });
         }
-
+        // A2:P excludes header; index i = sheet row i+2
         const trackerRowNum = rowIndex + 2;
+        const matchedId = trackerRows[rowIndex]?.[0]?.toString().trim();
+        console.log(`[RESTORE] Tracker match: companyId="${companyId}" at arrayIndex=${rowIndex}, sheetRow=${trackerRowNum}, rowIdInSheet="${matchedId}"`);
 
         // Clear column P (Deleted) in Tracker
         await sheets.spreadsheets.values.update({
@@ -60,6 +63,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             valueInputOption: 'USER_ENTERED',
             requestBody: { values: [['']] },
         });
+        console.log(`[RESTORE] Cleared Tracker P${trackerRowNum} for companyId="${companyId}"`);
 
         // Clear column P (Deleted) in Database for all rows with this companyId
         if (databaseSpreadsheetId) {
@@ -74,10 +78,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 const dbRowNumbers: number[] = [];
                 dbRows.forEach((row, i) => {
                     if (row[0] && String(row[0]).trim() === String(companyId).trim()) {
-                        dbRowNumbers.push(i + 2); // 1-based row number
+                        dbRowNumbers.push(i + 1); // A:A includes header; index i = sheet row i+1
                     }
                 });
                 if (dbRowNumbers.length > 0) {
+                    console.log(`[RESTORE] Clearing Database: companyId="${companyId}", rows=${dbRowNumbers.join(', ')}`);
                     const data = dbRowNumbers.map(rowNum => ({
                         range: `${dbSheetName}!P${rowNum}`,
                         values: [['']],
