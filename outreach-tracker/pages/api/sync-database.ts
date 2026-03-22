@@ -1,7 +1,68 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { getServerSession } from 'next-auth/next';
+import { authOptions } from '../../lib/auth';
+import { getCommitteeMembers } from '../../lib/committee-members';
 import { getGoogleSheetsClient } from '../../lib/google-sheets';
 import { cache } from '../../lib/cache';
 import { syncDailyStats } from '../../lib/daily-stats';
+
+interface NameMismatch {
+    rowIndex: number;
+    oldName: string;
+    newName: string;
+    id: string;
+}
+
+interface IdNameMismatch {
+    rowIndex: number;
+    trackerName: string;
+    dbName: string;
+    id: string;
+}
+
+interface IdMismatch {
+    rowIndex: number;
+    oldId: string;
+    newId: string;
+    name: string;
+}
+
+interface MissingInDatabase {
+    id: string;
+    name: string;
+    rowIndex: number;
+}
+
+type NewCompanyRow = (string | number)[];
+
+/** Retry a Google API call with exponential backoff for transient failures */
+async function withRetry<T>(
+    fn: () => Promise<T>,
+    opts: { maxAttempts?: number; operationName?: string } = {}
+): Promise<T> {
+    const { maxAttempts = 3, operationName = 'operation' } = opts;
+    let lastError: Error | null = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+            return await fn();
+        } catch (e) {
+            lastError = e as Error;
+            const isRetryable =
+                (lastError.message?.includes('RESOURCE_EXHAUSTED') ||
+                    lastError.message?.includes('rateLimitExceeded') ||
+                    (lastError as { code?: number }).code === 429) &&
+                attempt < maxAttempts;
+            if (isRetryable) {
+                const delay = Math.min(1000 * Math.pow(2, attempt - 1), 10000);
+                console.warn(`[Sync] ${operationName} attempt ${attempt} failed, retrying in ${delay}ms:`, lastError.message);
+                await new Promise(r => setTimeout(r, delay));
+            } else {
+                throw lastError;
+            }
+        }
+    }
+    throw lastError || new Error('Unknown error');
+}
 
 export default async function handler(
     req: NextApiRequest,
@@ -12,6 +73,19 @@ export default async function handler(
     }
 
     try {
+        const session = await getServerSession(req, res, authOptions);
+        if (!session?.user?.email) {
+            return res.status(401).json({ message: 'Unauthorized' });
+        }
+
+        const members = await getCommitteeMembers();
+        const userEmail = session.user.email.toLowerCase().trim();
+        const user = members.find(m => m.email?.toLowerCase().trim() === userEmail);
+        const roleLower = user?.role?.toLowerCase() || '';
+        if (!user || (roleLower !== 'admin' && roleLower !== 'superadmin')) {
+            return res.status(403).json({ message: 'Admin access required' });
+        }
+
         const { preview = false } = req.body;
         const sheets = await getGoogleSheetsClient();
         const databaseSpreadsheetId = process.env.SPREADSHEET_ID_1; // Master Database (Source of Truth)
@@ -85,10 +159,10 @@ export default async function handler(
         // Track which tracker rows have been "claimed" by a database entry
         const claimedRows = new Set<number>();
 
-        const missingInTracker: any[] = [];
-        const nameMismatches: any[] = [];
-        const idNameMismatches: any[] = []; // ID matched but name differs; no name match in tracker — flag for review to avoid name/status mismatch
-        const idMismatches: any[] = [];
+        const missingInTracker: NewCompanyRow[] = [];
+        const nameMismatches: NameMismatch[] = [];
+        const idNameMismatches: IdNameMismatch[] = []; // ID matched but name differs; no name match in tracker — flag for review to avoid name/status mismatch
+        const idMismatches: IdMismatch[] = [];
         const duplicatesToRemove: number[] = []; // Rows to delete
 
         // 3. Process each Database company (one per unique ID; DB has multiple rows per company for contacts)
@@ -208,7 +282,7 @@ export default async function handler(
         });
 
         // 3.1 Identify Bi-directional Sync (Missing in Database)
-        const missingInDatabase: any[] = [];
+        const missingInDatabase: MissingInDatabase[] = [];
         trackerRows.forEach((row, index) => {
             const rowIndex = index + 2;
             if (!claimedRows.has(rowIndex)) {
@@ -233,14 +307,16 @@ export default async function handler(
         if (missingInDatabase.length > 0) {
             if (!preview) {
                 const valuesToAppend = missingInDatabase.map(m => [m.id, m.name]);
-                await sheets.spreadsheets.values.append({
-                    spreadsheetId: databaseSpreadsheetId,
-                    range: `${dbSheetName}!A:B`,
-                    valueInputOption: 'USER_ENTERED',
-                    requestBody: {
-                        values: valuesToAppend
-                    }
-                });
+                await withRetry(
+                    () =>
+                        sheets.spreadsheets.values.append({
+                            spreadsheetId: databaseSpreadsheetId,
+                            range: `${dbSheetName}!A:B`,
+                            valueInputOption: 'USER_ENTERED',
+                            requestBody: { values: valuesToAppend }
+                        }),
+                    { operationName: 'append to database' }
+                );
             }
             stats.addedToDatabase = missingInDatabase.length;
             console.log(`${preview ? '[PREVIEW] ' : ''}Added ${missingInDatabase.length} companies TO DATABASE.`);
@@ -249,14 +325,16 @@ export default async function handler(
         // Batch Append (New Rows)
         if (missingInTracker.length > 0) {
             if (!preview) {
-                await sheets.spreadsheets.values.append({
-                    spreadsheetId: trackerSpreadsheetId,
-                    range: `${trackerSheetName}!A:O`,
-                    valueInputOption: 'USER_ENTERED',
-                    requestBody: {
-                        values: missingInTracker
-                    }
-                });
+                await withRetry(
+                    () =>
+                        sheets.spreadsheets.values.append({
+                            spreadsheetId: trackerSpreadsheetId,
+                            range: `${trackerSheetName}!A:O`,
+                            valueInputOption: 'USER_ENTERED',
+                            requestBody: { values: missingInTracker }
+                        }),
+                    { operationName: 'append to tracker' }
+                );
             }
             stats.added = missingInTracker.length;
             console.log(`${preview ? '[PREVIEW] ' : ''}Added ${missingInTracker.length} new companies.`);
@@ -291,10 +369,14 @@ export default async function handler(
             for (let i = 0; i < requests.length; i += CHUNK_SIZE) {
                 const chunk = requests.slice(i, i + CHUNK_SIZE);
                 if (!preview) {
-                    await sheets.spreadsheets.batchUpdate({
-                        spreadsheetId: trackerSpreadsheetId,
-                        requestBody: { requests: chunk }
-                    });
+                    await withRetry(
+                        () =>
+                            sheets.spreadsheets.batchUpdate({
+                                spreadsheetId: trackerSpreadsheetId,
+                                requestBody: { requests: chunk }
+                            }),
+                        { operationName: `name fix batch ${i / CHUNK_SIZE + 1}` }
+                    );
                 }
             }
             stats.updated = nameUpdatesToApply.length;
@@ -320,11 +402,17 @@ export default async function handler(
             });
 
             if (!preview && idUpdateData.length > 0) {
-                await sheets.spreadsheets.values.batchUpdate({
-                    spreadsheetId: trackerSpreadsheetId,
-                    valueInputOption: 'RAW',
-                    requestBody: { data: idUpdateData }
-                });
+                await withRetry(
+                    () =>
+                        sheets.spreadsheets.values.batchUpdate({
+                            spreadsheetId: trackerSpreadsheetId,
+                            requestBody: {
+                                valueInputOption: 'RAW',
+                                data: idUpdateData
+                            }
+                        }),
+                    { operationName: 'ID fix batch' }
+                );
             }
             stats.updated += idMismatches.length;
             console.log(`${preview ? '[PREVIEW] ' : ''}Updated IDs for ${idMismatches.length} companies (full row).`);
@@ -352,10 +440,14 @@ export default async function handler(
             for (let i = 0; i < deleteRequests.length; i += CHUNK_SIZE) {
                 const chunk = deleteRequests.slice(i, i + CHUNK_SIZE);
                 if (!preview) {
-                    await sheets.spreadsheets.batchUpdate({
-                        spreadsheetId: trackerSpreadsheetId,
-                        requestBody: { requests: chunk }
-                    });
+                    await withRetry(
+                        () =>
+                            sheets.spreadsheets.batchUpdate({
+                                spreadsheetId: trackerSpreadsheetId,
+                                requestBody: { requests: chunk }
+                            }),
+                        { operationName: `delete duplicates batch ${i / CHUNK_SIZE + 1}` }
+                    );
                 }
             }
             stats.duplicatesRemoved = duplicatesToRemove.length;

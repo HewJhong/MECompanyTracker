@@ -9,7 +9,10 @@ interface Company {
     id: string;
     companyName: string;
     name?: string;
-    status: string;
+    /** @deprecated Use contactStatus instead. Kept for compatibility. */
+    status?: string;
+    contactStatus?: string;
+    relationshipStatus?: string;
     isFlagged: boolean;
     contacts: any[];
     lastUpdated?: string;

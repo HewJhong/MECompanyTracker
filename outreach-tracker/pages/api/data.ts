@@ -145,6 +145,7 @@ export default async function handler(
                     remark: t?.remarks || '',
                     lastUpdated: t?.lastUpdate || '',
                     lastCompanyActivity: t?.previousResponse || t?.lastUpdate || '',
+                    previousResponse: t?.previousResponse || '',
                     lastContact: t?.lastContact || '',
                     daysAttending: t?.daysAttending || '',
                     discipline: row[2],
