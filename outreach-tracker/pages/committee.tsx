@@ -9,7 +9,10 @@ interface Company {
     id: string;
     companyName: string;
     name?: string;
-    status: string;
+    /** @deprecated Use contactStatus instead. Kept for compatibility. */
+    status?: string;
+    contactStatus?: string;
+    relationshipStatus?: string;
     isFlagged: boolean;
     contacts: any[];
     lastUpdated?: string;
@@ -115,7 +118,8 @@ export default function CommitteePage() {
         return {
             id: company.id,
             name: company.companyName || company.name || '',
-            status: company.status,
+            contactStatus: company.contactStatus || 'To Contact',
+            relationshipStatus: company.relationshipStatus || '',
             followUpsCompleted: company.followUpsCompleted ?? 0,
             lastContact: company.lastContact || '',
             previousResponse: company.previousResponse || '',

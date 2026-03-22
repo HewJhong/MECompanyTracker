@@ -62,7 +62,8 @@ interface Company {
     id: string;
     companyName: string;
     name?: string;
-    status: string;
+    contactStatus: string;
+    relationshipStatus: string;
     isFlagged: boolean;
     contacts: any[];
     lastUpdated?: string;
@@ -82,8 +83,39 @@ interface Company {
     channel?: string;
 }
 
-const statusOptions = ['To Contact', 'Contacted', 'Interested', 'Registered', 'Rejected', 'No Reply'];
+const contactStatusOptions = ['To Contact', 'Contacted', 'To Follow Up', 'No Reply'];
+const relationshipStatusOptions = ['Interested', 'Registered', 'Rejected'];
 const sponsorshipTierOptions = ['Official Partner', 'Gold', 'Silver', 'Bronze'];
+const REJECTION_REASON_TAG = '[Rejection Reason]';
+
+function extractPlainRejectionReason(remark?: string): string {
+    if (!remark) return '';
+    const trimmed = remark.trim();
+    if (!trimmed) return '';
+
+    // Keep only the "reason" part; strip appended audit/history blocks.
+    // Current save logic appends audit as: "[Company Update]: ..."
+    const beforeAudit = trimmed.split('\n\n[Company Update]:')[0].trim();
+
+    if (beforeAudit.startsWith(REJECTION_REASON_TAG)) {
+        let rest = beforeAudit.slice(REJECTION_REASON_TAG.length).trim();
+        if (rest.startsWith(':')) rest = rest.slice(1).trim();
+        return rest;
+    }
+
+    // If the remark is only the appended audit/history block and no user-entered text exists,
+    // do not treat it as a valid rejection reason.
+    if (beforeAudit.startsWith('[Company Update]:')) return '';
+
+    // Back-compat: if older rows exist without a tag, treat the first block as reason.
+    return beforeAudit.trim();
+}
+
+function withRejectionReasonTag(reason: string): string {
+    const trimmed = reason.trim();
+    if (!trimmed) return '';
+    return trimmed.startsWith(REJECTION_REASON_TAG) ? trimmed : `${REJECTION_REASON_TAG} ${trimmed}`;
+}
 
 const STORAGE_KEY_SELECTION_RESTORE = 'companies_selection_restore';
 // disciplineOptions and priorityOptions are now imported from mapping utilities
@@ -102,7 +134,8 @@ export default function CompanyDetailPage() {
     const [activeTab, setActiveTab] = useState<'details' | 'contacts' | 'history'>('details');
     const [isEditMode, setIsEditMode] = useState(false);
     const [editedName, setEditedName] = useState('');
-    const [status, setStatus] = useState('');
+    const [contactStatus, setContactStatus] = useState('');
+    const [relationshipStatus, setRelationshipStatus] = useState('');
     const [remarks, setRemarks] = useState('');
     const [isFlagged, setIsFlagged] = useState(false);
     const [discipline, setDiscipline] = useState('');
@@ -173,6 +206,7 @@ export default function CompanyDetailPage() {
     };
 
     const companyId = typeof id === 'string' ? decodeURIComponent(id) : '';
+    const fromSource = typeof from === 'string' ? from : Array.isArray(from) ? (from[0] ?? '') : '';
 
     const fetchData = async (forceRefresh = false) => {
         setLoading(true);
@@ -194,11 +228,17 @@ export default function CompanyDetailPage() {
 
             const data = await res.json();
             const companies: Company[] = data.companies || [];
-            const found = companies.find(c => c.id === companyId || c.companyName === companyId);
+            // Email schedule navigates with the real sheet id; do not fall back to companyName or
+            // a duplicate name can match before the intended id and open the wrong company.
+            const found =
+                fromSource === 'email-schedule'
+                    ? companies.find(c => c.id === companyId)
+                    : companies.find(c => c.id === companyId || c.companyName === companyId);
             if (found) {
                 setCompany(found);
                 setEditedName(found.companyName || found.name || '');
-                setStatus(found.status);
+                setContactStatus(found.contactStatus || 'To Contact');
+                setRelationshipStatus(found.relationshipStatus || '');
                 setIsFlagged(found.isFlagged);
                 setDiscipline(disciplineToDisplay(found.discipline)); // Convert DB abbreviation to display name
                 setTargetSponsorshipTier(priorityToDisplay(found.targetSponsorshipTier)); // Convert DB abbreviation to display name
@@ -242,7 +282,7 @@ export default function CompanyDetailPage() {
     useEffect(() => {
         if (companyId) fetchData();
         if (user) fetchCommitteeMembers();
-    }, [companyId, user]);
+    }, [companyId, fromSource, user]);
 
     // Fetch email schedule for this company (admin schedule section) — loads ALL entries
     const fetchScheduleForCompany = useCallback(async () => {
@@ -296,9 +336,18 @@ export default function CompanyDetailPage() {
             return;
         }
 
-        // Capture before save — used to detect second schedule and early-stage guard
-        const isSecondSchedule = scheduleEntries.length > 0;
-        const isEarlyStage = ['To Contact', 'Contacted'].includes(status);
+        // Only auto "To Follow Up" when scheduling a *new* date slot after at least one
+        // completed outreach — not when editing the first slot's time, nor when adding a
+        // second row before any outreach has been completed (e.g. rescheduling to another day).
+        const scheduleDateKey = outreachScheduleDate.trim().slice(0, 10);
+        const hasEntryForThisDate = scheduleEntries.some(
+            e => e.date.trim().slice(0, 10) === scheduleDateKey,
+        );
+        const hasPriorCompletedOutreach =
+            scheduleEntries.some(e => e.completed === 'Y') || (followUpsCompleted || 0) > 0;
+        const isFollowUpScheduleSlot = hasPriorCompletedOutreach && !hasEntryForThisDate;
+        // Auto-set contact status to To Follow Up when scheduling a follow-up after prior outreach
+        const statusAllowsAutoFollowUp = ['To Contact', 'Contacted'].includes(contactStatus);
 
         setIsSettingSchedule(true);
         const taskId = addTask('Setting outreach schedule...');
@@ -320,22 +369,22 @@ export default function CompanyDetailPage() {
             setScheduledDate(outreachScheduleDate);
             setScheduledTime(outreachScheduleTime);
 
-            // Auto-set "To Follow Up" when scheduling a second outreach for early-stage companies
-            if (isSecondSchedule && isEarlyStage && status !== 'To Follow Up') {
+            // Auto-set "To Follow Up" when assigning a new follow-up slot after prior outreach completed
+            if (isFollowUpScheduleSlot && statusAllowsAutoFollowUp) {
                 try {
                     await fetch('/api/update', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                             companyId: company.id,
-                            updates: { status: 'To Follow Up' },
+                            updates: { contactStatus: 'To Follow Up' },
                             user: currentUser,
-                            remark: '[Auto] Status set to To Follow Up after second outreach scheduled',
+                            remark: '[Auto] Contact status set to To Follow Up — follow-up outreach scheduled after prior outreach completed',
                         }),
                     });
-                    setStatus('To Follow Up');
+                    setContactStatus('To Follow Up');
                 } catch (statusErr) {
-                    console.error('Failed to auto-set To Follow Up status', statusErr);
+                    console.error('Failed to auto-set To Follow Up contact status', statusErr);
                 }
             }
 
@@ -366,7 +415,7 @@ export default function CompanyDetailPage() {
         } finally {
             setIsSettingSchedule(false);
         }
-    }, [company, user?.isAdmin, outreachScheduleDate, outreachScheduleTime, outreachScheduleNote, assignedTo, scheduleEntries, status, currentUser, addTask, completeTask, failTask, showError, fetchScheduleForCompany]);
+    }, [company, user?.isAdmin, outreachScheduleDate, outreachScheduleTime, outreachScheduleNote, assignedTo, scheduleEntries, followUpsCompleted, contactStatus, currentUser, addTask, completeTask, failTask, showError, fetchScheduleForCompany]);
 
     const handleClearOutreachSchedule = useCallback(async () => {
         if (!company || !user?.isAdmin) return;
@@ -618,7 +667,8 @@ export default function CompanyDetailPage() {
     useEffect(() => {
         if (company) {
             setEditedName(company.companyName || company.name || '');
-            setStatus(company.status);
+            setContactStatus(company.contactStatus || 'To Contact');
+            setRelationshipStatus(company.relationshipStatus || '');
             setIsFlagged(company.isFlagged);
             setDiscipline(disciplineToDisplay(company.discipline)); // Convert DB abbreviation to display name
             setTargetSponsorshipTier(priorityToDisplay(company.targetSponsorshipTier)); // Convert DB abbreviation to display name
@@ -644,7 +694,7 @@ export default function CompanyDetailPage() {
     // Follow-up due: only show when status is Contacted and it's been at least 3 days since last committee contact (lastContact = when we last contacted them)
     const lastCommitteeContactDate = company?.lastContact || '';
     const lastCommitteeContactTimestamp = parseIsoLikeTimestamp(lastCommitteeContactDate);
-    const isFollowUpDue = company?.status === 'Contacted'
+    const isFollowUpDue = company?.contactStatus === 'Contacted'
         && lastCommitteeContactTimestamp !== null
         && (Date.now() - lastCommitteeContactTimestamp) / (1000 * 60 * 60 * 24) >= 3;
 
@@ -682,8 +732,8 @@ export default function CompanyDetailPage() {
     const handleLogOutreach = async () => {
         if (!company) return;
 
-        // Use the current local status state to determine if it's the first contact
-        const isFirstOutreach = status === 'To Contact';
+        // Use the current local contactStatus state to determine if it's the first contact
+        const isFirstOutreach = contactStatus === 'To Contact';
         const newCount = isFirstOutreach ? 0 : (followUpsCompleted || 0) + 1;
 
         // Use selected date or default to now
@@ -693,8 +743,8 @@ export default function CompanyDetailPage() {
         const remarkPrefix = `[${actionTag} #${newCount}]`;
 
         // Stage changes locally
-        if (status === 'To Contact') {
-            setStatus('Contacted');
+        if (contactStatus === 'To Contact') {
+            setContactStatus('Contacted');
         }
         setFollowUpsCompleted(newCount);
         setLastCompanyActivity(timestamp);
@@ -718,8 +768,10 @@ export default function CompanyDetailPage() {
         const replyDateISO = companyResponseDate ? new Date(companyResponseDate).toISOString() : timestamp;
         const remarkPrefix = `[Company Reply]`;
 
-        // Stage changes locally
-        setStatus('Interested');
+        // Stage changes locally — company replied positively: move to To Follow Up contact-wise,
+        // and mark Interested unless already Registered (avoid regressing a closed deal).
+        if (relationshipStatus !== 'Registered') setRelationshipStatus('Interested');
+        setContactStatus('To Follow Up');
         setCompanyResponseDate(replyDateISO);
 
         setRemarks(prev => {
@@ -842,14 +894,17 @@ export default function CompanyDetailPage() {
     const handleSave = async () => {
         if (!company) return;
 
+        const existingRejectionReason = extractPlainRejectionReason(company.remark);
+        const effectiveRejectionReason = remarks.trim() || existingRejectionReason;
+
         // Validate rejection reason
-        if (status === 'Rejected' && !remarks.trim()) {
+        if (relationshipStatus === 'Rejected' && !effectiveRejectionReason.trim()) {
             showError("Reason Required", "Please provide a rejection reason before saving.");
             return;
         }
 
         // Validate sponsorship tier for registration
-        if (status === 'Registered' && !sponsorshipTier) {
+        if (relationshipStatus === 'Registered' && !sponsorshipTier) {
             showError("Sponsorship Tier Required", "Please select a sponsorship tier before marking as Registered.");
             return;
         }
@@ -866,7 +921,8 @@ export default function CompanyDetailPage() {
         // Helper to format values
         const fmt = (val: any) => val ? val : '(none)';
 
-        if (company.status !== status) changes.push(`Status: ${fmt(company.status)} → ${status}`);
+        if (company.contactStatus !== contactStatus) changes.push(`Contact Status: ${fmt(company.contactStatus)} → ${contactStatus}`);
+        if (company.relationshipStatus !== relationshipStatus) changes.push(`Relationship Status: ${fmt(company.relationshipStatus || '—')} → ${relationshipStatus || '—'}`);
 
         // Handle Discipline Diff (String vs String but potentially multi-value)
         // If I haven't implemented multi-select UI yet, this just diffs strings.
@@ -896,7 +952,7 @@ export default function CompanyDetailPage() {
             changes.push(`Channel: ${company.channel || '(none)'} → ${channel}`);
         }
 
-        if (status === 'Interested' || status === 'Registered') {
+        if (relationshipStatus === 'Interested' || relationshipStatus === 'Registered') {
             if ((company.sponsorshipTier || '') !== sponsorshipTier) {
                 changes.push(`Sponsorship Tier: ${fmt(company.sponsorshipTier)} → ${sponsorshipTier}`);
             }
@@ -904,6 +960,11 @@ export default function CompanyDetailPage() {
 
         // If there are changes, append them to remark or use them as remark
         let finalRemark = remarks.trim();
+        if (relationshipStatus === 'Rejected') {
+            // Ensure future rejected saves are tagged, and do not overwrite an existing reason
+            // when the textarea is empty (e.g. after a prior save).
+            finalRemark = withRejectionReasonTag(effectiveRejectionReason);
+        }
         if (changes.length > 0) {
             const auditLog = `[Company Update]: ${changes.join(', ')}`;
             finalRemark = finalRemark ? `${finalRemark}\n\n${auditLog}` : auditLog;
@@ -917,7 +978,8 @@ export default function CompanyDetailPage() {
         // Optimistic Update
         const newCompanyState = {
             ...company,
-            status,
+            contactStatus,
+            relationshipStatus,
             isFlagged,
             remark: finalRemark || company.remark, // Use the new remark with history
             companyName: editedName,
@@ -930,7 +992,7 @@ export default function CompanyDetailPage() {
             lastContact: lastCommitteeContact,
             daysAttending,
             channel,
-            ...(status === 'Interested' || status === 'Registered' ? { sponsorshipTier } : {}),
+            ...(relationshipStatus === 'Interested' || relationshipStatus === 'Registered' ? { sponsorshipTier } : {}),
             ...(companyResponseDate ? { lastCompanyActivity: new Date(companyResponseDate).toISOString() } : {})
         };
 
@@ -950,7 +1012,8 @@ export default function CompanyDetailPage() {
                 body: JSON.stringify({
                     companyId: company.id,
                     updates: {
-                        status: newCompanyState.status,
+                        contactStatus: newCompanyState.contactStatus,
+                        ...(newCompanyState.relationshipStatus !== (company.relationshipStatus || '') ? { relationshipStatus: newCompanyState.relationshipStatus } : {}),
                         isFlagged: newCompanyState.isFlagged,
                         companyName: newCompanyState.companyName,
                         discipline: newCompanyState.discipline, // Send DB code
@@ -960,7 +1023,7 @@ export default function CompanyDetailPage() {
                         lastContact: newCompanyState.lastContact,
                         daysAttending: newCompanyState.daysAttending,
                         channel: newCompanyState.channel,
-                        ...(status === 'Interested' || status === 'Registered' ? { sponsorshipTier } : {})
+                        ...(relationshipStatus === 'Interested' || relationshipStatus === 'Registered' ? { sponsorshipTier } : {})
                     },
                     user: currentUser,
                     remark: finalRemark
@@ -971,13 +1034,15 @@ export default function CompanyDetailPage() {
                 if (result.verifiedData) {
                     setCompany(prev => prev ? {
                         ...prev,
-                        status: result.verifiedData.status,
+                        contactStatus: result.verifiedData.contactStatus,
+                        relationshipStatus: result.verifiedData.relationshipStatus,
                         followUpsCompleted: result.verifiedData.followUpsCompleted,
                         lastContact: result.verifiedData.lastContact,
                         lastUpdated: result.verifiedData.lastUpdated,
                         remark: result.verifiedData.remark
                     } : null);
-                    setStatus(result.verifiedData.status);
+                    setContactStatus(result.verifiedData.contactStatus || 'To Contact');
+                    setRelationshipStatus(result.verifiedData.relationshipStatus || '');
                     setFollowUpsCompleted(result.verifiedData.followUpsCompleted);
                     setLastCommitteeContact(result.verifiedData.lastContact || '');
                 }
@@ -1368,7 +1433,8 @@ export default function CompanyDetailPage() {
     const handleRevert = () => {
         if (company) {
             setEditedName(company.companyName || company.name || '');
-            setStatus(company.status);
+            setContactStatus(company.contactStatus || 'To Contact');
+            setRelationshipStatus(company.relationshipStatus || '');
             setIsFlagged(company.isFlagged);
             setDiscipline(disciplineToDisplay(company.discipline));
             setTargetSponsorshipTier(priorityToDisplay(company.targetSponsorshipTier));
@@ -1405,10 +1471,16 @@ export default function CompanyDetailPage() {
             'To Contact': 'bg-slate-100 text-slate-700',
             'Contacted': 'bg-blue-100 text-blue-700',
             'To Follow Up': 'bg-amber-100 text-amber-700',
+            'No Reply': 'bg-gray-100 text-gray-500',
+        };
+        return colors[s] || 'bg-slate-100 text-slate-700';
+    };
+
+    const getRelationshipColor = (s: string) => {
+        const colors: Record<string, string> = {
             'Interested': 'bg-purple-100 text-purple-700',
             'Registered': 'bg-green-100 text-green-700',
             'Rejected': 'bg-red-100 text-red-700',
-            'No Reply': 'bg-gray-100 text-gray-500'
         };
         return colors[s] || 'bg-slate-100 text-slate-700';
     };
@@ -1431,11 +1503,11 @@ export default function CompanyDetailPage() {
                     <h2 className="text-xl font-semibold text-slate-900 mb-2">Company not found</h2>
                     <p className="text-slate-600 mb-6">The company you're looking for may have been removed or the link is invalid.</p>
                     <Link
-                        href={from === 'committee' ? '/committee' : from === 'email-schedule' ? '/email-schedule' : '/companies'}
+                        href={fromSource === 'committee' ? '/committee' : fromSource === 'email-schedule' ? '/email-schedule' : '/companies'}
                         className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
                     >
                         <ArrowLeftIcon className="w-4 h-4" />
-                        {from === 'committee' ? 'Back to Workspace' : from === 'email-schedule' ? 'Back to Email Schedule' : 'Back to All Companies'}
+                        {fromSource === 'committee' ? 'Back to Workspace' : fromSource === 'email-schedule' ? 'Back to Email Schedule' : 'Back to All Companies'}
                     </Link>
                 </div>
             </Layout>
@@ -1449,15 +1521,15 @@ export default function CompanyDetailPage() {
     ];
 
     return (
-        <Layout title={`${company.companyName || company.name} | Outreach Tracker`}>
+        <Layout title={`${company.id} ${company.companyName || company.name} | Outreach Tracker`}>
             <div className="max-w-4xl mx-auto">
                 {/* Back link */}
                 <Link
-                    href={from === 'committee' ? '/committee' : from === 'email-schedule' ? '/email-schedule' : '/companies'}
+                    href={fromSource === 'committee' ? '/committee' : fromSource === 'email-schedule' ? '/email-schedule' : '/companies'}
                     className="inline-flex items-center gap-2 text-sm font-medium text-slate-600 hover:text-slate-900 mb-6"
                 >
                     <ArrowLeftIcon className="w-4 h-4" />
-                    {from === 'committee' ? 'Back to Workspace' : from === 'email-schedule' ? 'Back to Email Schedule' : 'Back to All Companies'}
+                    {fromSource === 'committee' ? 'Back to Workspace' : fromSource === 'email-schedule' ? 'Back to Email Schedule' : 'Back to All Companies'}
                 </Link>
 
                 {/* Header */}
@@ -1465,24 +1537,32 @@ export default function CompanyDetailPage() {
                     <div className="flex items-start justify-between gap-4">
                         <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-3 flex-wrap">
-                                {status === 'Registered' && <CheckCircleIcon className="w-7 h-7 text-green-400 flex-shrink-0" aria-label="Registered" />}
-                                {status === 'Rejected' && <XCircleIcon className="w-7 h-7 text-red-400 flex-shrink-0" aria-label="Rejected" />}
-                                {status === 'Interested' && <ClockIconSolid className="w-7 h-7 text-amber-400 flex-shrink-0" aria-label="Interested" />}
+                                {relationshipStatus === 'Registered' && <CheckCircleIcon className="w-7 h-7 text-green-400 flex-shrink-0" aria-label="Registered" />}
+                                {relationshipStatus === 'Rejected' && <XCircleIcon className="w-7 h-7 text-red-400 flex-shrink-0" aria-label="Rejected" />}
+                                {relationshipStatus === 'Interested' && <ClockIconSolid className="w-7 h-7 text-amber-400 flex-shrink-0" aria-label="Interested" />}
                                 {canEdit && isEditMode ? (
-                                    <input
-                                        type="text"
-                                        value={editedName}
-                                        onChange={(e) => {
-                                            setEditedName(e.target.value);
-                                            setHasUnsavedChanges(true);
-                                            setShowUnsavedWarning(true);
-                                        }}
-                                        className="text-2xl font-bold bg-white/20 text-white border-b border-white/40 focus:outline-none focus:border-white px-2 py-1 rounded"
-                                    />
+                                    <div>
+                                        <input
+                                            type="text"
+                                            value={editedName}
+                                            onChange={(e) => {
+                                                setEditedName(e.target.value);
+                                                setHasUnsavedChanges(true);
+                                                setShowUnsavedWarning(true);
+                                            }}
+                                            className="text-2xl font-bold bg-white/20 text-white border-b border-white/40 focus:outline-none focus:border-white px-2 py-1 rounded"
+                                        />
+                                        <div className="text-sm text-blue-200/90 mt-0.5 font-mono">{company.id}</div>
+                                    </div>
                                 ) : (
-                                    <h1 className="text-2xl font-bold text-white truncate">
-                                        {company.companyName || company.name}
-                                    </h1>
+                                    <div>
+                                        <h1 className="text-2xl font-bold text-white truncate">
+                                            {company.companyName || company.name}
+                                        </h1>
+                                        <div className="text-sm text-blue-200/90 mt-0.5 font-mono">
+                                            {company.id}
+                                        </div>
+                                    </div>
                                 )}
                                 {canEdit && (
                                     <button
@@ -1521,7 +1601,7 @@ export default function CompanyDetailPage() {
                                 )}
                                 {(() => {
                                     const hasIncompleteFollowUp = scheduleEntries.some(e => e.completed !== 'Y');
-                                    const isLaterStage = ['Interested', 'Registered'].includes(status);
+                                    const isLaterStage = ['Interested', 'Registered'].includes(relationshipStatus);
                                     return hasIncompleteFollowUp && isLaterStage ? (
                                         <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-100 text-amber-700 text-xs font-bold border border-amber-200">
                                             <CalendarDaysIcon className="w-3 h-3" />
@@ -1531,10 +1611,15 @@ export default function CompanyDetailPage() {
                                 })()}
                             </div>
                             <div className="flex items-center gap-3 mt-2 flex-wrap">
-                                <span className={`inline-flex px-3 py-1 rounded-full text-xs font-medium ${getStatusColor(company.status)}`}>
-                                    {company.status}
+                                <span className={`inline-flex px-3 py-1 rounded-full text-xs font-medium ${getStatusColor(company.contactStatus)}`}>
+                                    {company.contactStatus || 'To Contact'}
                                 </span>
-                                {(company.status === 'Contacted' || (followUpsCompleted || 0) > 0) && (
+                                {company.relationshipStatus && (
+                                    <span className={`inline-flex px-3 py-1 rounded-full text-xs font-medium ${getRelationshipColor(company.relationshipStatus)}`}>
+                                        {company.relationshipStatus}
+                                    </span>
+                                )}
+                                {(company.contactStatus === 'Contacted' || (followUpsCompleted || 0) > 0) && (
                                     <div className="flex items-center gap-2">
                                         <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-blue-500/30 text-blue-100 text-xs font-medium">
                                             <ArrowPathIcon className="w-3 h-3" />
@@ -1588,23 +1673,44 @@ export default function CompanyDetailPage() {
 
                     {activeTab === 'details' && (
                         <div className="space-y-6">
-                            <div>
-                                <label htmlFor="status" className="block text-sm font-medium text-slate-700 mb-2">Update Status</label>
-                                <select
-                                    id="status"
-                                    value={status}
-                                    onChange={(e) => {
-                                        setStatus(e.target.value);
-                                        setHasUnsavedChanges(true);
-                                        setShowUnsavedWarning(true);
-                                    }}
-                                    disabled={!canEdit}
-                                    className="w-full px-4 py-2.5 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-slate-50 disabled:cursor-not-allowed"
-                                >
-                                    {statusOptions.map((opt) => (
-                                        <option key={opt} value={opt}>{opt}</option>
-                                    ))}
-                                </select>
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label htmlFor="contactStatus" className="block text-sm font-medium text-slate-700 mb-2">Contact Status</label>
+                                    <select
+                                        id="contactStatus"
+                                        value={contactStatus}
+                                        onChange={(e) => {
+                                            setContactStatus(e.target.value);
+                                            setHasUnsavedChanges(true);
+                                            setShowUnsavedWarning(true);
+                                        }}
+                                        disabled={!canEdit}
+                                        className="w-full px-4 py-2.5 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-slate-50 disabled:cursor-not-allowed"
+                                    >
+                                        {contactStatusOptions.map((opt) => (
+                                            <option key={opt} value={opt}>{opt}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label htmlFor="relationshipStatus" className="block text-sm font-medium text-slate-700 mb-2">Relationship Status</label>
+                                    <select
+                                        id="relationshipStatus"
+                                        value={relationshipStatus}
+                                        onChange={(e) => {
+                                            setRelationshipStatus(e.target.value);
+                                            setHasUnsavedChanges(true);
+                                            setShowUnsavedWarning(true);
+                                        }}
+                                        disabled={!canEdit}
+                                        className="w-full px-4 py-2.5 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-slate-50 disabled:cursor-not-allowed"
+                                    >
+                                        <option value="">— None —</option>
+                                        {relationshipStatusOptions.map((opt) => (
+                                            <option key={opt} value={opt}>{opt}</option>
+                                        ))}
+                                    </select>
+                                </div>
                             </div>
 
                             {/* Channel */}
@@ -1613,7 +1719,11 @@ export default function CompanyDetailPage() {
                                 <select
                                     id="channel"
                                     value={channel}
-                                    onChange={(e) => setChannel(e.target.value)}
+                                    onChange={(e) => {
+                                        setChannel(e.target.value);
+                                        setHasUnsavedChanges(true);
+                                        setShowUnsavedWarning(true);
+                                    }}
                                     className="w-full px-4 py-2 bg-white border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all text-slate-900"
                                 >
                                     <option value="">-- Select Channel --</option>
@@ -1626,8 +1736,8 @@ export default function CompanyDetailPage() {
                                 </select>
                             </div>
 
-                            {/* Sponsorship Tier - Show when status is Interested or Registered */}
-                            {(status === 'Interested' || status === 'Registered') && (
+                            {/* Sponsorship Tier - Show when relationship status is Interested or Registered */}
+                            {(relationshipStatus === 'Interested' || relationshipStatus === 'Registered') && (
                                 <div>
                                     <label htmlFor="sponsorshipTier" className="block text-sm font-medium text-slate-700 mb-2 font-semibold">Sponsorship Tier</label>
                                     <select
@@ -1647,7 +1757,7 @@ export default function CompanyDetailPage() {
                                         ))}
                                     </select>
                                     <p className="mt-1 text-xs text-slate-500">
-                                        {status === 'Registered'
+                                        {relationshipStatus === 'Registered'
                                             ? 'Please select the sponsorship tier the company has committed to.'
                                             : 'Please select the sponsorship tier the company is interested in.'}
                                     </p>
@@ -1655,7 +1765,7 @@ export default function CompanyDetailPage() {
                             )}
 
                             {/* Days Attending */}
-                            {(status === 'Interested' || status === 'Registered') && (
+                            {(relationshipStatus === 'Interested' || relationshipStatus === 'Registered') && (
                                 <div>
                                     <label htmlFor="daysAttending" className="block text-sm font-medium text-slate-700 mb-2 font-semibold">Days Attending</label>
                                     <input
@@ -1697,8 +1807,16 @@ export default function CompanyDetailPage() {
                                         setShowUnsavedWarning(true);
                                     }}
                                     disabled={!canEdit}
-                                    placeholder={status === 'Rejected' ? 'Please provide rejection reason...' : 'Add context about this update...'}
-                                    className={`w-full px-4 py-2.5 border rounded-lg focus:outline-none focus:ring-2 resize-none disabled:bg-slate-50 disabled:cursor-not-allowed ${status === 'Rejected' ? 'border-red-300 focus:ring-red-500' : 'border-slate-300 focus:ring-blue-500'}`}
+                                    placeholder={relationshipStatus === 'Rejected' ? 'Please provide rejection reason...' : 'Add context about this update...'}
+                                    className={`w-full px-4 py-2.5 border rounded-lg focus:outline-none focus:ring-2 resize-none disabled:bg-slate-50 disabled:cursor-not-allowed ${
+                                        relationshipStatus === 'Rejected' && (() => {
+                                            const savedReason = extractPlainRejectionReason(company?.remark);
+                                            const effectiveReason = remarks.trim() || savedReason;
+                                            return !effectiveReason.trim();
+                                        })()
+                                            ? 'border-red-300 focus:ring-red-500'
+                                            : 'border-slate-300 focus:ring-blue-500'
+                                    }`}
                                 />
                                 {canEdit && (
                                     <div className="mt-2 flex items-center gap-2">
@@ -1716,14 +1834,20 @@ export default function CompanyDetailPage() {
                                         </span>
                                     </div>
                                 )}
-                                {status === 'Rejected' && !remarks.trim() && (
+                                {(() => {
+                                    const savedReason = extractPlainRejectionReason(company?.remark);
+                                    const effectiveReason = remarks.trim() || savedReason;
+                                    const isMissing = relationshipStatus === 'Rejected' && !effectiveReason.trim();
+                                    return isMissing ? (
                                     <p className="mt-1 text-xs text-red-600">A rejection reason is required when marking as Rejected.</p>
-                                )}
+                                    ) : null;
+                                })()}
                             </div>
 
                             {/* Quick Actions Replaced by InteractionSection */}
                             <InteractionSection
-                                status={status}
+                                contactStatus={contactStatus}
+                                relationshipStatus={relationshipStatus}
                                 onLogOutreach={handleLogOutreach}
                                 onLogCompanyReply={handleLogCompanyReply}
                                 onLogOurReply={handleLogOurReply}

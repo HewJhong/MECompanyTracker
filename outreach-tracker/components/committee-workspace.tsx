@@ -16,7 +16,8 @@ import { useBackgroundTasks } from '../contexts/BackgroundTasksContext';
 interface Company {
     id: string;
     name: string;
-    status: string;
+    contactStatus: string;
+    relationshipStatus: string;
     contact: string;
     email: string;
     lastUpdated: string;
@@ -47,14 +48,18 @@ function getNowDatetimeLocal(): string {
     return `${n.getFullYear()}-${pad(n.getMonth() + 1)}-${pad(n.getDate())}T${pad(n.getHours())}:${pad(n.getMinutes())}`;
 }
 
-const statusColumns = [
+const contactStatusColumns = [
     { id: 'To Contact', label: 'To Contact', color: 'bg-slate-100 border-slate-300', accent: 'border-l-slate-400' },
     { id: 'Contacted', label: 'Contacted', color: 'bg-blue-50 border-blue-300', accent: 'border-l-blue-400' },
     { id: 'To Follow Up', label: 'To Follow Up', color: 'bg-amber-50 border-amber-300', accent: 'border-l-amber-400' },
-    { id: 'Interested', label: 'Interested', color: 'bg-orange-50 border-orange-300', accent: 'border-l-orange-400' },
+    { id: 'No Reply', label: 'No Reply', color: 'bg-slate-50 border-slate-300', accent: 'border-l-slate-400' },
+];
+
+const relationshipStatusColumns = [
+    { id: 'Interested', label: 'Interested', color: 'bg-purple-50 border-purple-300', accent: 'border-l-purple-400' },
     { id: 'Registered', label: 'Registered', color: 'bg-green-50 border-green-300', accent: 'border-l-green-400' },
     { id: 'Rejected', label: 'Rejected', color: 'bg-red-50 border-red-300', accent: 'border-l-red-400' },
-    { id: 'No Reply', label: 'No Reply', color: 'bg-slate-50 border-slate-300', accent: 'border-l-slate-400' },
+    { id: '', label: 'No Status', color: 'bg-slate-50 border-slate-200', accent: 'border-l-slate-300' },
 ];
 
 export default function CommitteeWorkspace({
@@ -76,6 +81,7 @@ export default function CommitteeWorkspace({
     const [bulkUpdating, setBulkUpdating] = useState(false);
     const [bulkRemark, setBulkRemark] = useState('');
     const [bulkActionDate, setBulkActionDate] = useState(getNowDatetimeLocal);
+    const [kanbanView, setKanbanView] = useState<'contact' | 'relationship'>('contact');
 
     const handleNameMouseEnter = useCallback((companyName: string) => {
         if (tooltipTimeoutRef.current) clearTimeout(tooltipTimeoutRef.current);
@@ -106,10 +112,15 @@ export default function CommitteeWorkspace({
         return matchesSearch && matchesStale && matchesReplyNeeded;
     });
 
-    // Group by status
-    const groupedCompanies = statusColumns.map(column => ({
+    // Group by the active kanban view
+    const activeColumns = kanbanView === 'contact' ? contactStatusColumns : relationshipStatusColumns;
+    const groupedCompanies = activeColumns.map(column => ({
         ...column,
-        companies: filteredCompanies.filter(c => c.status === column.id)
+        companies: filteredCompanies.filter(c =>
+            kanbanView === 'contact'
+                ? c.contactStatus === column.id
+                : c.relationshipStatus === column.id
+        )
     }));
 
     // Flat list in display order: must match render order (column order, then companies as shown in each column - no sort)
@@ -169,10 +180,10 @@ export default function CommitteeWorkspace({
 
     const getBulkTimestamp = useCallback(() => bulkActionDate.trim() ? new Date(bulkActionDate.trim()).toISOString() : new Date().toISOString(), [bulkActionDate]);
 
-    // Match company details: show "Log outreach" for To Contact, "Log follow up" for Contacted/No Reply or (Interested/Registered + 3+ days no response)
+    // Log outreach: for To Contact; Log follow up: for Contacted/No Reply or (Interested/Registered + 3+ days no response)
     const isFollowUpEligible = useCallback((c: Company) => {
-        if (c.status === 'Contacted' || c.status === 'No Reply') return true;
-        if (c.status !== 'Interested' && c.status !== 'Registered') return false;
+        if (c.contactStatus === 'Contacted' || c.contactStatus === 'No Reply') return true;
+        if (c.relationshipStatus !== 'Interested' && c.relationshipStatus !== 'Registered') return false;
         const lastContact = c.lastContact ? new Date(c.lastContact).getTime() : 0;
         const lastResponse = c.previousResponse ? new Date(c.previousResponse).getTime() : 0;
         const isWaitingForCompanyReply = lastContact > 0 && (!lastResponse || lastContact > lastResponse);
@@ -180,12 +191,12 @@ export default function CommitteeWorkspace({
         return isWaitingForCompanyReply && daysSinceOurLastMessage >= 3;
     }, []);
 
-    const outreachCount = useMemo(() => selectedCompanies.filter(c => c.status === 'To Contact').length, [selectedCompanies]);
+    const outreachCount = useMemo(() => selectedCompanies.filter(c => c.contactStatus === 'To Contact').length, [selectedCompanies]);
     const followUpCount = useMemo(() => selectedCompanies.filter(isFollowUpEligible).length, [selectedCompanies, isFollowUpEligible]);
 
     const markAsFirstOutreach = useCallback(async () => {
         if (outreachCount === 0 || !memberName || bulkUpdating) return;
-        const toProcess = selectedCompanies.filter(c => c.status === 'To Contact');
+        const toProcess = selectedCompanies.filter(c => c.contactStatus === 'To Contact');
         setBulkUpdating(true);
         const taskId = addTask('Logging first outreach...');
         const timestamp = getBulkTimestamp();
@@ -198,7 +209,7 @@ export default function CommitteeWorkspace({
                     body: JSON.stringify({
                         companyId: c.id,
                         user: memberName,
-                        updates: { status: 'Contacted', followUpsCompleted: 0, lastContact: timestamp },
+                        updates: { contactStatus: 'Contacted', followUpsCompleted: 0, lastContact: timestamp },
                         remark: remarkText,
                         actionDate: timestamp,
                     }),
@@ -270,7 +281,7 @@ export default function CommitteeWorkspace({
                     body: JSON.stringify({
                         companyId: c.id,
                         user: memberName,
-                        updates: { status: 'Interested' },
+                        updates: { contactStatus: 'To Follow Up', relationshipStatus: 'Interested' },
                         remark: remarkText,
                         actionDate: timestamp,
                     }),
@@ -414,8 +425,24 @@ export default function CommitteeWorkspace({
                 </div>
             </div>
 
-            {/* Kanban Board - row height = tallest column (most companies), all columns match */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4 items-stretch">
+            {/* Kanban View Toggle */}
+            <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-1 w-fit">
+                <button
+                    onClick={() => { setKanbanView('contact'); setSelectedIds(new Set()); setLastSelectedId(null); }}
+                    className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${kanbanView === 'contact' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
+                >
+                    Contact Status
+                </button>
+                <button
+                    onClick={() => { setKanbanView('relationship'); setSelectedIds(new Set()); setLastSelectedId(null); }}
+                    className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${kanbanView === 'relationship' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
+                >
+                    Relationship Status
+                </button>
+            </div>
+
+            {/* Kanban Board */}
+            <div className={`grid grid-cols-1 sm:grid-cols-2 ${kanbanView === 'contact' ? 'lg:grid-cols-4' : 'lg:grid-cols-3 xl:grid-cols-4'} gap-4 items-stretch`}>
                 {groupedCompanies.map(column => (
                     <div key={column.id} className="flex flex-col min-h-0">
                         {/* Column Header */}
@@ -518,7 +545,23 @@ export default function CommitteeWorkspace({
                                             <span className="text-xs text-slate-500 truncate">
                                                 {company.contact ? `${company.contact} · ${formatDate(company.lastUpdated)}` : formatDate(company.lastUpdated)}
                                             </span>
-                                            <div className="flex gap-1.5 flex-shrink-0">
+                                            <div className="flex gap-1.5 flex-shrink-0 flex-wrap justify-end">
+                                                {company.relationshipStatus && kanbanView === 'contact' && (
+                                                    <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${
+                                                        company.relationshipStatus === 'Interested' ? 'text-purple-700 bg-purple-100' :
+                                                        company.relationshipStatus === 'Registered' ? 'text-green-700 bg-green-100' :
+                                                        company.relationshipStatus === 'Rejected' ? 'text-red-700 bg-red-100' :
+                                                        'text-slate-600 bg-slate-100'
+                                                    }`}>{company.relationshipStatus}</span>
+                                                )}
+                                                {kanbanView === 'relationship' && (
+                                                    <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${
+                                                        company.contactStatus === 'To Contact' ? 'text-slate-600 bg-slate-100' :
+                                                        company.contactStatus === 'Contacted' ? 'text-blue-700 bg-blue-100' :
+                                                        company.contactStatus === 'To Follow Up' ? 'text-amber-700 bg-amber-100' :
+                                                        'text-gray-600 bg-gray-100'
+                                                    }`}>{company.contactStatus || 'To Contact'}</span>
+                                                )}
                                                 {company.replyNeeded && (
                                                     <span className="text-[10px] font-semibold text-red-600 bg-red-100 px-1.5 py-0.5 rounded">Reply</span>
                                                 )}

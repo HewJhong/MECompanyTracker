@@ -1,7 +1,68 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { getServerSession } from 'next-auth/next';
+import { authOptions } from '../../lib/auth';
+import { getCommitteeMembers } from '../../lib/committee-members';
 import { getGoogleSheetsClient } from '../../lib/google-sheets';
 import { cache } from '../../lib/cache';
 import { syncDailyStats } from '../../lib/daily-stats';
+
+interface NameMismatch {
+    rowIndex: number;
+    oldName: string;
+    newName: string;
+    id: string;
+}
+
+interface IdNameMismatch {
+    rowIndex: number;
+    trackerName: string;
+    dbName: string;
+    id: string;
+}
+
+interface IdMismatch {
+    rowIndex: number;
+    oldId: string;
+    newId: string;
+    name: string;
+}
+
+interface MissingInDatabase {
+    id: string;
+    name: string;
+    rowIndex: number;
+}
+
+type NewCompanyRow = (string | number)[];
+
+/** Retry a Google API call with exponential backoff for transient failures */
+async function withRetry<T>(
+    fn: () => Promise<T>,
+    opts: { maxAttempts?: number; operationName?: string } = {}
+): Promise<T> {
+    const { maxAttempts = 3, operationName = 'operation' } = opts;
+    let lastError: Error | null = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+            return await fn();
+        } catch (e) {
+            lastError = e as Error;
+            const isRetryable =
+                (lastError.message?.includes('RESOURCE_EXHAUSTED') ||
+                    lastError.message?.includes('rateLimitExceeded') ||
+                    (lastError as { code?: number }).code === 429) &&
+                attempt < maxAttempts;
+            if (isRetryable) {
+                const delay = Math.min(1000 * Math.pow(2, attempt - 1), 10000);
+                console.warn(`[Sync] ${operationName} attempt ${attempt} failed, retrying in ${delay}ms:`, lastError.message);
+                await new Promise(r => setTimeout(r, delay));
+            } else {
+                throw lastError;
+            }
+        }
+    }
+    throw lastError || new Error('Unknown error');
+}
 
 export default async function handler(
     req: NextApiRequest,
@@ -12,6 +73,19 @@ export default async function handler(
     }
 
     try {
+        const session = await getServerSession(req, res, authOptions);
+        if (!session?.user?.email) {
+            return res.status(401).json({ message: 'Unauthorized' });
+        }
+
+        const members = await getCommitteeMembers();
+        const userEmail = session.user.email.toLowerCase().trim();
+        const user = members.find(m => m.email?.toLowerCase().trim() === userEmail);
+        const roleLower = user?.role?.toLowerCase() || '';
+        if (!user || (roleLower !== 'admin' && roleLower !== 'superadmin')) {
+            return res.status(403).json({ message: 'Admin access required' });
+        }
+
         const { preview = false } = req.body;
         const sheets = await getGoogleSheetsClient();
         const databaseSpreadsheetId = process.env.SPREADSHEET_ID_1; // Master Database (Source of Truth)
@@ -48,13 +122,16 @@ export default async function handler(
 
         const trackerResponse = await sheets.spreadsheets.values.get({
             spreadsheetId: trackerSpreadsheetId,
-            range: `${trackerSheetName}!A2:B`,
+            range: `${trackerSheetName}!A2:O`,
         });
-        const trackerRows = trackerResponse.data.values || [];
+        const trackerRows = (trackerResponse.data.values || []) as string[][];
+
+        // Normalize ID for case-insensitive matching (ME-0001 vs me-0001)
+        const normalizeId = (id: string) => id?.toString().trim().toUpperCase() || '';
 
         // 2. Build Comprehensive Tracker Maps
         // Track ALL occurrences of each company (not just the last one)
-        const trackerEntriesById = new Map<string, Array<{ name: string; rowIndex: number }>>();
+        const trackerEntriesById = new Map<string, Array<{ id: string; name: string; rowIndex: number }>>();
         const trackerEntriesByName = new Map<string, Array<{ id: string; rowIndex: number }>>();
 
         trackerRows.forEach((row, index) => {
@@ -63,14 +140,15 @@ export default async function handler(
             const rowIndex = index + 2; // 1-based, +header
 
             if (id) {
-                if (!trackerEntriesById.has(id)) {
-                    trackerEntriesById.set(id, []);
+                const key = normalizeId(id);
+                if (!trackerEntriesById.has(key)) {
+                    trackerEntriesById.set(key, []);
                 }
-                trackerEntriesById.get(id)!.push({ name, rowIndex });
+                trackerEntriesById.get(key)!.push({ id, name: name || '', rowIndex });
             }
 
             if (name) {
-                const normalizedName = name.toLowerCase().replace(/\\s+/g, ' ').trim();
+                const normalizedName = name.toLowerCase().replace(/\s+/g, ' ').trim();
                 if (!trackerEntriesByName.has(normalizedName)) {
                     trackerEntriesByName.set(normalizedName, []);
                 }
@@ -81,53 +159,88 @@ export default async function handler(
         // Track which tracker rows have been "claimed" by a database entry
         const claimedRows = new Set<number>();
 
-        const missingInTracker: any[] = [];
-        const nameMismatches: any[] = [];
-        const idMismatches: any[] = [];
+        const missingInTracker: NewCompanyRow[] = [];
+        const nameMismatches: NameMismatch[] = [];
+        const idNameMismatches: IdNameMismatch[] = []; // ID matched but name differs; no name match in tracker — flag for review to avoid name/status mismatch
+        const idMismatches: IdMismatch[] = [];
         const duplicatesToRemove: number[] = []; // Rows to delete
 
-        // 3. Process each Database company
+        // 3. Process each Database company (one per unique ID; DB has multiple rows per company for contacts)
+        const processedDbIds = new Set<string>();
         dbRows.forEach(row => {
             const dbId = row[0]?.toString().trim();
             const dbName = row[1]?.toString().trim();
 
             if (!dbId || !dbName) return;
 
-            const normalizedDbName = dbName.toLowerCase().replace(/\\s+/g, ' ').trim();
+            const dbIdKey = normalizeId(dbId);
+            if (processedDbIds.has(dbIdKey)) return;
+            processedDbIds.add(dbIdKey);
 
-            // Strategy: Find the "primary" row in tracker for this company
-            let primaryRow: { rowIndex: number; currentId: string; currentName: string } | null = null;
+            const normalizedDbName = dbName.toLowerCase().replace(/\s+/g, ' ').trim();
 
-            // Priority 1: Exact ID match
-            if (trackerEntriesById.has(dbId)) {
-                const entries = trackerEntriesById.get(dbId)!;
-                // Pick the first unclaimed entry (or first overall)
+            // Look up both by ID and by name
+            let rowByID: { rowIndex: number; id: string; name: string } | null = null;
+            let rowByName: { rowIndex: number; id: string } | null = null;
+
+            if (trackerEntriesById.has(dbIdKey)) {
+                const entries = trackerEntriesById.get(dbIdKey)!;
                 const entry = entries.find(e => !claimedRows.has(e.rowIndex)) || entries[0];
-                primaryRow = { rowIndex: entry.rowIndex, currentId: dbId, currentName: entry.name };
+                rowByID = { rowIndex: entry.rowIndex, id: entry.id, name: entry.name };
             }
-
-            // Priority 2: Name match (ID healing case)
-            if (!primaryRow && trackerEntriesByName.has(normalizedDbName)) {
+            if (trackerEntriesByName.has(normalizedDbName)) {
                 const entries = trackerEntriesByName.get(normalizedDbName)!;
                 const entry = entries.find(e => !claimedRows.has(e.rowIndex)) || entries[0];
-                primaryRow = { rowIndex: entry.rowIndex, currentId: entry.id, currentName: dbName };
+                rowByName = { rowIndex: entry.rowIndex, id: entry.id };
+            }
+
+            // Precedence: Name match wins when ID and name point to different rows (swap — status/remarks belong to the row with correct name).
+            // - Swap: use name match (that row has correct name, needs ID fix only)
+            // - Same row or ID-only: use ID match
+            // - Name-only: use name match
+            const isSwap =
+                rowByID &&
+                rowByName &&
+                rowByID.rowIndex !== rowByName.rowIndex &&
+                rowByID.name.toLowerCase().trim() !== dbName.toLowerCase().trim();
+
+            let primaryRow: { rowIndex: number; currentId: string; currentName: string } | null = null;
+
+            if (isSwap) {
+                primaryRow = { rowIndex: rowByName!.rowIndex, currentId: rowByName!.id, currentName: dbName };
+                claimedRows.add(primaryRow.rowIndex);
+                claimedRows.add(rowByID!.rowIndex);
+                trackerEntriesById.get(dbIdKey)!.forEach(e => claimedRows.add(e.rowIndex));
+            } else if (rowByID) {
+                primaryRow = { rowIndex: rowByID.rowIndex, currentId: rowByID.id, currentName: rowByID.name };
+                trackerEntriesById.get(dbIdKey)!.forEach(e => claimedRows.add(e.rowIndex));
+            } else if (rowByName) {
+                primaryRow = { rowIndex: rowByName.rowIndex, currentId: rowByName.id, currentName: dbName };
             }
 
             if (primaryRow) {
-                // Found existing row - claim it
                 claimedRows.add(primaryRow.rowIndex);
 
-                // Check if name needs updating
-                if (primaryRow.currentName.trim() !== dbName) {
-                    nameMismatches.push({
-                        rowIndex: primaryRow.rowIndex,
-                        oldName: primaryRow.currentName,
-                        newName: dbName,
-                        id: dbId
-                    });
+                // Only update name when safe. When ID matched but no row has this company name in tracker,
+                // don't auto-update — the status/remarks on that row may belong to a different company.
+                if (!isSwap && primaryRow.currentName.trim() !== dbName) {
+                    if (rowByName) {
+                        nameMismatches.push({
+                            rowIndex: primaryRow.rowIndex,
+                            oldName: primaryRow.currentName,
+                            newName: dbName,
+                            id: dbId
+                        });
+                    } else {
+                        idNameMismatches.push({
+                            rowIndex: primaryRow.rowIndex,
+                            trackerName: primaryRow.currentName,
+                            dbName,
+                            id: dbId
+                        });
+                    }
                 }
 
-                // Check if ID needs healing
                 if (primaryRow.currentId !== dbId) {
                     idMismatches.push({
                         rowIndex: primaryRow.rowIndex,
@@ -137,8 +250,8 @@ export default async function handler(
                     });
                 }
 
-                // Mark any other rows with same name as duplicates to remove
-                if (trackerEntriesByName.has(normalizedDbName)) {
+                // Mark duplicates to remove (only when not a swap; swap case doesn't create duplicates)
+                if (!isSwap && trackerEntriesByName.has(normalizedDbName)) {
                     trackerEntriesByName.get(normalizedDbName)!.forEach(entry => {
                         if (entry.rowIndex !== primaryRow!.rowIndex && !claimedRows.has(entry.rowIndex)) {
                             duplicatesToRemove.push(entry.rowIndex);
@@ -147,27 +260,29 @@ export default async function handler(
                     });
                 }
             } else {
-                // No existing row found - add new
+                // No existing row found - add new (15-column post-migration layout)
                 missingInTracker.push([
-                    dbId,             // A: ID
-                    dbName,           // B: Name
-                    'To Contact',     // C: Status
-                    'Email',          // D: Channel
-                    '0',              // E: Urgency
-                    '',               // F: Prev Response
-                    'Unassigned',     // G: PIC
-                    '',               // H: Last Company Contact Date
-                    '',               // I: Last Committee Contact Date
-                    '0',              // J: Follow-ups
-                    '',               // K: Sponsorship Tier
-                    '',               // L: Remarks
-                    new Date().toISOString() // M: Last Update
+                    dbId,             // A: Company ID
+                    dbName,           // B: Company Name
+                    'To Contact',     // C: Contact Status
+                    '',               // D: Relationship Status
+                    'Email',          // E: Channel
+                    '0',              // F: Urgency Score
+                    '',               // G: Previous Response
+                    'Unassigned',     // H: Assigned PIC
+                    '',               // I: Last Company Contact
+                    '',               // J: Last Committee Contact
+                    '0',              // K: Follow Ups Completed
+                    '',               // L: Sponsorship Tier
+                    '',               // M: Days Attending
+                    '',               // N: Remarks
+                    new Date().toISOString() // O: Last Update
                 ]);
             }
         });
 
         // 3.1 Identify Bi-directional Sync (Missing in Database)
-        const missingInDatabase: any[] = [];
+        const missingInDatabase: MissingInDatabase[] = [];
         trackerRows.forEach((row, index) => {
             const rowIndex = index + 2;
             if (!claimedRows.has(rowIndex)) {
@@ -192,14 +307,16 @@ export default async function handler(
         if (missingInDatabase.length > 0) {
             if (!preview) {
                 const valuesToAppend = missingInDatabase.map(m => [m.id, m.name]);
-                await sheets.spreadsheets.values.append({
-                    spreadsheetId: databaseSpreadsheetId,
-                    range: `${dbSheetName}!A:B`,
-                    valueInputOption: 'USER_ENTERED',
-                    requestBody: {
-                        values: valuesToAppend
-                    }
-                });
+                await withRetry(
+                    () =>
+                        sheets.spreadsheets.values.append({
+                            spreadsheetId: databaseSpreadsheetId,
+                            range: `${dbSheetName}!A:B`,
+                            valueInputOption: 'USER_ENTERED',
+                            requestBody: { values: valuesToAppend }
+                        }),
+                    { operationName: 'append to database' }
+                );
             }
             stats.addedToDatabase = missingInDatabase.length;
             console.log(`${preview ? '[PREVIEW] ' : ''}Added ${missingInDatabase.length} companies TO DATABASE.`);
@@ -208,22 +325,28 @@ export default async function handler(
         // Batch Append (New Rows)
         if (missingInTracker.length > 0) {
             if (!preview) {
-                await sheets.spreadsheets.values.append({
-                    spreadsheetId: trackerSpreadsheetId,
-                    range: `${trackerSheetName}!A:M`,
-                    valueInputOption: 'USER_ENTERED',
-                    requestBody: {
-                        values: missingInTracker
-                    }
-                });
+                await withRetry(
+                    () =>
+                        sheets.spreadsheets.values.append({
+                            spreadsheetId: trackerSpreadsheetId,
+                            range: `${trackerSheetName}!A:O`,
+                            valueInputOption: 'USER_ENTERED',
+                            requestBody: { values: missingInTracker }
+                        }),
+                    { operationName: 'append to tracker' }
+                );
             }
             stats.added = missingInTracker.length;
             console.log(`${preview ? '[PREVIEW] ' : ''}Added ${missingInTracker.length} new companies.`);
         }
 
         // Batch Update (Name Fixes)
-        if (nameMismatches.length > 0) {
-            const requests = nameMismatches.map(item => ({
+        // Skip name updates for rows that are also getting an ID change—that row may belong to another
+        // company (swap); updating its name would overwrite the wrong company.
+        const rowsWithIdChange = new Set(idMismatches.map((m: { rowIndex: number }) => m.rowIndex));
+        const nameUpdatesToApply = nameMismatches.filter((m: { rowIndex: number }) => !rowsWithIdChange.has(m.rowIndex));
+        if (nameUpdatesToApply.length > 0) {
+            const requests = nameUpdatesToApply.map((item: { rowIndex: number; newName: string }) => ({
                 updateCells: {
                     range: {
                         sheetId: trackerSheetId,
@@ -246,48 +369,53 @@ export default async function handler(
             for (let i = 0; i < requests.length; i += CHUNK_SIZE) {
                 const chunk = requests.slice(i, i + CHUNK_SIZE);
                 if (!preview) {
-                    await sheets.spreadsheets.batchUpdate({
-                        spreadsheetId: trackerSpreadsheetId,
-                        requestBody: { requests: chunk }
-                    });
+                    await withRetry(
+                        () =>
+                            sheets.spreadsheets.batchUpdate({
+                                spreadsheetId: trackerSpreadsheetId,
+                                requestBody: { requests: chunk }
+                            }),
+                        { operationName: `name fix batch ${i / CHUNK_SIZE + 1}` }
+                    );
                 }
             }
-            stats.updated = nameMismatches.length;
-            console.log(`${preview ? '[PREVIEW] ' : ''}Updated names for ${nameMismatches.length} companies.`);
+            stats.updated = nameUpdatesToApply.length;
+            console.log(`${preview ? '[PREVIEW] ' : ''}Updated names for ${nameUpdatesToApply.length} companies.`);
         }
 
         // Batch Update (ID Fixes - Healing)
+        // Write the full row with corrected ID so the entire row stays together (status, PIC, etc.)
+        // Process higher numeric ID first when swapping to avoid temporary duplicates
         if (idMismatches.length > 0) {
-            const requests = idMismatches.map(item => ({
-                updateCells: {
-                    range: {
-                        sheetId: trackerSheetId,
-                        startRowIndex: item.rowIndex - 1, // 0-based
-                        endRowIndex: item.rowIndex,
-                        startColumnIndex: 0, // Column A (ID)
-                        endColumnIndex: 1
-                    },
-                    rows: [{
-                        values: [{
-                            userEnteredValue: { stringValue: item.newId }
-                        }]
-                    }],
-                    fields: 'userEnteredValue'
-                }
-            }));
+            const parseIdNum = (id: string) => parseInt(id.match(/ME-(\d+)/i)?.[1] || '0', 10);
+            const sortedIdMismatches = [...idMismatches].sort((a, b) => parseIdNum(b.newId) - parseIdNum(a.newId));
 
-            const CHUNK_SIZE = 100;
-            for (let i = 0; i < requests.length; i += CHUNK_SIZE) {
-                const chunk = requests.slice(i, i + CHUNK_SIZE);
-                if (!preview) {
-                    await sheets.spreadsheets.batchUpdate({
-                        spreadsheetId: trackerSpreadsheetId,
-                        requestBody: { requests: chunk }
-                    });
-                }
+            const idUpdateData = sortedIdMismatches.map(item => {
+                const row = trackerRows[item.rowIndex - 2] || [];
+                const fullRow = [...row];
+                fullRow[0] = item.newId;
+                while (fullRow.length < 15) fullRow.push('');
+                return {
+                    range: `${trackerSheetName}!A${item.rowIndex}:O${item.rowIndex}`,
+                    values: [fullRow.slice(0, 15)]
+                };
+            });
+
+            if (!preview && idUpdateData.length > 0) {
+                await withRetry(
+                    () =>
+                        sheets.spreadsheets.values.batchUpdate({
+                            spreadsheetId: trackerSpreadsheetId,
+                            requestBody: {
+                                valueInputOption: 'RAW',
+                                data: idUpdateData
+                            }
+                        }),
+                    { operationName: 'ID fix batch' }
+                );
             }
             stats.updated += idMismatches.length;
-            console.log(`${preview ? '[PREVIEW] ' : ''}Updated IDs for ${idMismatches.length} companies.`);
+            console.log(`${preview ? '[PREVIEW] ' : ''}Updated IDs for ${idMismatches.length} companies (full row).`);
         }
 
         // Batch Delete (Duplicate Rows)
@@ -312,10 +440,14 @@ export default async function handler(
             for (let i = 0; i < deleteRequests.length; i += CHUNK_SIZE) {
                 const chunk = deleteRequests.slice(i, i + CHUNK_SIZE);
                 if (!preview) {
-                    await sheets.spreadsheets.batchUpdate({
-                        spreadsheetId: trackerSpreadsheetId,
-                        requestBody: { requests: chunk }
-                    });
+                    await withRetry(
+                        () =>
+                            sheets.spreadsheets.batchUpdate({
+                                spreadsheetId: trackerSpreadsheetId,
+                                requestBody: { requests: chunk }
+                            }),
+                        { operationName: `delete duplicates batch ${i / CHUNK_SIZE + 1}` }
+                    );
                 }
             }
             stats.duplicatesRemoved = duplicatesToRemove.length;
@@ -331,10 +463,11 @@ export default async function handler(
         return res.status(200).json({
             success: true,
             preview,
-            stats,
+            stats: { ...stats, idNameMismatchesCount: idNameMismatches.length },
             details: {
                 added: missingInTracker.map(r => ({ id: r[0], name: r[1] })),
                 nameCorrections: nameMismatches.map(m => ({ id: m.id, oldName: m.oldName, newName: m.newName })),
+                idNameMismatches: idNameMismatches.map(m => ({ id: m.id, rowIndex: m.rowIndex, trackerName: m.trackerName, dbName: m.dbName })),
                 idChanges: idMismatches.map(m => ({ name: m.name, oldId: m.oldId, newId: m.newId })),
                 missingInDatabase: missingInDatabase.map(m => ({ id: m.id, name: m.name })),
                 duplicatesRemoved: duplicatesToRemove.map(rowIndex => {
@@ -369,10 +502,10 @@ async function ensureRequiredSheets(sheets: any, spreadsheetId: string) {
         {
             title: mainSheetName,
             headers: [
-                'ID', 'Name', 'Status', 'Channel', 'Urgency',
-                'Prev Response', 'PIC', 'Last Company Contact Date',
-                'Last Committee Contact Date', 'Follow-ups',
-                'Sponsorship Tier', 'Remarks', 'Last Update'
+                'Company ID', 'Company Name', 'Contact Status', 'Relationship Status',
+                'Channel', 'Urgency Score', 'Previous Response', 'Assigned PIC',
+                'Last Company Contact', 'Last Committee Contact', 'Follow Ups Completed',
+                'Sponsorship Tier', 'Days Attending', 'Remarks', 'Last Update'
             ]
         },
         {
@@ -412,7 +545,7 @@ async function ensureRequiredSheets(sheets: any, spreadsheetId: string) {
             // Check headers
             const headerResponse = await sheets.spreadsheets.values.get({
                 spreadsheetId,
-                range: `${reqSheet.title}!A1:M1`,
+                range: `${reqSheet.title}!A1:O1`,
             });
             const actualHeaders = headerResponse.data.values?.[0] || [];
 

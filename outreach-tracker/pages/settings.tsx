@@ -153,10 +153,14 @@ function SettingsContent() {
                     setSyncPreviewData(data);
                     setShowSyncPreview(true);
                 } else {
-                    const { added, addedToDatabase, updated, duplicatesRemoved } = data.stats;
+                    const { added, addedToDatabase, updated, duplicatesRemoved, idNameMismatchesCount = 0 } = data.stats;
+                    let msg = `Sync complete: Added ${added} to tracker, ${addedToDatabase} to database, updated ${updated} companies, and removed ${duplicatesRemoved} duplicates.`;
+                    if (idNameMismatchesCount > 0) {
+                        msg += ` ${idNameMismatchesCount} ID/name mismatch(es) flagged for manual review.`;
+                    }
                     setSyncResult({
                         success: true,
-                        message: `Sync complete: Added ${added} to tracker, ${addedToDatabase} to database, updated ${updated} companies, and removed ${duplicatesRemoved} duplicates.`,
+                        message: msg,
                         details: data.details
                     });
                     setShowSyncPreview(false);
@@ -659,6 +663,18 @@ function SettingsContent() {
                                                                         </ul>
                                                                     </div>
                                                                 )}
+                                                                {syncResult.details.idNameMismatches?.length > 0 && (
+                                                                    <div className="space-y-1 mt-2">
+                                                                        <div className="font-semibold text-orange-700">ID/Name Mismatch — Manual Review ({syncResult.details.idNameMismatches.length}):</div>
+                                                                        <ul className="list-disc list-inside bg-orange-50 p-2 rounded text-orange-800 text-xs">
+                                                                            {syncResult.details.idNameMismatches.map((c: any, i: number) => (
+                                                                                <li key={i}>
+                                                                                    <span className="font-mono">{c.id}</span>: &quot;{c.trackerName}&quot; ≠ DB &quot;{c.dbName}&quot;
+                                                                                </li>
+                                                                            ))}
+                                                                        </ul>
+                                                                    </div>
+                                                                )}
                                                             </div>
                                                         )}
                                                     </div>
@@ -711,6 +727,13 @@ function SettingsContent() {
                                                                             <div className="text-xl font-bold text-red-600">-{syncPreviewData.stats.duplicatesRemoved}</div>
                                                                             <div className="text-xs text-slate-500">Duplicate rows to remove</div>
                                                                         </div>
+                                                                        {(syncPreviewData.stats.idNameMismatchesCount ?? 0) > 0 && (
+                                                                            <div className="p-3 bg-white rounded border border-orange-200 shadow-sm md:col-span-2">
+                                                                                <div className="text-xs font-bold text-slate-400 uppercase mb-1">Needs Manual Review</div>
+                                                                                <div className="text-xl font-bold text-orange-600">{syncPreviewData.stats.idNameMismatchesCount}</div>
+                                                                                <div className="text-xs text-slate-500">ID matched but name differs — status may belong to different company</div>
+                                                                            </div>
+                                                                        )}
                                                                     </div>
 
                                                                     <div className="space-y-6 mb-4 max-h-96 overflow-y-auto pr-2 custom-scrollbar">
@@ -739,6 +762,7 @@ function SettingsContent() {
                                                                         {/* Target: Outreach Tracker */}
                                                                         {(syncPreviewData.details.added.length > 0 ||
                                                                             syncPreviewData.details.nameCorrections.length > 0 ||
+                                                                            syncPreviewData.details.idNameMismatches?.length > 0 ||
                                                                             syncPreviewData.details.idChanges.length > 0 ||
                                                                             syncPreviewData.details.duplicatesRemoved.length > 0) && (
                                                                                 <div className="space-y-3">
@@ -777,6 +801,23 @@ function SettingsContent() {
                                                                                                         <div className="flex items-center gap-1.5 font-medium text-amber-700">
                                                                                                             <ArrowRightIcon className="w-3 h-3" /> {c.newName}
                                                                                                         </div>
+                                                                                                    </li>
+                                                                                                ))}
+                                                                                            </ul>
+                                                                                        </div>
+                                                                                    )}
+
+                                                                                    {syncPreviewData.details.idNameMismatches?.length > 0 && (
+                                                                                        <div className="bg-white p-3 rounded border border-orange-200 shadow-sm">
+                                                                                            <div className="text-xs font-bold text-orange-700 uppercase mb-2">ID/Name Mismatch — Manual Review ({syncPreviewData.details.idNameMismatches.length})</div>
+                                                                                            <p className="text-[10px] text-slate-500 mb-2">ID matches but tracker name differs; status/remarks may belong to a different company. Not auto-updating.</p>
+                                                                                            <ul className="space-y-1">
+                                                                                                {syncPreviewData.details.idNameMismatches.map((c: any, i: number) => (
+                                                                                                    <li key={i} className="text-xs text-slate-700 flex justify-between items-center gap-2">
+                                                                                                        <span className="font-mono text-slate-400 text-[10px]">{c.id}</span>
+                                                                                                        <span className="text-slate-400 truncate flex-1 text-right mx-1">{c.trackerName}</span>
+                                                                                                        <span className="text-orange-600 font-medium">≠</span>
+                                                                                                        <span className="text-slate-600 truncate flex-1">{c.dbName}</span>
                                                                                                     </li>
                                                                                                 ))}
                                                                                             </ul>
@@ -933,7 +974,7 @@ function SettingsContent() {
                                                                             {group.companies.map((c: any) => (
                                                                                 <div key={c.id} className="text-xs flex gap-2 text-slate-600">
                                                                                     <span className="font-mono bg-slate-50 px-1 border rounded">{c.id}</span>
-                                                                                    <span className={c.status === 'Registered' ? 'text-green-600' : ''}>{c.status || 'No Status'}</span>
+                                                                                    <span className={c.relationshipStatus === 'Registered' ? 'text-green-600' : ''}>{c.contactStatus || 'To Contact'}{c.relationshipStatus ? ` · ${c.relationshipStatus}` : ''}</span>
                                                                                     {c.pic && <span className="text-slate-400">• {c.pic}</span>}
                                                                                 </div>
                                                                             ))}

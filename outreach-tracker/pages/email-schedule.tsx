@@ -58,6 +58,51 @@ function entryId(e: ScheduleEntry): string {
     return `${e.companyId}|${e.date}|${e.time}`;
 }
 
+type ScheduleRowResolve = { openId: string; label: string };
+
+/**
+ * Map schedule row → company to open / label using live `/api/data` companies.
+ * Fixes stale col A (e.g. deleted ME-0001) when col B still matches a unique live company name,
+ * and fixes wrong-but-existing ids when the sheet name matches a different unique company.
+ */
+function buildScheduleRowResolver(companies: CompanyAssignment[]): (e: ScheduleEntry) => ScheduleRowResolve {
+    const canonicalByIdLower = new Map<string, { id: string; companyName: string }>();
+    const nameToIds = new Map<string, string[]>();
+    for (const c of companies) {
+        const id = (c.id || '').trim();
+        if (!id) continue;
+        const name = (c.companyName || '').trim();
+        canonicalByIdLower.set(id.toLowerCase(), { id, companyName: name || id });
+        const nk = name.toLowerCase();
+        if (!nk) continue;
+        if (!nameToIds.has(nk)) nameToIds.set(nk, []);
+        nameToIds.get(nk)!.push(id);
+    }
+
+    return (e: ScheduleEntry) => {
+        const rawId = (e.companyId || '').trim();
+        const nameFromSheet = (e.companyName || '').trim();
+        const nameKey = nameFromSheet.toLowerCase();
+        const idsForName = nameKey ? nameToIds.get(nameKey) : undefined;
+        const uniqueNameId = idsForName?.length === 1 ? idsForName[0] : null;
+        const nameHit = uniqueNameId ? canonicalByIdLower.get(uniqueNameId.toLowerCase()) : undefined;
+        const idHit = rawId ? canonicalByIdLower.get(rawId.toLowerCase()) : undefined;
+
+        const namesAgree =
+            Boolean(idHit && nameFromSheet && idHit.companyName.trim().toLowerCase() === nameKey);
+
+        if (nameHit && nameFromSheet) {
+            if (!idHit || !namesAgree) {
+                return { openId: nameHit.id, label: nameHit.companyName };
+            }
+        }
+        if (idHit) {
+            return { openId: idHit.id, label: idHit.companyName };
+        }
+        return { openId: rawId, label: e.companyName || rawId };
+    };
+}
+
 interface CommitteeMember {
     name: string;
     email: string;
@@ -68,7 +113,8 @@ interface CompanyAssignment {
     id: string;
     companyName: string;
     pic: string;
-    status?: string;
+    contactStatus?: string;
+    relationshipStatus?: string;
 }
 
 type DateGroup = {
@@ -251,6 +297,7 @@ function getWeekDates(weekContainingDate: Date): string[] {
 
 function ScheduleChip({
     entry,
+    displayCompanyName,
     isSelected,
     isDragging,
     isCompleted,
@@ -260,6 +307,8 @@ function ScheduleChip({
     onDoubleClick,
 }: {
     entry: ScheduleEntry;
+    /** When set, shown instead of entry.companyName (live name / resolved label). */
+    displayCompanyName?: string;
     isSelected: boolean;
     isDragging: boolean;
     isCompleted?: boolean;
@@ -304,8 +353,8 @@ function ScheduleChip({
             >
                 <Bars3Icon className="w-3.5 h-3.5 text-slate-400 shrink-0" aria-hidden />
                 <div className="min-w-0 flex-1 overflow-hidden">
-                    <p className="text-xs font-medium text-slate-800 truncate" title={entry.companyName}>
-                        {entry.companyName}
+                    <p className="text-xs font-medium text-slate-800 truncate" title={displayCompanyName ?? entry.companyName}>
+                        {displayCompanyName ?? entry.companyName}
                     </p>
                     <span className={`text-[10px] px-1.5 py-0.5 rounded shrink-0 ${isDone ? 'bg-green-200 text-green-800' : 'bg-slate-100 text-slate-600'}`}>
                         {entry.pic}
@@ -336,6 +385,7 @@ function DroppableSlotBlock({
     activeId,
     isReadOnly,
     viewMode,
+    resolveRow,
     onSelectChip,
     onDoubleClickChip,
 }: {
@@ -348,6 +398,7 @@ function DroppableSlotBlock({
     activeId: string | null;
     isReadOnly?: boolean;
     viewMode?: 'full' | 'compact';
+    resolveRow: (e: ScheduleEntry) => ScheduleRowResolve;
     onSelectChip: (entry: ScheduleEntry, e: React.MouseEvent) => void;
     onDoubleClickChip?: (entry: ScheduleEntry) => void;
 }) {
@@ -388,6 +439,7 @@ function DroppableSlotBlock({
                         <div key={entryId(entry)} className={`w-full flex items-center ${viewMode === 'full' && entry.note ? 'min-h-[52px]' : 'min-h-[40px]'}`}>
                             <ScheduleChip
                                 entry={entry}
+                                displayCompanyName={resolveRow(entry).label}
                                 isSelected={selectedIds.has(entryId(entry))}
                                 isDragging={!isReadOnly && activeId !== null && (activeId === entryId(entry) || selectedIds.has(entryId(entry)))}
                                 isCompleted={entry.completed === 'Y'}
@@ -471,11 +523,12 @@ function EmailScheduleContent() {
             if (dataRes.ok) {
                 const json = await dataRes.json();
                 const companies = json.companies || [];
-                setAllAssignments(companies.map((c: { id: string; companyName?: string; pic?: string; status?: string }) => ({
+                setAllAssignments(companies.map((c: { id: string; companyName?: string; pic?: string; contactStatus?: string; relationshipStatus?: string }) => ({
                     id: c.id,
                     companyName: c.companyName || c.id,
                     pic: (c.pic && String(c.pic).trim()) ? String(c.pic).trim() : 'Unassigned',
-                    status: c.status || '',
+                    contactStatus: c.contactStatus || '',
+                    relationshipStatus: c.relationshipStatus || '',
                 })));
             }
         } catch (e) {
@@ -513,6 +566,11 @@ function EmailScheduleContent() {
         }
     }, []);
 
+    const resolveScheduleRow = useMemo(
+        () => buildScheduleRowResolver(allAssignments),
+        [allAssignments],
+    );
+
     useEffect(() => {
         fetchEntries();
         fetchSettings();
@@ -542,6 +600,13 @@ function EmailScheduleContent() {
         }
         router.push(`/companies/${encodeURIComponent(companyId)}?from=email-schedule`);
     }, [router, centerDate]);
+
+    const handleOpenCompanyFromSchedule = useCallback(
+        (entry: ScheduleEntry) => {
+            navigateToCompany(resolveScheduleRow(entry).openId);
+        },
+        [navigateToCompany, resolveScheduleRow],
+    );
 
     const visibleDates = getWeekDates(centerDate);
     const visibleTimeSlots = useMemo(
@@ -1217,8 +1282,9 @@ function EmailScheduleContent() {
                                                     activeId={activeId}
                                                     isReadOnly={!user?.isAdmin}
                                                     viewMode={viewMode}
+                                                    resolveRow={resolveScheduleRow}
                                                     onSelectChip={handleSelectChip}
-                                                    onDoubleClickChip={(entry) => navigateToCompany(entry.companyId)}
+                                                    onDoubleClickChip={handleOpenCompanyFromSchedule}
                                                 />
                                             );
                                         })
@@ -1233,7 +1299,7 @@ function EmailScheduleContent() {
                             <div className="px-3 py-2 rounded-lg border-2 border-indigo-300 bg-white shadow-lg opacity-90 flex items-center gap-2">
                                 <Bars3Icon className="w-4 h-4 text-slate-400" />
                                 <div>
-                                    <p className="text-sm font-medium text-slate-800 truncate max-w-[180px]">{activeEntry.companyName}</p>
+                                    <p className="text-sm font-medium text-slate-800 truncate max-w-[180px]">{resolveScheduleRow(activeEntry).label}</p>
                                     {movingCount > 1 && (
                                         <span className="text-xs text-indigo-600 font-medium">+{movingCount - 1} more</span>
                                     )}

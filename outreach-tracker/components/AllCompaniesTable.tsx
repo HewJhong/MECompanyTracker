@@ -103,7 +103,7 @@ const COLUMN_WIDTHS = {
     select: 56,
     id: 120,
     name: 280,
-    status: 200,
+    status: 260,
     discipline: 160,
     targetTier: 170,
     contact: 260,
@@ -148,7 +148,8 @@ const DEFAULT_VISIBLE_COLUMNS: Record<ColumnKey, boolean> = {
 interface Company {
     id: string;
     name: string;
-    status: string;
+    contactStatus: string;
+    relationshipStatus: string;
     assignedTo: string;
     contact: string;
     email: string;
@@ -318,7 +319,7 @@ function ColumnPicker({
     );
 }
 
-type SortField = 'id' | 'name' | 'status' | 'assignedTo' | 'lastUpdated' | 'followUpsCompleted' | 'targetSponsorshipTier';
+type SortField = 'id' | 'name' | 'contactStatus' | 'assignedTo' | 'lastUpdated' | 'followUpsCompleted' | 'targetSponsorshipTier';
 type SortDirection = 'asc' | 'desc';
 
 export default function AllCompaniesTable({
@@ -355,7 +356,8 @@ export default function AllCompaniesTable({
     const defaultColumnFilters = {
         id: '',
         name: '',
-        status: [] as string[],
+        contactStatus: [] as string[],
+        relationshipStatus: [] as string[],
         discipline: [] as string[],
         targetSponsorshipTier: [] as string[],
         assignedTo: [] as string[],
@@ -427,8 +429,12 @@ export default function AllCompaniesTable({
         }
     }, [sortField, sortDirection, columnFilters, debouncedSearch]);
 
-    const statuses = useMemo(() =>
-        Array.from(new Set(companies.map(c => c.status))).sort(),
+    const contactStatuses = useMemo(() =>
+        Array.from(new Set(companies.map(c => c.contactStatus))).filter(Boolean).sort(),
+        [companies]
+    );
+    const relationshipStatuses = useMemo(() =>
+        Array.from(new Set(companies.map(c => c.relationshipStatus))).filter(Boolean).sort(),
         [companies]
     );
     const disciplines = useMemo(() => {
@@ -470,7 +476,8 @@ export default function AllCompaniesTable({
         companies.map(c => normalise([
             c.id,
             c.name,
-            c.status,
+            c.contactStatus,
+            c.relationshipStatus,
             c.discipline || '',
             c.targetSponsorshipTier || '',
             c.contact,
@@ -492,7 +499,8 @@ export default function AllCompaniesTable({
             // Per-column text filters: accent-insensitive (same as global search)
             const matchesId = !columnFilters.id.trim() || normalise(company.id).includes(normalise(columnFilters.id));
             const matchesName = !columnFilters.name.trim() || normalise(company.name).includes(normalise(columnFilters.name));
-            const matchesStatus = columnFilters.status.length === 0 || columnFilters.status.includes(company.status);
+            const matchesContactStatus = columnFilters.contactStatus.length === 0 || columnFilters.contactStatus.includes(company.contactStatus);
+            const matchesRelationshipStatus = columnFilters.relationshipStatus.length === 0 || columnFilters.relationshipStatus.includes(company.relationshipStatus);
             const companyDisciplines = company.discipline ? company.discipline.split(',').map((d: string) => d.trim()).filter(Boolean) : [];
             const matchesDiscipline = columnFilters.discipline.length === 0 || columnFilters.discipline.some((d: string) => companyDisciplines.includes(d));
             const matchesTier = columnFilters.targetSponsorshipTier.length === 0 || (company.targetSponsorshipTier && columnFilters.targetSponsorshipTier.includes(company.targetSponsorshipTier));
@@ -504,7 +512,7 @@ export default function AllCompaniesTable({
             const matchesEmails = !columnFilters.emails.trim() || normalise(company.email).includes(normalise(columnFilters.emails));
             const matchesPhones = !columnFilters.phones.trim() || normalise(company.phone || '').includes(normalise(columnFilters.phones));
 
-            return matchesId && matchesName && matchesStatus && matchesDiscipline && matchesTier && matchesAssignee && matchesContact && matchesEmails && matchesPhones;
+            return matchesId && matchesName && matchesContactStatus && matchesRelationshipStatus && matchesDiscipline && matchesTier && matchesAssignee && matchesContact && matchesEmails && matchesPhones;
         });
 
         result.sort((a, b) => {
@@ -537,10 +545,16 @@ export default function AllCompaniesTable({
             'To Contact': 'bg-slate-100 text-slate-700',
             'Contacted': 'bg-blue-100 text-blue-700',
             'To Follow Up': 'bg-amber-100 text-amber-700',
+            'No Reply': 'bg-gray-100 text-gray-500',
+        };
+        return colors[status] || 'bg-slate-100 text-slate-700';
+    };
+
+    const getRelationshipColor = (status: string) => {
+        const colors: Record<string, string> = {
             'Interested': 'bg-purple-100 text-purple-700',
             'Registered': 'bg-green-100 text-green-700',
             'Rejected': 'bg-red-100 text-red-700',
-            'No Reply': 'bg-gray-100 text-gray-500',
         };
         return colors[status] || 'bg-slate-100 text-slate-700';
     };
@@ -596,15 +610,16 @@ export default function AllCompaniesTable({
             : <ChevronDownIcon className="w-4 h-4 text-blue-600" />;
     };
 
-    const hasColumnFilters = !!(columnFilters.id || columnFilters.name || columnFilters.status.length > 0 ||
-        columnFilters.discipline.length > 0 || columnFilters.targetSponsorshipTier.length > 0 ||
-        columnFilters.assignedTo.length > 0 || columnFilters.contact || columnFilters.emails || columnFilters.phones);
+    const hasColumnFilters = !!(columnFilters.id || columnFilters.name || columnFilters.contactStatus.length > 0 ||
+        columnFilters.relationshipStatus.length > 0 || columnFilters.discipline.length > 0 ||
+        columnFilters.targetSponsorshipTier.length > 0 || columnFilters.assignedTo.length > 0 ||
+        columnFilters.contact || columnFilters.emails || columnFilters.phones);
     const hasAnyFilter = !!debouncedSearch || hasColumnFilters;
 
     const clearAllFilters = () => {
         setDebouncedSearch('');
         if (typeof window !== 'undefined') sessionStorage.setItem(GLOBAL_SEARCH_STORAGE_KEY, '');
-        setColumnFilters({ id: '', name: '', status: [], discipline: [], targetSponsorshipTier: [], assignedTo: [], contact: '', emails: '', phones: '' });
+        setColumnFilters({ id: '', name: '', contactStatus: [], relationshipStatus: [], discipline: [], targetSponsorshipTier: [], assignedTo: [], contact: '', emails: '', phones: '' });
     };
 
     // Dynamic column count for colSpan
@@ -710,8 +725,8 @@ export default function AllCompaniesTable({
                                 </th>
                                 {col.status && (
                                     <th className="px-6 py-3 text-xs font-medium text-slate-600 tracking-wider bg-slate-50 whitespace-nowrap" style={{ width: COLUMN_WIDTHS.status }}>
-                                        <button onClick={() => handleSort('status')} className="flex items-center gap-2 hover:text-slate-900 transition-colors">
-                                            Status <SortIcon field="status" />
+                                        <button onClick={() => handleSort('contactStatus')} className="flex items-center gap-2 hover:text-slate-900 transition-colors">
+                                            Status <SortIcon field="contactStatus" />
                                         </button>
                                     </th>
                                 )}
@@ -796,7 +811,10 @@ export default function AllCompaniesTable({
                                 </th>
                                 {col.status && (
                                     <th className="px-6 py-2 bg-white" style={{ width: COLUMN_WIDTHS.status }}>
-                                        <FilterRowMultiSelect options={statuses} selected={columnFilters.status} onChange={s => setColumnFilters({ ...columnFilters, status: s })} />
+                                        <div className="flex flex-col gap-1">
+                                            <FilterRowMultiSelect options={contactStatuses} selected={columnFilters.contactStatus} onChange={s => setColumnFilters({ ...columnFilters, contactStatus: s })} placeholder="Contact…" />
+                                            <FilterRowMultiSelect options={relationshipStatuses} selected={columnFilters.relationshipStatus} onChange={s => setColumnFilters({ ...columnFilters, relationshipStatus: s })} placeholder="Relationship…" />
+                                        </div>
                                     </th>
                                 )}
                                 {col.discipline && (
@@ -909,9 +927,16 @@ export default function AllCompaniesTable({
                                         </td>
                                         {col.status && (
                                             <td className="px-6 py-4" style={{ width: COLUMN_WIDTHS.status }}>
-                                                <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-medium whitespace-nowrap ${getStatusColor(company.status)}`}>
-                                                    {company.status}
-                                                </span>
+                                                <div className="flex flex-wrap gap-1">
+                                                    <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-medium whitespace-nowrap ${getStatusColor(company.contactStatus)}`}>
+                                                        {company.contactStatus}
+                                                    </span>
+                                                    {company.relationshipStatus && (
+                                                        <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-medium whitespace-nowrap ${getRelationshipColor(company.relationshipStatus)}`}>
+                                                            {company.relationshipStatus}
+                                                        </span>
+                                                    )}
+                                                </div>
                                             </td>
                                         )}
                                         {col.discipline && (

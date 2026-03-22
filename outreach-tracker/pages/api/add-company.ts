@@ -89,18 +89,19 @@ export default async function handler(
         const trackerRow = [
             newCompanyId,                    // A: Company ID
             companyName.trim(),              // B: Company Name
-            'To Contact',                    // C: Status
-            '',                              // D: Channel
-            '0',                             // E: Urgency Score
-            '',                              // F: Previous Response
-            assignedTo || 'Unassigned',      // G: Assigned PIC
-            '',                              // H: Last Company Contact Date
-            '',                              // I: Last Committee Contact Date
-            '0',                             // J: Follow Ups Completed
-            '',                              // K: Sponsorship Tier
-            '',                              // L: Days Attending
-            remarks?.trim() || '',           // M: Remarks
-            timestamp                        // N: Last Update
+            'To Contact',                    // C: Contact Status
+            '',                              // D: Relationship Status
+            '',                              // E: Channel
+            '0',                             // F: Urgency Score
+            '',                              // G: Previous Response
+            assignedTo || 'Unassigned',      // H: Assigned PIC
+            '',                              // I: Last Company Contact Date
+            '',                              // J: Last Committee Contact Date
+            '0',                             // K: Follow Ups Completed
+            '',                              // L: Sponsorship Tier
+            '',                              // M: Days Attending
+            remarks?.trim() || '',           // N: Remarks
+            timestamp                        // O: Last Update
         ];
 
         // 6. Append to both sheets

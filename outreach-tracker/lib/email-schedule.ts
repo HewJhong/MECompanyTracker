@@ -35,6 +35,39 @@ function getSpreadsheetId(): string {
     return id;
 }
 
+/** Canonical "HH:mm" so "8:00" and "08:00" match. */
+function normalizeTime(time: string): string {
+    return minutesToTime(timeToMinutes(time));
+}
+
+/** Canonical YYYY-MM-DD for date comparison (sheet may store "3/10/2025" or "2025-03-10"). */
+function normalizeDate(dateStr: string): string {
+    if (!dateStr || !dateStr.trim()) return '';
+    const d = new Date(dateStr.trim());
+    if (Number.isNaN(d.getTime())) return dateStr;
+    return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Match sheet rows to entries by slot, not by company+date alone.
+ * Using only companyId|date caused multiple same-day slots to overwrite one row and mix up IDs vs names.
+ */
+function scheduleEntryRowKey(entry: EmailScheduleEntry): string {
+    const order = Number.isFinite(entry.order) ? Math.trunc(entry.order) : 0;
+    const timeRaw = String(entry.time ?? '').trim();
+    const timeKey = timeRaw ? normalizeTime(timeRaw) : '00:00';
+    return `${String(entry.companyId).trim()}|${normalizeDate(entry.date)}|${timeKey}|${order}`;
+}
+
+function scheduleRowKeyFromValues(row: string[]): string | null {
+    if (!row[0]?.trim() || !row[3]?.trim()) return null;
+    const orderRaw = parseInt(String(row[5] ?? '0'), 10);
+    const order = Number.isNaN(orderRaw) ? 0 : orderRaw;
+    const timeRaw = String(row[4] ?? '').trim();
+    const timeKey = timeRaw ? normalizeTime(timeRaw) : '00:00';
+    return `${String(row[0]).trim()}|${normalizeDate(String(row[3]).trim())}|${timeKey}|${order}`;
+}
+
 // ─── Reads ───────────────────────────────────────────────────────────────────
 
 export async function getEmailSchedule(date?: string): Promise<EmailScheduleEntry[]> {
@@ -150,19 +183,18 @@ export async function saveEmailScheduleEntries(
         // Sheet may not exist yet — append will create it
     }
 
-    // Build a map: "companyId|date" → row index (1-based, accounting for header)
+    // Map logical slot → sheet row (1-based, includes header offset)
     const rowIndexMap = new Map<string, number>();
     existingRows.forEach((row, i) => {
-        if (row[0] && row[3]) {
-            rowIndexMap.set(`${row[0]}|${row[3]}`, i + 2); // +2: 1-based + header row
-        }
+        const key = scheduleRowKeyFromValues(row);
+        if (key) rowIndexMap.set(key, i + 2); // +2: 1-based + header row
     });
 
     const updates: { range: string; values: string[][] }[] = [];
     const appends: string[][] = [];
 
     for (const entry of entries) {
-        const key = `${entry.companyId}|${entry.date}`;
+        const key = scheduleEntryRowKey(entry);
         const rowNum = rowIndexMap.get(key);
         const rowValues = [
             entry.companyId,
@@ -308,19 +340,6 @@ export async function deleteEmailScheduleEntriesForCompanies(
 }
 
 // ─── Business Logic ──────────────────────────────────────────────────────────
-
-/** Canonical "HH:mm" so "8:00" and "08:00" match. */
-function normalizeTime(time: string): string {
-    return minutesToTime(timeToMinutes(time));
-}
-
-/** Canonical YYYY-MM-DD for date comparison (sheet may store "3/10/2025" or "2025-03-10"). */
-function normalizeDate(dateStr: string): string {
-    if (!dateStr || !dateStr.trim()) return '';
-    const d = new Date(dateStr.trim());
-    if (Number.isNaN(d.getTime())) return dateStr;
-    return d.toISOString().slice(0, 10);
-}
 
 function getSlotOccupancy(entries: EmailScheduleEntry[]): Map<string, number> {
     const map = new Map<string, number>();
