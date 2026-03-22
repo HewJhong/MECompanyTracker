@@ -1,7 +1,4 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getServerSession } from 'next-auth/next';
-import { authOptions } from '../../../lib/auth';
-import { getCommitteeMembers } from '../../../lib/committee-members';
 import { getGoogleSheetsClient } from '../../../lib/google-sheets';
 import {
     getEmailSchedule,
@@ -10,6 +7,7 @@ import {
     computeTimeSlotsWithExisting,
     EmailScheduleEntry,
 } from '../../../lib/email-schedule';
+import { formatActorLabel, requireEffectiveAdmin } from '../../../lib/authz';
 
 async function appendThreadHistory(
     rows: string[][],
@@ -30,22 +28,6 @@ async function appendThreadHistory(
     }
 }
 
-async function requireAdmin(req: NextApiRequest, res: NextApiResponse): Promise<string | null> {
-    const session = await getServerSession(req, res, authOptions);
-    if (!session?.user?.email) {
-        res.status(401).json({ error: 'Unauthorized' });
-        return null;
-    }
-    const members = await getCommitteeMembers();
-    const user = members.find(m => m.email.toLowerCase().trim() === session.user!.email!.toLowerCase().trim());
-    const roleLower = user?.role?.toLowerCase() || '';
-    if (!user || (roleLower !== 'admin' && roleLower !== 'superadmin')) {
-        res.status(403).json({ error: 'Admin access required' });
-        return null;
-    }
-    return session.user.name || session.user.email;
-}
-
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
     try {
         if (req.method === 'GET') {
@@ -60,8 +42,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         }
 
         if (req.method === 'POST') {
-            const actorName = await requireAdmin(req, res);
-            if (!actorName) return;
+            const ctx = await requireEffectiveAdmin(req, res);
+            if (!ctx) return;
+            const actorName = formatActorLabel(ctx);
 
             const { companyIds, companyNames, pic, date, startTime, note } = req.body as {
                 companyIds: string[];
@@ -105,8 +88,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         }
 
         if (req.method === 'PUT') {
-            const actorName = await requireAdmin(req, res);
-            if (!actorName) return;
+            const ctx = await requireEffectiveAdmin(req, res);
+            if (!ctx) return;
+            const actorName = formatActorLabel(ctx);
 
             const { entries } = req.body as {
                 entries: Array<{ companyId: string; companyName?: string; pic: string; date: string; time: string; order?: number; note?: string; completed?: string }>;
@@ -142,8 +126,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         }
 
         if (req.method === 'DELETE') {
-            const actorName = await requireAdmin(req, res);
-            if (!actorName) return;
+            const ctx = await requireEffectiveAdmin(req, res);
+            if (!ctx) return;
+            const actorName = formatActorLabel(ctx);
 
             const { companyIds, date } = req.body as { companyIds: string[]; date: string };
 

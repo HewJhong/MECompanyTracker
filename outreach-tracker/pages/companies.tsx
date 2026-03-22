@@ -48,7 +48,7 @@ interface CommitteeMember {
 
 export default function CompaniesPage() {
     const router = useRouter();
-    const { user, effectiveIsAdmin } = useCurrentUser();
+    const { user } = useCurrentUser();
     const [data, setData] = useState<Company[]>([]);
     const [loading, setLoading] = useState(true);
     const [selectedCompanies, setSelectedCompanies] = useState<Set<string>>(new Set());
@@ -197,10 +197,10 @@ export default function CompaniesPage() {
 
     useEffect(() => {
         fetchData();
-        if (effectiveIsAdmin) {
+        if (user?.isAdmin) {
             fetchCommitteeMembers();
         }
-    }, [user, effectiveIsAdmin]);
+    }, [user]);
 
     useEffect(() => {
         if (data.length === 0) return;
@@ -539,7 +539,7 @@ export default function CompaniesPage() {
             />
 
             {/* Bulk Action Bar */}
-            {effectiveIsAdmin && selectedCompanies.size > 0 && (
+            {user?.isAdmin && selectedCompanies.size > 0 && (
                 <div className="fixed bottom-6 left-1/2 transform -translate-x-1/2 z-50 w-[min(96vw,860px)]">
                     <div className="bg-blue-600 text-white px-5 py-4 rounded-xl shadow-2xl border border-blue-500 space-y-3">
                         {/* Row 1: counter + assignee + clear */}
@@ -731,7 +731,7 @@ export default function CompaniesPage() {
             )}
 
             {/* Shift-click Hint */}
-            {effectiveIsAdmin && selectedCompanies.size > 0 && (
+            {user?.isAdmin && selectedCompanies.size > 0 && (
                 <div className="mt-4 text-sm text-slate-600 text-center pb-20">
                     💡 Tip: Hold <kbd className="px-2 py-1 bg-slate-100 border border-slate-300 rounded text-xs font-mono">Shift</kbd> and click to select a range
                 </div>

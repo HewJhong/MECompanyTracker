@@ -416,6 +416,49 @@ export default async function handler(
             }
             stats.updated += idMismatches.length;
             console.log(`${preview ? '[PREVIEW] ' : ''}Updated IDs for ${idMismatches.length} companies (full row).`);
+
+            // Update Thread_History so activity logs stay linked to corrected IDs
+            if (!preview && idMismatches.length > 0) {
+                try {
+                    const idMap = new Map(idMismatches.map(m => [m.oldId, m.newId]));
+                    const historyResponse = await sheets.spreadsheets.values.get({
+                        spreadsheetId: trackerSpreadsheetId,
+                        range: 'Thread_History!B2:B',
+                    });
+                    const historyCompanyIds = (historyResponse.data.values || []) as string[][];
+                    if (historyCompanyIds.length > 0) {
+                        const newHistoryIds = historyCompanyIds.map(row => {
+                            const oldId = row[0] ? String(row[0]).trim() : '';
+                            const newId = oldId && idMap.has(oldId) ? idMap.get(oldId)! : oldId;
+                            return [newId];
+                        });
+                        await sheets.spreadsheets.values.update({
+                            spreadsheetId: trackerSpreadsheetId,
+                            range: `Thread_History!B2:B${1 + newHistoryIds.length}`,
+                            valueInputOption: 'RAW',
+                            requestBody: { values: newHistoryIds },
+                        });
+                    }
+                    // Audit trail in Logs_DoNotEdit
+                    const actorName = user?.name || user?.email || session?.user?.email || 'Sync';
+                    await sheets.spreadsheets.values.append({
+                        spreadsheetId: trackerSpreadsheetId,
+                        range: 'Logs_DoNotEdit!A:E',
+                        valueInputOption: 'RAW',
+                        requestBody: {
+                            values: [[
+                                new Date().toISOString(),
+                                actorName,
+                                'SYNC_ID_FIX',
+                                `Updated ${idMismatches.length} company IDs during database sync`,
+                                JSON.stringify(idMismatches.map(m => ({ oldId: m.oldId, newId: m.newId, name: m.name }))),
+                            ]],
+                        },
+                    });
+                } catch (historyErr) {
+                    console.warn('Thread_History update during sync ID fix failed:', historyErr);
+                }
+            }
         }
 
         // Batch Delete (Duplicate Rows)

@@ -123,7 +123,7 @@ const STORAGE_KEY_SELECTION_RESTORE = 'companies_selection_restore';
 export default function CompanyDetailPage() {
     const router = useRouter();
     const { id, from } = router.query;
-    const { user, effectiveIsAdmin } = useCurrentUser();
+    const { user } = useCurrentUser();
     const currentUser = user?.name ?? 'Committee Member';
     const canEdit = user?.canEditCompanies === true;
 
@@ -313,12 +313,12 @@ export default function CompanyDetailPage() {
     }, [company?.id]);
 
     useEffect(() => {
-        if (company?.id && effectiveIsAdmin) fetchScheduleForCompany();
-    }, [company?.id, effectiveIsAdmin, fetchScheduleForCompany]);
+        if (company?.id && user?.isAdmin) fetchScheduleForCompany();
+    }, [company?.id, user?.isAdmin, fetchScheduleForCompany]);
 
     // When admin changes outreach date, fetch next available start time
     useEffect(() => {
-        if (!outreachScheduleDate || !effectiveIsAdmin) return;
+        if (!outreachScheduleDate || !user?.isAdmin) return;
         setIsFetchingScheduleSlot(true);
         fetch(`/api/email-schedule/available-slots?date=${outreachScheduleDate}`)
             .then(res => res.ok ? res.json() : ({} as { nextStartTime?: string }))
@@ -326,10 +326,10 @@ export default function CompanyDetailPage() {
                 if (json.nextStartTime) setOutreachScheduleTime(json.nextStartTime);
             })
             .finally(() => setIsFetchingScheduleSlot(false));
-    }, [outreachScheduleDate, effectiveIsAdmin]);
+    }, [outreachScheduleDate, user?.isAdmin]);
 
     const handleSetOutreachSchedule = useCallback(async () => {
-        if (!company || !effectiveIsAdmin || !outreachScheduleDate || !outreachScheduleTime) return;
+        if (!company || !user?.isAdmin || !outreachScheduleDate || !outreachScheduleTime) return;
         const pic = assignedTo?.trim();
         if (!pic || pic === 'Unassigned') {
             showError('Assign PIC first', 'Please assign this company to a committee member before setting the outreach schedule.');
@@ -415,10 +415,10 @@ export default function CompanyDetailPage() {
         } finally {
             setIsSettingSchedule(false);
         }
-    }, [company, effectiveIsAdmin, outreachScheduleDate, outreachScheduleTime, outreachScheduleNote, assignedTo, scheduleEntries, followUpsCompleted, contactStatus, currentUser, addTask, completeTask, failTask, showError, fetchScheduleForCompany]);
+    }, [company, user?.isAdmin, outreachScheduleDate, outreachScheduleTime, outreachScheduleNote, assignedTo, scheduleEntries, followUpsCompleted, contactStatus, currentUser, addTask, completeTask, failTask, showError, fetchScheduleForCompany]);
 
     const handleClearOutreachSchedule = useCallback(async () => {
-        if (!company || !effectiveIsAdmin) return;
+        if (!company || !user?.isAdmin) return;
         setIsSettingSchedule(true);
         const taskId = addTask('Clearing outreach schedule...');
         try {
@@ -447,10 +447,10 @@ export default function CompanyDetailPage() {
         } finally {
             setIsSettingSchedule(false);
         }
-    }, [company, effectiveIsAdmin, addTask, completeTask, failTask, fetchScheduleForCompany]);
+    }, [company, user?.isAdmin, addTask, completeTask, failTask, fetchScheduleForCompany]);
 
     const handleDeleteScheduleEntry = useCallback(async (entry: { date: string; time: string; note?: string }) => {
-        if (!company || !effectiveIsAdmin) return;
+        if (!company || !user?.isAdmin) return;
         setIsSettingSchedule(true);
         const taskId = addTask('Removing schedule entry...');
         try {
@@ -468,7 +468,7 @@ export default function CompanyDetailPage() {
         } finally {
             setIsSettingSchedule(false);
         }
-    }, [company, effectiveIsAdmin, addTask, completeTask, failTask, fetchScheduleForCompany]);
+    }, [company, user?.isAdmin, addTask, completeTask, failTask, fetchScheduleForCompany]);
 
     const handleStartEditScheduleEntry = useCallback((entry: { date: string; time: string; note?: string }, index: number) => {
         setEditingScheduleEntryIndex(index);
@@ -485,7 +485,7 @@ export default function CompanyDetailPage() {
     }, []);
 
     const handleSaveScheduleEntryEdit = useCallback(async () => {
-        if (!company || !effectiveIsAdmin || editingScheduleEntryIndex === null) return;
+        if (!company || !user?.isAdmin || editingScheduleEntryIndex === null) return;
         const entry = scheduleEntries[editingScheduleEntryIndex];
         if (!entry) return;
         const newDate = editScheduleDate.trim();
@@ -544,7 +544,7 @@ export default function CompanyDetailPage() {
         } finally {
             setIsSettingSchedule(false);
         }
-    }, [company, effectiveIsAdmin, scheduleEntries, editingScheduleEntryIndex, editScheduleDate, editScheduleTime, editScheduleNote, assignedTo, addTask, completeTask, failTask, fetchScheduleForCompany]);
+    }, [company, user?.isAdmin, scheduleEntries, editingScheduleEntryIndex, editScheduleDate, editScheduleTime, editScheduleNote, assignedTo, addTask, completeTask, failTask, fetchScheduleForCompany]);
 
     // Mark the most recent incomplete schedule entry as completed after outreach is logged
     const markScheduleEntryCompleted = useCallback(async () => {
@@ -1297,7 +1297,7 @@ export default function CompanyDetailPage() {
     };
 
     const confirmDeleteCompany = async () => {
-        if (!company?.id || !effectiveIsAdmin) return;
+        if (!company?.id || !user?.isAdmin) return;
         setIsDeletingCompany(true);
         const taskId = addTask('Deleting company...');
         try {
@@ -1953,7 +1953,7 @@ export default function CompanyDetailPage() {
                             </div>
 
                             {/* Outreach schedule - Admin only */}
-                            {effectiveIsAdmin && (
+                            {user?.isAdmin && (
                                 <div className="pt-4 border-t border-slate-200">
                                     <div className="flex items-center gap-2 mb-3">
                                         <CalendarDaysIcon className="w-5 h-5 text-indigo-600" aria-hidden />
@@ -2123,7 +2123,7 @@ export default function CompanyDetailPage() {
                             )}
 
                             {/* Danger zone: Delete company — admin only */}
-                            {effectiveIsAdmin && (
+                            {user?.isAdmin && (
                                 <div className="pt-6 mt-6 border-t border-red-200">
                                     <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
                                         <h4 className="text-sm font-semibold text-red-800 mb-1">Danger zone</h4>

@@ -1,29 +1,18 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getServerSession } from 'next-auth/next';
-import { authOptions } from '../../lib/auth';
-import { getCommitteeMembers } from '../../lib/committee-members';
 import { getGoogleSheetsClient } from '../../lib/google-sheets';
 import { cache } from '../../lib/cache';
 import { deleteEmailScheduleEntriesForCompanies } from '../../lib/email-schedule';
 import { syncDailyStats } from '../../lib/daily-stats';
+import { requireEffectiveCanEditCompanies } from '../../lib/authz';
+import { formatActorLabel } from '../../lib/authz';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
     if (req.method !== 'POST') {
         return res.status(405).json({ message: 'Method not allowed' });
     }
 
-    const session = await getServerSession(req, res, authOptions);
-    if (!session?.user?.email) {
-        return res.status(401).json({ message: 'Unauthorized' });
-    }
-    const members = await getCommitteeMembers();
-    const email = session.user.email.toLowerCase().trim();
-    const committeeUser = members.find(m => m.email.toLowerCase().trim() === email);
-    const roleLower = committeeUser?.role?.toLowerCase() || '';
-    const canEdit = committeeUser && (roleLower === 'admin' || roleLower === 'superadmin' || roleLower === 'member' || roleLower === 'committee member');
-    if (!canEdit) {
-        return res.status(403).json({ message: 'Not authorized to delete companies' });
-    }
+    const ctx = await requireEffectiveCanEditCompanies(req, res);
+    if (!ctx) return;
 
     const { companyId, user } = req.body as { companyId: string; user: string };
     if (!companyId || !user) {
@@ -128,7 +117,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             range: 'Thread_History!A:D',
             valueInputOption: 'USER_ENTERED',
             requestBody: {
-                values: [[timestamp, companyId, user, `Company ${companyId} deleted from tracker and database`]],
+                values: [[timestamp, companyId, formatActorLabel(ctx), `Company ${companyId} deleted from tracker and database`]],
             },
         });
         cache.delete('sheet_data');

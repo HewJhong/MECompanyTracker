@@ -1,6 +1,4 @@
-import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
-
-const VIEW_AS_MEMBER_KEY = 'outreach_view_as_member';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 
 export interface CurrentUser {
     name: string | null;
@@ -11,84 +9,137 @@ export interface CurrentUser {
     canEditCompanies: boolean;
 }
 
+export interface RealUser extends CurrentUser {
+    isSuperAdmin: boolean;
+}
+
 interface CurrentUserContextValue {
+    // Backwards-compatible: this is the *effective* user (impersonated when active).
     user: CurrentUser | null;
+    // Real signed-in identity (never changes during impersonation).
+    realUser: RealUser | null;
+    // Effective identity (same as `user`, exposed explicitly for clarity).
+    effectiveUser: CurrentUser | null;
+    isImpersonating: boolean;
+    impersonatedEmail: string | null;
+
     loading: boolean;
     refetch: () => void;
-    viewAsMember: boolean;
-    setViewAsMember: (value: boolean) => void;
-    effectiveIsAdmin: boolean;
+    startImpersonation: (impersonatedEmail: string) => Promise<boolean>;
+    stopImpersonation: () => Promise<boolean>;
 }
 
 const CurrentUserContext = createContext<CurrentUserContextValue>({
     user: null,
+    realUser: null,
+    effectiveUser: null,
+    isImpersonating: false,
+    impersonatedEmail: null,
     loading: true,
     refetch: () => { },
-    viewAsMember: false,
-    setViewAsMember: () => { },
-    effectiveIsAdmin: false,
+    startImpersonation: async () => false,
+    stopImpersonation: async () => false,
 });
 
 export function CurrentUserProvider({ children }: { children: React.ReactNode }) {
-    const [user, setUser] = useState<CurrentUser | null>(null);
+    const [realUser, setRealUser] = useState<RealUser | null>(null);
+    const [effectiveUser, setEffectiveUser] = useState<CurrentUser | null>(null);
+    const [isImpersonating, setIsImpersonating] = useState(false);
+    const [impersonatedEmail, setImpersonatedEmail] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
-    const [viewAsMember, setViewAsMemberState] = useState(false);
 
-    const fetchMe = () => {
-        fetch('/api/me')
+    const fetchMe = useCallback(() => {
+        fetch('/api/me', { method: 'GET' })
             .then((res) => res.json())
             .then((data) => {
                 if (data.authenticated) {
-                    setUser({
-                        name: data.name,
-                        email: data.email,
-                        role: data.role,
-                        isCommitteeMember: data.isCommitteeMember || false,
-                        isAdmin: data.isAdmin || false,
-                        canEditCompanies: data.canEditCompanies || false,
-                    });
+                    const nextRealUser: RealUser | null = data.realUser
+                        ? {
+                            name: data.realUser.name ?? null,
+                            email: data.realUser.email ?? null,
+                            role: data.realUser.role ?? null,
+                            isCommitteeMember: Boolean(data.realUser.isCommitteeMember),
+                            isAdmin: Boolean(data.realUser.isAdmin),
+                            isSuperAdmin: Boolean(data.realUser.isSuperAdmin),
+                            canEditCompanies: Boolean(data.realUser.canEditCompanies),
+                        }
+                        : null;
+                    const nextEffectiveUser: CurrentUser | null = data.effectiveUser
+                        ? {
+                            name: data.effectiveUser.name ?? null,
+                            email: data.effectiveUser.email ?? null,
+                            role: data.effectiveUser.role ?? null,
+                            isCommitteeMember: Boolean(data.effectiveUser.isCommitteeMember),
+                            isAdmin: Boolean(data.effectiveUser.isAdmin),
+                            canEditCompanies: Boolean(data.effectiveUser.canEditCompanies),
+                        }
+                        : null;
+                    setRealUser(nextRealUser);
+                    setEffectiveUser(nextEffectiveUser);
+                    setIsImpersonating(Boolean(data.isImpersonating));
+                    setImpersonatedEmail((data.impersonatedEmail as string | null) || null);
                 } else {
-                    setUser(null);
+                    setRealUser(null);
+                    setEffectiveUser(null);
+                    setIsImpersonating(false);
+                    setImpersonatedEmail(null);
                 }
             })
             .catch(() => {
-                setUser(null);
+                setRealUser(null);
+                setEffectiveUser(null);
+                setIsImpersonating(false);
+                setImpersonatedEmail(null);
             })
             .finally(() => setLoading(false));
-    };
+    }, []);
 
     useEffect(() => {
         fetchMe();
     }, []);
 
-    useEffect(() => {
-        if (user && !user.isAdmin) {
-            setViewAsMemberState(false);
-            try {
-                if (typeof window !== 'undefined') localStorage.removeItem(VIEW_AS_MEMBER_KEY);
-            } catch { }
-        } else if (user?.isAdmin && typeof window !== 'undefined') {
-            try {
-                const stored = localStorage.getItem(VIEW_AS_MEMBER_KEY);
-                setViewAsMemberState(stored === '1');
-            } catch { }
+    const startImpersonation = useCallback(async (email: string) => {
+        try {
+            const res = await fetch('/api/impersonation/start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ impersonatedEmail: email }),
+            });
+            if (!res.ok) return false;
+            setLoading(true);
+            fetchMe();
+            return true;
+        } catch {
+            return false;
         }
-    }, [user?.isAdmin, user]);
+    }, [fetchMe]);
 
-    const setViewAsMember = useCallback((value: boolean) => {
-        if (typeof window !== 'undefined') {
-            try {
-                if (value) localStorage.setItem(VIEW_AS_MEMBER_KEY, '1');
-                else localStorage.removeItem(VIEW_AS_MEMBER_KEY);
-            } catch { }
+    const stopImpersonation = useCallback(async () => {
+        try {
+            const res = await fetch('/api/impersonation/stop', { method: 'POST' });
+            if (!res.ok) return false;
+            setLoading(true);
+            fetchMe();
+            return true;
+        } catch {
+            return false;
         }
-        setViewAsMemberState(value);
-    }, []);
+    }, [fetchMe]);
 
-    const effectiveIsAdmin = user?.isAdmin === true && !viewAsMember;
+    const user = useMemo(() => effectiveUser, [effectiveUser]);
 
     return (
-        <CurrentUserContext.Provider value={{ user, loading, refetch: fetchMe, viewAsMember, setViewAsMember, effectiveIsAdmin }}>
+        <CurrentUserContext.Provider value={{
+            user,
+            realUser,
+            effectiveUser,
+            isImpersonating,
+            impersonatedEmail,
+            loading,
+            refetch: fetchMe,
+            startImpersonation,
+            stopImpersonation,
+        }}>
             {children}
         </CurrentUserContext.Provider>
     );

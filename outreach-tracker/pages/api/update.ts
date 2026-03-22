@@ -1,10 +1,9 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getServerSession } from 'next-auth/next';
-import { authOptions } from '../../lib/auth';
-import { getCommitteeMembers } from '../../lib/committee-members';
 import { getGoogleSheetsClient } from '../../lib/google-sheets';
 import { cache } from '../../lib/cache';
 import { syncDailyStats } from '../../lib/daily-stats';
+import { requireEffectiveCanEditCompanies } from '../../lib/authz';
+import { formatActorLabel } from '../../lib/authz';
 
 export default async function handler(
     req: NextApiRequest,
@@ -14,18 +13,8 @@ export default async function handler(
         return res.status(405).json({ message: 'Method not allowed' });
     }
 
-    const session = await getServerSession(req, res, authOptions);
-    if (!session?.user?.email) {
-        return res.status(401).json({ message: 'Unauthorized' });
-    }
-    const members = await getCommitteeMembers();
-    const email = session.user.email.toLowerCase().trim();
-    const committeeUser = members.find(m => m.email.toLowerCase().trim() === email);
-    const roleLower = committeeUser?.role?.toLowerCase() || '';
-    const canEditCompanies = committeeUser && (roleLower === 'admin' || roleLower === 'superadmin' || roleLower === 'member' || roleLower === 'committee member');
-    if (!canEditCompanies) {
-        return res.status(403).json({ message: 'Not authorized to modify data' });
-    }
+    const ctx = await requireEffectiveCanEditCompanies(req, res);
+    if (!ctx) return;
 
     const { companyId, updates, user, remark, actionDate } = req.body;
 
@@ -200,7 +189,7 @@ export default async function handler(
                 spreadsheetId: spreadsheetId2,
                 range: `Thread_History!A:D`,
                 valueInputOption: 'USER_ENTERED',
-                requestBody: { values: [[actionDate || timestamp, companyId, user, historyEntryText]] }
+                requestBody: { values: [[actionDate || timestamp, companyId, formatActorLabel(ctx), historyEntryText]] }
             });
         }
 

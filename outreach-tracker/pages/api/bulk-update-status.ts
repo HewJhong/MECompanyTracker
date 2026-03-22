@@ -1,9 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getServerSession } from 'next-auth/next';
-import { authOptions } from '../../lib/auth';
-import { getCommitteeMembers } from '../../lib/committee-members';
 import { getGoogleSheetsClient } from '../../lib/google-sheets';
 import { cache } from '../../lib/cache';
+import { formatActorLabel, requireEffectiveAdmin } from '../../lib/authz';
 
 const CONTACT_STATUSES = ['To Contact', 'Contacted', 'To Follow Up', 'No Reply'] as const;
 const RELATIONSHIP_STATUSES = ['Interested', 'Registered', 'Rejected'] as const;
@@ -14,18 +12,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     try {
-        const session = await getServerSession(req, res, authOptions);
-        if (!session?.user?.email) {
-            return res.status(401).json({ error: 'Unauthorized' });
-        }
-
-        const members = await getCommitteeMembers();
-        const userEmail = session.user.email.toLowerCase().trim();
-        const user = members.find(m => m.email.toLowerCase().trim() === userEmail);
-        const roleLower = user?.role?.toLowerCase() || '';
-        if (!user || (roleLower !== 'admin' && roleLower !== 'superadmin')) {
-            return res.status(403).json({ error: 'Admin access required' });
-        }
+        const ctx = await requireEffectiveAdmin(req, res);
+        if (!ctx) return;
 
         const { companyIds, field, value } = req.body as { companyIds?: string[]; field?: string; value?: string };
 
@@ -117,7 +105,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
         cache.delete('sheet_data');
 
-        const actorName = session.user.name || session.user.email || 'Admin';
+        const actorName = formatActorLabel(ctx);
         try {
             await sheets.spreadsheets.values.append({
                 spreadsheetId,

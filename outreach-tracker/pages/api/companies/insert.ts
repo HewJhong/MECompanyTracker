@@ -1,8 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getServerSession } from 'next-auth/next';
-import { authOptions } from '../../../lib/auth';
 import { getGoogleSheetsClient } from '../../../lib/google-sheets';
 import { cache } from '../../../lib/cache';
+import { requireEffectiveAdmin } from '../../../lib/authz';
 
 // Sanitize user input to prevent formula injection and other issues
 function sanitizeInput(input: string, maxLength: number = 500): string {
@@ -22,11 +21,8 @@ export default async function handler(
     }
 
     try {
-        // 1. Authentication check
-        const session = await getServerSession(req, res, authOptions);
-        if (!session) {
-            return res.status(401).json({ message: 'Unauthorized' });
-        }
+        const ctx = await requireEffectiveAdmin(req, res);
+        if (!ctx) return;
 
         // Parse and validate input
         const { insertAtId, companyData } = req.body;

@@ -1,6 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getGoogleSheetsClient } from '../../../lib/google-sheets';
 import { cache } from '../../../lib/cache';
+import { formatActorLabel, requireEffectiveAdmin } from '../../../lib/authz';
 
 export default async function handler(
     req: NextApiRequest,
@@ -9,6 +10,9 @@ export default async function handler(
     if (req.method !== 'POST') {
         return res.status(405).json({ message: 'Method not allowed' });
     }
+
+    const ctx = await requireEffectiveAdmin(req, res);
+    if (!ctx) return;
 
     const { keepId, mergeId, strategy } = req.body;
 
@@ -303,7 +307,58 @@ export default async function handler(
 
         await Promise.all(finalUpdates);
 
-        // 5. Invalidate Cache
+        // 5. Update Thread_History so activity logs stay linked (redirect mergeId→keepId, update shifted IDs)
+        try {
+            const historyResponse = await sheets.spreadsheets.values.get({
+                spreadsheetId: trackerSpreadsheetId,
+                range: 'Thread_History!A2:D',
+            });
+            const historyRows = (historyResponse.data.values || []) as string[][];
+            if (historyRows.length > 0) {
+                const newRows = historyRows.map(row => {
+                    const companyId = row[1] ? String(row[1]).trim() : '';
+                    const newId = companyId && idChanges.has(companyId) ? idChanges.get(companyId)! : companyId;
+                    return [row[0], newId, row[2] || '', row[3] || ''];
+                });
+                await sheets.spreadsheets.values.update({
+                    spreadsheetId: trackerSpreadsheetId,
+                    range: `Thread_History!A2:D${1 + newRows.length}`,
+                    valueInputOption: 'RAW',
+                    requestBody: { values: newRows },
+                });
+            }
+            // Append merge audit entry to Thread_History (visible on Analytics)
+            const timestamp = new Date().toISOString();
+            const actorName = formatActorLabel(ctx);
+            const auditRemark = shiftedCompanies.length > 0
+                ? `Merged ${mergeId} into ${keepId}; ${shiftedCompanies.length} companies re-sequenced (ID changes)`
+                : `Merged ${mergeId} into ${keepId}`;
+            await sheets.spreadsheets.values.append({
+                spreadsheetId: trackerSpreadsheetId,
+                range: 'Thread_History!A:D',
+                valueInputOption: 'RAW',
+                requestBody: { values: [[timestamp, keepId, actorName, auditRemark]] },
+            });
+            // Audit trail in Logs_DoNotEdit
+            await sheets.spreadsheets.values.append({
+                spreadsheetId: trackerSpreadsheetId,
+                range: 'Logs_DoNotEdit!A:E',
+                valueInputOption: 'RAW',
+                requestBody: {
+                    values: [[
+                        timestamp,
+                        actorName,
+                        'DUPLICATE_MERGE',
+                        auditRemark,
+                        JSON.stringify({ mergeId, keepId, shiftedCount: shiftedCompanies.length, idChanges: Array.from(idChanges.entries()) }),
+                    ]],
+                },
+            });
+        } catch (historyErr) {
+            console.warn('Thread_History/Logs update during merge failed:', historyErr);
+        }
+
+        // 6. Invalidate Cache
         cache.delete('sheet_data');
 
         return res.status(200).json({
