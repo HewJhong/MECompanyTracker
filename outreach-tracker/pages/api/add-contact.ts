@@ -21,7 +21,7 @@ export default async function handler(
     const email = session.user.email.toLowerCase().trim();
     const committeeUser = members.find(m => m.email.toLowerCase().trim() === email);
     const roleLower = committeeUser?.role?.toLowerCase() || '';
-    const canEditCompanies = committeeUser && (roleLower === 'admin' || roleLower === 'member' || roleLower === 'committee member');
+    const canEditCompanies = committeeUser && (roleLower === 'admin' || roleLower === 'superadmin' || roleLower === 'member' || roleLower === 'committee member');
     if (!canEditCompanies) {
         return res.status(403).json({ message: 'Not authorized to modify data' });
     }

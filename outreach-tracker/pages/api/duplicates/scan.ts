@@ -22,10 +22,10 @@ export default async function handler(
         const sheetName = sheet.properties?.title;
 
         // Fetch wide range to get relevant fields for comparison
-        // A: ID, B: Name, C: Status, F: PIC, J: Remarks
+        // A: ID, B: Name, C: Contact Status, D: Relationship Status, H: PIC, N: Remarks
         const response = await sheets.spreadsheets.values.get({
             spreadsheetId: trackerSpreadsheetId,
-            range: `${sheetName}!A2:J`,
+            range: `${sheetName}!A2:N`,
         });
         const rows = response.data.values || [];
 
@@ -81,9 +81,10 @@ export default async function handler(
             groups.get(normalizedName).push({
                 id,
                 name,
-                status: row[2] || '', // Column C
-                pic: row[5] || '',    // Column F
-                remarks: row[9] || '', // Column J
+                contactStatus: row[2] || '',      // Column C
+                relationshipStatus: row[3] || '',  // Column D
+                pic: row[7] || '',                 // Column H
+                remarks: row[13] || '',            // Column N
                 rowIndex: index + 2,
                 confidence: 1.0, // Exact string match after normalization
                 contacts: contactsMap.get(id) || [] // Attach contacts

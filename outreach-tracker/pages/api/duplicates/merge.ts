@@ -208,7 +208,7 @@ export default async function handler(
         }
 
         // 4. Update Tracker (Delete Row, Update Survivor, Update Shifted IDs)
-        const { status, pic, remarks } = strategy;
+        const { contactStatus, relationshipStatus, pic, remarks } = strategy;
 
         // We do this in one batchUpdate request to the tracker
         const trackerRequests: any[] = [
@@ -219,10 +219,10 @@ export default async function handler(
                         sheetId: trackerSheetId,
                         startRowIndex: keepRowIndex,
                         endRowIndex: keepRowIndex + 1,
-                        startColumnIndex: 2, // C: Status
+                        startColumnIndex: 2, // C: Contact Status
                         endColumnIndex: 3
                     },
-                    rows: [{ values: [{ userEnteredValue: { stringValue: status } }] }],
+                    rows: [{ values: [{ userEnteredValue: { stringValue: contactStatus || '' } }] }],
                     fields: 'userEnteredValue'
                 }
             },
@@ -232,8 +232,21 @@ export default async function handler(
                         sheetId: trackerSheetId,
                         startRowIndex: keepRowIndex,
                         endRowIndex: keepRowIndex + 1,
-                        startColumnIndex: 5, // F: PIC
-                        endColumnIndex: 6
+                        startColumnIndex: 3, // D: Relationship Status
+                        endColumnIndex: 4
+                    },
+                    rows: [{ values: [{ userEnteredValue: { stringValue: relationshipStatus || '' } }] }],
+                    fields: 'userEnteredValue'
+                }
+            },
+            {
+                updateCells: {
+                    range: {
+                        sheetId: trackerSheetId,
+                        startRowIndex: keepRowIndex,
+                        endRowIndex: keepRowIndex + 1,
+                        startColumnIndex: 7, // H: Assigned PIC
+                        endColumnIndex: 8
                     },
                     rows: [{ values: [{ userEnteredValue: { stringValue: pic } }] }],
                     fields: 'userEnteredValue'
@@ -245,8 +258,8 @@ export default async function handler(
                         sheetId: trackerSheetId,
                         startRowIndex: keepRowIndex,
                         endRowIndex: keepRowIndex + 1,
-                        startColumnIndex: 9, // J: Remarks
-                        endColumnIndex: 10
+                        startColumnIndex: 13, // N: Remarks
+                        endColumnIndex: 14
                     },
                     rows: [{ values: [{ userEnteredValue: { stringValue: remarks } }] }],
                     fields: 'userEnteredValue'

@@ -56,7 +56,7 @@ export default async function handler(
 
         if (committeeMember) {
             const roleLower = committeeMember.role?.toLowerCase() || '';
-            const isAdmin = roleLower === 'admin';
+            const isAdmin = roleLower === 'admin' || roleLower === 'superadmin';
             const canEditCompanies = isAdmin || roleLower === 'member' || roleLower === 'committee member';
 
             // User is in Committee_Members sheet

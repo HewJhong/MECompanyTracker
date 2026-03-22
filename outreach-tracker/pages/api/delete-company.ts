@@ -20,7 +20,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const email = session.user.email.toLowerCase().trim();
     const committeeUser = members.find(m => m.email.toLowerCase().trim() === email);
     const roleLower = committeeUser?.role?.toLowerCase() || '';
-    const canEdit = committeeUser && (roleLower === 'admin' || roleLower === 'member' || roleLower === 'committee member');
+    const canEdit = committeeUser && (roleLower === 'admin' || roleLower === 'superadmin' || roleLower === 'member' || roleLower === 'committee member');
     if (!canEdit) {
         return res.status(403).json({ message: 'Not authorized to delete companies' });
     }

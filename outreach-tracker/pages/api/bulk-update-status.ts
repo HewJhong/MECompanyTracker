@@ -5,7 +5,8 @@ import { getCommitteeMembers } from '../../lib/committee-members';
 import { getGoogleSheetsClient } from '../../lib/google-sheets';
 import { cache } from '../../lib/cache';
 
-const ALLOWED_STATUSES = ['To Contact', 'Contacted', 'To Follow Up', 'Interested', 'Registered', 'Rejected', 'No Reply'] as const;
+const CONTACT_STATUSES = ['To Contact', 'Contacted', 'To Follow Up', 'No Reply'] as const;
+const RELATIONSHIP_STATUSES = ['Interested', 'Registered', 'Rejected'] as const;
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
     if (req.method !== 'POST') {
@@ -21,19 +22,24 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         const members = await getCommitteeMembers();
         const userEmail = session.user.email.toLowerCase().trim();
         const user = members.find(m => m.email.toLowerCase().trim() === userEmail);
-        if (!user || user.role?.toLowerCase() !== 'admin') {
+        const roleLower = user?.role?.toLowerCase() || '';
+        if (!user || (roleLower !== 'admin' && roleLower !== 'superadmin')) {
             return res.status(403).json({ error: 'Admin access required' });
         }
 
-        const { companyIds, status } = req.body as { companyIds?: string[]; status?: string };
+        const { companyIds, field, value } = req.body as { companyIds?: string[]; field?: string; value?: string };
 
         if (!Array.isArray(companyIds) || companyIds.length === 0) {
             return res.status(400).json({ error: 'Invalid or empty companyIds array' });
         }
-        if (!status || typeof status !== 'string' || !ALLOWED_STATUSES.includes(status as typeof ALLOWED_STATUSES[number])) {
+        if (!field || (field !== 'contactStatus' && field !== 'relationshipStatus')) {
+            return res.status(400).json({ error: 'Invalid field. Must be "contactStatus" or "relationshipStatus"' });
+        }
+        const allowedValues = field === 'contactStatus' ? CONTACT_STATUSES : RELATIONSHIP_STATUSES;
+        if (!value || typeof value !== 'string' || !allowedValues.includes(value as never)) {
             return res.status(400).json({
-                error: 'Invalid status',
-                allowed: ALLOWED_STATUSES,
+                error: `Invalid value for ${field}`,
+                allowed: allowedValues,
             });
         }
 
@@ -62,14 +68,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         }
 
         const headers = rows[0].map((h: string) => String(h || '').toLowerCase().trim());
-        const statusColumnIndex = headers.findIndex((h: string) => h === 'status');
+        const targetHeader = field === 'contactStatus' ? 'contact status' : 'relationship status';
+        const statusColumnIndex = headers.findIndex((h: string) => h === targetHeader);
         const lastUpdatedColumnIndex = headers.findIndex((h: string) =>
             h === 'last updated' || h === 'last update' || h === 'updated'
         );
 
         if (statusColumnIndex === -1) {
             return res.status(500).json({
-                error: 'Status column not found',
+                error: `Column "${targetHeader}" not found`,
                 details: `Headers: ${headers.join(', ')}`,
             });
         }
@@ -78,13 +85,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         const updates: { range: string; values: string[][] }[] = [];
         const successfulIds: string[] = [];
 
-        for (const companyId of companyIds) {
+            for (const companyId of companyIds) {
             const rowIndex = rows.findIndex(row => row[0] === companyId);
             if (rowIndex > 0) {
                 const rowNum = rowIndex + 1;
                 updates.push({
                     range: `${safeSheetName}!${String.fromCharCode(65 + statusColumnIndex)}${rowNum}`,
-                    values: [[status]],
+                    values: [[value]],
                 });
                 if (lastUpdatedColumnIndex !== -1) {
                     updates.push({
@@ -121,7 +128,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                         timestamp,
                         id,
                         actorName,
-                        `Bulk status update to "${status}" (from All Companies)`,
+                        `Bulk ${field} update to "${value}" (from All Companies)`,
                     ]),
                 },
             });
@@ -139,7 +146,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                         timestamp,
                         actorName,
                         'BULK_UPDATE_STATUS',
-                        `Set status to "${status}" for ${successfulIds.length} companies`,
+                        `Set ${field} to "${value}" for ${successfulIds.length} companies`,
                         successfulIds.join('; '),
                     ]],
                 },

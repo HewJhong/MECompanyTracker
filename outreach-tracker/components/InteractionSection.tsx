@@ -7,7 +7,8 @@ import {
 } from '@heroicons/react/24/outline';
 
 interface InteractionSectionProps {
-    status: string;
+    contactStatus: string;
+    relationshipStatus: string;
     onLogOutreach: () => void;
     onLogCompanyReply: () => void;
     onLogOurReply: () => void;
@@ -23,7 +24,8 @@ interface InteractionSectionProps {
 }
 
 export default function InteractionSection({
-    status,
+    contactStatus,
+    relationshipStatus,
     onLogOutreach,
     onLogCompanyReply,
     onLogOurReply,
@@ -39,8 +41,8 @@ export default function InteractionSection({
 }: InteractionSectionProps) {
     const [pendingAction, setPendingAction] = useState<'outreach' | 'companyReply' | 'ourReply' | null>(null);
 
-    const isCompanyReplyVisible = status !== 'Rejected';
-    const isOurReplyVisible = ['Interested', 'Registered'].includes(status);
+    const isCompanyReplyVisible = relationshipStatus !== 'Rejected';
+    const isOurReplyVisible = ['Interested', 'Registered'].includes(relationshipStatus);
 
     // Adaptive Follow-up Logic
     const now = new Date();
@@ -52,7 +54,7 @@ export default function InteractionSection({
     const showFollowUpTrigger = isOurReplyVisible && isWaitingForCompanyReply && daysSinceOurLastMessage >= 3;
 
     const getActionTitle = () => {
-        if (pendingAction === 'outreach') return (status === 'Contacted' || status === 'No Reply' || showFollowUpTrigger) ? 'Log Follow Up' : 'Log Outreach';
+        if (pendingAction === 'outreach') return (contactStatus === 'Contacted' || contactStatus === 'No Reply' || showFollowUpTrigger) ? 'Log Follow Up' : 'Log Outreach';
         if (pendingAction === 'companyReply') return 'Log Company Reply';
         if (pendingAction === 'ourReply') return 'Log Our Reply';
         return '';
@@ -141,8 +143,8 @@ export default function InteractionSection({
                                         }`}
                                 >
                                     <ArrowPathIcon className="w-6 h-6" />
-                                    <span className="font-medium">{(status === 'Contacted' || status === 'No Reply' || showFollowUpTrigger) ? 'Log Follow Up' : 'Log Outreach'}</span>
-                                    <span className="text-xs opacity-75">{showFollowUpTrigger ? 'Ghosting recovery' : (status === 'Contacted' || status === 'No Reply' ? 'Follow-up contact' : 'We contacted them')}</span>
+                                    <span className="font-medium">{(contactStatus === 'Contacted' || contactStatus === 'No Reply' || showFollowUpTrigger) ? 'Log Follow Up' : 'Log Outreach'}</span>
+                                    <span className="text-xs opacity-75">{showFollowUpTrigger ? 'Ghosting recovery' : (contactStatus === 'Contacted' || contactStatus === 'No Reply' ? 'Follow-up contact' : 'We contacted them')}</span>
                                 </button>
                             ) : (
                                 <button

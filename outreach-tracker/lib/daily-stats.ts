@@ -11,45 +11,39 @@ export async function syncDailyStats(sheets: sheets_v4.Sheets, spreadsheetId: st
             return;
         }
 
-        // 2. Fetch the ID (A) and Status (C) to ensure we only count actual rows
+        // 2. Fetch ID (A), contactStatus (C), and relationshipStatus (D)
         const dataRange = await sheets.spreadsheets.values.get({
             spreadsheetId,
-            range: `${trackerSheetName}!A2:C`, // Skip header
+            range: `${trackerSheetName}!A2:D`, // Skip header
         });
 
         const rows = dataRange.data.values || [];
 
         // 3. Aggregate counts
-        let toContact = 0, contacted = 0, toFollowUp = 0, interested = 0, registered = 0, noReply = 0, rejected = 0;
-        let total = 0; // Active tracking total
+        // Contact status counts and relationship status counts are independent:
+        // a company contributes to one contact bucket AND one relationship bucket.
+        let toContact = 0, contacted = 0, toFollowUp = 0, noReply = 0;
+        let interested = 0, registered = 0, rejected = 0;
+        let total = 0;
 
         rows.forEach((row) => {
             // Only count if Company ID (row[0]) exists
             if (!row[0] || !row[0].trim()) return;
 
             total++;
-            // Status is in column C (index 2)
-            const rawStatus = row[2]?.trim() || 'To Contact';
 
-            // Canonicalize for matching (UI uses specific capitalization)
-            const lower = rawStatus.toLowerCase();
-            let status = 'To Contact'; // Default
+            // contactStatus is column C (index 2)
+            const rawContact = (row[2] || '').trim().toLowerCase();
+            if (rawContact === 'contacted') contacted++;
+            else if (rawContact === 'to follow up') toFollowUp++;
+            else if (rawContact === 'no reply') noReply++;
+            else toContact++; // blank or 'to contact' both count as To Contact
 
-            if (lower === 'contacted') status = 'Contacted';
-            else if (lower === 'to follow up') status = 'To Follow Up';
-            else if (lower === 'interested') status = 'Interested';
-            else if (lower === 'registered' || lower === 'completed') status = 'Registered';
-            else if (lower === 'no reply') status = 'No Reply';
-            else if (lower === 'rejected') status = 'Rejected';
-            else if (lower === 'to contact') status = 'To Contact';
-
-            if (status === 'To Contact') toContact++;
-            else if (status === 'Contacted') contacted++;
-            else if (status === 'To Follow Up') toFollowUp++;
-            else if (status === 'Interested') interested++;
-            else if (status === 'Registered') registered++;
-            else if (status === 'No Reply') noReply++;
-            else if (status === 'Rejected') rejected++;
+            // relationshipStatus is column D (index 3)
+            const rawRelationship = (row[3] || '').trim().toLowerCase();
+            if (rawRelationship === 'interested') interested++;
+            else if (rawRelationship === 'registered') registered++;
+            else if (rawRelationship === 'rejected') rejected++;
         });
 
         // Use Singapore timezone for local date string as user is in +08:00

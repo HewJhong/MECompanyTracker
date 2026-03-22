@@ -7,7 +7,8 @@ import ConfirmModal from './ConfirmModal';
 interface Company {
     id: string;
     name: string;
-    status: string;
+    contactStatus: string;
+    relationshipStatus: string;
     pic: string;
     remarks: string;
     // ... other fields if needed
@@ -32,7 +33,8 @@ interface DuplicateMergeModalProps {
 export default function DuplicateMergeModal({ isOpen, onClose, group, onMergeComplete }: DuplicateMergeModalProps) {
     const [survivorId, setSurvivorId] = useState<string>('');
     const [mergeStrategy, setMergeStrategy] = useState({
-        status: '',
+        contactStatus: '',
+        relationshipStatus: '',
         pic: '',
         remarks: ''
     });
@@ -52,7 +54,8 @@ export default function DuplicateMergeModal({ isOpen, onClose, group, onMergeCom
 
             // Default strategy: Prefer non-empty values, prioritize survivor
             setMergeStrategy({
-                status: first.status || second.status || 'To Contact',
+                contactStatus: first.contactStatus || second.contactStatus || 'To Contact',
+                relationshipStatus: first.relationshipStatus || second.relationshipStatus || '',
                 pic: first.pic || second.pic || '',
                 remarks: first.remarks && second.remarks ? `${first.remarks} | ${second.remarks}` : (first.remarks || second.remarks || '')
             });
@@ -179,21 +182,42 @@ export default function DuplicateMergeModal({ isOpen, onClose, group, onMergeCom
                                     <div className="space-y-6 border-t border-slate-200 pt-6">
                                         <h4 className="font-medium text-slate-900">Merge Strategy</h4>
 
-                                        {/* Status Conflict */}
+                                        {/* Contact Status Conflict */}
                                         <div className="grid grid-cols-12 gap-4 items-center">
-                                            <div className="col-span-3 text-sm font-medium text-slate-700">Status</div>
+                                            <div className="col-span-3 text-sm font-medium text-slate-700">Contact Status</div>
                                             <div className="col-span-9 flex gap-4">
                                                 {group.companies.map(c => (
                                                     <label key={c.id} className="flex items-center gap-2 cursor-pointer">
                                                         <input
                                                             type="radio"
-                                                            name="status"
-                                                            checked={mergeStrategy.status === c.status}
-                                                            onChange={() => setMergeStrategy(p => ({ ...p, status: c.status }))}
+                                                            name="contactStatus"
+                                                            checked={mergeStrategy.contactStatus === c.contactStatus}
+                                                            onChange={() => setMergeStrategy(p => ({ ...p, contactStatus: c.contactStatus }))}
                                                             className="text-purple-600 focus:ring-purple-500"
                                                         />
                                                         <span className="text-sm text-slate-600">
-                                                            {c.status} <span className="text-xs text-slate-400">({c.id})</span>
+                                                            {c.contactStatus || 'To Contact'} <span className="text-xs text-slate-400">({c.id})</span>
+                                                        </span>
+                                                    </label>
+                                                ))}
+                                            </div>
+                                        </div>
+
+                                        {/* Relationship Status Conflict */}
+                                        <div className="grid grid-cols-12 gap-4 items-center">
+                                            <div className="col-span-3 text-sm font-medium text-slate-700">Relationship Status</div>
+                                            <div className="col-span-9 flex gap-4">
+                                                {group.companies.map(c => (
+                                                    <label key={c.id} className="flex items-center gap-2 cursor-pointer">
+                                                        <input
+                                                            type="radio"
+                                                            name="relationshipStatus"
+                                                            checked={mergeStrategy.relationshipStatus === c.relationshipStatus}
+                                                            onChange={() => setMergeStrategy(p => ({ ...p, relationshipStatus: c.relationshipStatus }))}
+                                                            className="text-purple-600 focus:ring-purple-500"
+                                                        />
+                                                        <span className="text-sm text-slate-600">
+                                                            {c.relationshipStatus || '— None —'} <span className="text-xs text-slate-400">({c.id})</span>
                                                         </span>
                                                     </label>
                                                 ))}

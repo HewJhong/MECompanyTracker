@@ -22,7 +22,7 @@ export default async function handler(
     const email = session.user.email.toLowerCase().trim();
     const committeeUser = members.find(m => m.email.toLowerCase().trim() === email);
     const roleLower = committeeUser?.role?.toLowerCase() || '';
-    const canEditCompanies = committeeUser && (roleLower === 'admin' || roleLower === 'member' || roleLower === 'committee member');
+    const canEditCompanies = committeeUser && (roleLower === 'admin' || roleLower === 'superadmin' || roleLower === 'member' || roleLower === 'committee member');
     if (!canEditCompanies) {
         return res.status(403).json({ message: 'Not authorized to modify data' });
     }
@@ -63,18 +63,19 @@ export default async function handler(
 
         const TRACKER_MAP: Record<string, string> = {
             'companyName': 'B',
-            'status': 'C',
-            'channel': 'D',
-            'urgencyScore': 'E',
-            'previousResponse': 'F',
-            'assignedPic': 'G', // Changed from 'pic' to 'assignedPic'
-            'lastCompanyContact': 'H', // Added
-            'lastContact': 'I',
-            'followUpsCompleted': 'J',
-            'sponsorshipTier': 'K',
-            'daysAttending': 'L',
-            'remarks': 'M', // Changed from 'remark' to 'remarks'
-            'lastUpdate': 'N' // Changed from 'lastUpdated' to 'lastUpdate'
+            'contactStatus': 'C',
+            'relationshipStatus': 'D',
+            'channel': 'E',
+            'urgencyScore': 'F',
+            'previousResponse': 'G',
+            'assignedPic': 'H',
+            'lastCompanyContact': 'I',
+            'lastContact': 'J',
+            'followUpsCompleted': 'K',
+            'sponsorshipTier': 'L',
+            'daysAttending': 'M',
+            'remarks': 'N',
+            'lastUpdate': 'O'
         };
 
         trackerUpdates.push({
@@ -94,18 +95,18 @@ export default async function handler(
             }
         });
 
-        // Automatic "No Reply" transition logic - SKIP if status is being manually updated
-        // Uses last company contact (H) or last committee contact (I), whichever is more recent
+        // Automatic "No Reply" transition logic - SKIP if contactStatus is being manually updated
+        // Uses last company contact (I) or last committee contact (J), whichever is more recent
         let remarkText = remark;
-        if (!updates.status) {
+        if (!updates.contactStatus) {
             const currentDataRange = await sheets.spreadsheets.values.get({
                 spreadsheetId: spreadsheetId2,
-                range: `${trackerSheetName}!F${trackerRowIndex}:J${trackerRowIndex}`,
+                range: `${trackerSheetName}!G${trackerRowIndex}:K${trackerRowIndex}`,
             });
             const currentData = currentDataRange.data.values?.[0] || [];
-            const lastCompanyContact = currentData[2]; // H
-            const lastContact = currentData[3];         // I (committee contact)
-            const currentFollowUps = parseInt(updates.followUpsCompleted?.toString() || currentData[4]) || 0; // J
+            const lastCompanyContact = currentData[2]; // I
+            const lastContact = currentData[3];         // J (committee contact)
+            const currentFollowUps = parseInt(updates.followUpsCompleted?.toString() || currentData[4]) || 0; // K
 
             const tsCompany = lastCompanyContact ? new Date(lastCompanyContact).getTime() : 0;
             const tsCommittee = lastContact ? new Date(lastContact).getTime() : 0;
@@ -115,7 +116,7 @@ export default async function handler(
                 const daysSinceResponse = (Date.now() - lastContactDate) / (1000 * 60 * 60 * 24);
                 if (daysSinceResponse > 3) {
                     trackerUpdates.push({
-                        range: `${trackerSheetName}!${TRACKER_MAP['status']}${trackerRowIndex}`,
+                        range: `${trackerSheetName}!${TRACKER_MAP['contactStatus']}${trackerRowIndex}`,
                         values: [['No Reply']]
                     });
                     remarkText = remarkText || `[Auto] Marked as No Reply after 3 follow-ups with no response for ${Math.floor(daysSinceResponse)} days`;
@@ -212,19 +213,20 @@ export default async function handler(
         // Sync daily stats after any updates
         await syncDailyStats(sheets, spreadsheetId2);
 
-        // Verify: Fetch the updated row (A–N) to confirm save; lastUpdate is column N
+        // Verify: Fetch the updated row (A–O) to confirm save; lastUpdate is column O
         const verifyRange = await sheets.spreadsheets.values.get({
             spreadsheetId: spreadsheetId2,
-            range: `${trackerSheetName}!A${trackerRowIndex}:N${trackerRowIndex}`,
+            range: `${trackerSheetName}!A${trackerRowIndex}:O${trackerRowIndex}`,
         });
         const updatedRow = verifyRange.data.values?.[0] || [];
         const verifiedData = {
-            status: updatedRow[2],
-            followUpsCompleted: parseInt(updatedRow[9]) || 0,
-            lastContact: updatedRow[8],   // I: Last Committee Contact Date
-            lastUpdated: updatedRow[13],  // N: Last Update
-            remark: updatedRow[12],
-            daysAttending: updatedRow[11]
+            contactStatus: updatedRow[2],
+            relationshipStatus: updatedRow[3],
+            followUpsCompleted: parseInt(updatedRow[10]) || 0,
+            lastContact: updatedRow[9],   // J: Last Committee Contact Date
+            lastUpdated: updatedRow[14],  // O: Last Update
+            remark: updatedRow[13],
+            daysAttending: updatedRow[12]
         };
 
         res.status(200).json({

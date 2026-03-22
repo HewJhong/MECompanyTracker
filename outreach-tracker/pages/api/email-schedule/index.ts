@@ -38,7 +38,8 @@ async function requireAdmin(req: NextApiRequest, res: NextApiResponse): Promise<
     }
     const members = await getCommitteeMembers();
     const user = members.find(m => m.email.toLowerCase().trim() === session.user!.email!.toLowerCase().trim());
-    if (!user || user.role?.toLowerCase() !== 'admin') {
+    const roleLower = user?.role?.toLowerCase() || '';
+    if (!user || (roleLower !== 'admin' && roleLower !== 'superadmin')) {
         res.status(403).json({ error: 'Admin access required' });
         return null;
     }

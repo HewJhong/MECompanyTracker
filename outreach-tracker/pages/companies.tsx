@@ -17,7 +17,8 @@ import {
     ScheduleSettings,
 } from '../lib/schedule-calculator';
 
-const OUTREACH_STATUSES = ['To Contact', 'Contacted', 'To Follow Up', 'Interested', 'Registered', 'Rejected', 'No Reply'] as const;
+const CONTACT_STATUSES = ['To Contact', 'Contacted', 'To Follow Up', 'No Reply'] as const;
+const RELATIONSHIP_STATUSES = ['Interested', 'Registered', 'Rejected'] as const;
 
 const STORAGE_KEY_SELECTION_RESTORE = 'companies_selection_restore';
 const STORAGE_KEY_SELECTION = 'companies_selection';
@@ -27,7 +28,8 @@ interface Company {
     id: string;
     companyName: string;
     name?: string;
-    status: string;
+    contactStatus: string;
+    relationshipStatus: string;
     isFlagged: boolean;
     contacts: any[];
     lastUpdated?: string;
@@ -74,8 +76,9 @@ export default function CompaniesPage() {
     const [isSyncing, setIsSyncing] = useState(false);
 
     // Bulk set status
-    const [selectedStatus, setSelectedStatus] = useState('');
-    const [pendingStatusUpdate, setPendingStatusUpdate] = useState<{ status: string } | null>(null);
+    const [selectedContactStatus, setSelectedContactStatus] = useState('');
+    const [selectedRelationshipStatus, setSelectedRelationshipStatus] = useState('');
+    const [pendingStatusUpdate, setPendingStatusUpdate] = useState<{ field: 'contactStatus' | 'relationshipStatus'; value: string } | null>(null);
     const [showStatusConfirmModal, setShowStatusConfirmModal] = useState(false);
     const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
 
@@ -246,7 +249,8 @@ export default function CompaniesPage() {
     const transformedCompanies = data.map(company => ({
         id: company.id,
         name: company.companyName || company.name || '',
-        status: company.status,
+        contactStatus: company.contactStatus || 'To Contact',
+        relationshipStatus: company.relationshipStatus || '',
         assignedTo: company.pic || 'Unassigned',
         contact: company.contacts?.map(c => {
             const name = c.name;
@@ -401,29 +405,30 @@ export default function CompaniesPage() {
         }
     };
 
-    const handleBulkSetStatus = (status: string) => {
-        if (!status || selectedCompanies.size === 0 || !user?.isAdmin) return;
-        setPendingStatusUpdate({ status });
+    const handleBulkSetStatus = (field: 'contactStatus' | 'relationshipStatus', value: string) => {
+        if (!value || selectedCompanies.size === 0 || !user?.isAdmin) return;
+        setPendingStatusUpdate({ field, value });
         setShowStatusConfirmModal(true);
     };
 
     const confirmBulkStatusUpdate = async () => {
         if (!pendingStatusUpdate || selectedCompanies.size === 0) return;
 
-        const { status } = pendingStatusUpdate;
+        const { field, value } = pendingStatusUpdate;
         const companiesToUpdate = Array.from(selectedCompanies);
         const count = companiesToUpdate.length;
 
         setData(prevData => prevData.map(c =>
-            selectedCompanies.has(c.id) ? { ...c, status, lastUpdated: new Date().toISOString() } : c
+            selectedCompanies.has(c.id) ? { ...c, [field]: value, lastUpdated: new Date().toISOString() } : c
         ));
-        setSuccessMessage(`Status set to "${status}" for ${count} ${count === 1 ? 'company' : 'companies'}`);
+        setSuccessMessage(`${field === 'contactStatus' ? 'Contact' : 'Relationship'} status set to "${value}" for ${count} ${count === 1 ? 'company' : 'companies'}`);
         setShowSuccessModal(true);
         setSelectedCompanies(new Set());
         setLastSelectedIndex(null);
         setShowStatusConfirmModal(false);
         setPendingStatusUpdate(null);
-        setSelectedStatus('');
+        setSelectedContactStatus('');
+        setSelectedRelationshipStatus('');
 
         const taskId = addTask(`Updating status for ${count} ${count === 1 ? 'company' : 'companies'}...`);
         setIsUpdatingStatus(true);
@@ -431,7 +436,7 @@ export default function CompaniesPage() {
             const response = await fetch('/api/bulk-update-status', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ companyIds: companiesToUpdate, status }),
+                body: JSON.stringify({ companyIds: companiesToUpdate, field, value }),
             });
 
             if (!response.ok) {
@@ -577,26 +582,48 @@ export default function CompaniesPage() {
 
                             <div className="h-8 w-px bg-blue-400 hidden sm:block"></div>
 
-                            {/* Bulk set outreach status */}
+                            {/* Bulk set contact status */}
                             <select
-                                className="flex-1 min-w-[140px] px-3 py-2 bg-white text-slate-900 rounded-lg font-medium border-2 border-blue-300 focus:outline-none focus:ring-2 focus:ring-blue-400"
-                                value={selectedStatus}
-                                onChange={(e) => setSelectedStatus(e.target.value)}
+                                className="flex-1 min-w-[130px] px-3 py-2 bg-white text-slate-900 rounded-lg font-medium border-2 border-blue-300 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                                value={selectedContactStatus}
+                                onChange={(e) => setSelectedContactStatus(e.target.value)}
                             >
-                                <option value="">Set status...</option>
-                                {OUTREACH_STATUSES.map(s => (
+                                <option value="">Contact status…</option>
+                                {CONTACT_STATUSES.map(s => (
                                     <option key={s} value={s}>{s}</option>
                                 ))}
                             </select>
                             <button
-                                onClick={() => handleBulkSetStatus(selectedStatus)}
-                                disabled={!selectedStatus}
-                                className={`px-4 py-2 rounded-lg font-bold transition-all transform active:scale-95 shrink-0 ${selectedStatus
+                                onClick={() => handleBulkSetStatus('contactStatus', selectedContactStatus)}
+                                disabled={!selectedContactStatus}
+                                className={`px-4 py-2 rounded-lg font-bold transition-all transform active:scale-95 shrink-0 ${selectedContactStatus
                                     ? 'bg-white text-blue-600 hover:bg-blue-50 shadow-md'
                                     : 'bg-blue-800 text-blue-300 cursor-not-allowed'
                                     }`}
                             >
-                                Set status
+                                Set
+                            </button>
+
+                            {/* Bulk set relationship status */}
+                            <select
+                                className="flex-1 min-w-[130px] px-3 py-2 bg-white text-slate-900 rounded-lg font-medium border-2 border-purple-300 focus:outline-none focus:ring-2 focus:ring-purple-400"
+                                value={selectedRelationshipStatus}
+                                onChange={(e) => setSelectedRelationshipStatus(e.target.value)}
+                            >
+                                <option value="">Relationship…</option>
+                                {RELATIONSHIP_STATUSES.map(s => (
+                                    <option key={s} value={s}>{s}</option>
+                                ))}
+                            </select>
+                            <button
+                                onClick={() => handleBulkSetStatus('relationshipStatus', selectedRelationshipStatus)}
+                                disabled={!selectedRelationshipStatus}
+                                className={`px-4 py-2 rounded-lg font-bold transition-all transform active:scale-95 shrink-0 ${selectedRelationshipStatus
+                                    ? 'bg-white text-purple-600 hover:bg-purple-50 shadow-md'
+                                    : 'bg-blue-800 text-blue-300 cursor-not-allowed'
+                                    }`}
+                            >
+                                Set
                             </button>
 
                             <div className="h-8 w-px bg-blue-400 hidden sm:block"></div>
@@ -607,7 +634,8 @@ export default function CompaniesPage() {
                                     setLastSelectedIndex(null);
                                     setScheduleDate('');
                                     setScheduleStartTime('');
-                                    setSelectedStatus('');
+                                    setSelectedContactStatus('');
+                                    setSelectedRelationshipStatus('');
                                 }}
                                 className="px-3 py-2 bg-blue-500 hover:bg-blue-400 rounded-lg font-medium transition-colors flex items-center gap-1.5 shrink-0"
                             >
@@ -738,7 +766,7 @@ export default function CompaniesPage() {
                 onConfirm={confirmBulkStatusUpdate}
                 title="Confirm bulk status update"
                 message={pendingStatusUpdate
-                    ? `Set outreach status to "${pendingStatusUpdate.status}" for ${selectedCompanies.size} ${selectedCompanies.size === 1 ? 'company' : 'companies'}?`
+                    ? `Set ${pendingStatusUpdate.field === 'contactStatus' ? 'contact' : 'relationship'} status to "${pendingStatusUpdate.value}" for ${selectedCompanies.size} ${selectedCompanies.size === 1 ? 'company' : 'companies'}?`
                     : ''
                 }
                 confirmText="Set status"

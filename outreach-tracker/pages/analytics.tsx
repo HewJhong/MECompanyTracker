@@ -153,7 +153,8 @@ function OutreachPerformanceLineChart({ timeline }: { timeline: { date: string; 
 interface Company {
     id: string;
     companyName: string;
-    status: string;
+    contactStatus: string;
+    relationshipStatus: string;
     isFlagged: boolean;
     lastUpdated?: string;
     pic?: string;
@@ -217,11 +218,11 @@ export default function Analytics() {
         if (data.length === 0) return null;
 
         const total = data.length;
-        const reached = data.filter(c => !['To Contact', 'Rejected'].includes(c.status)).length;
-        const registered = data.filter(c => c.status === 'Registered').length;
-        const interested = data.filter(c => c.status === 'Interested').length;
-        const contacted = data.filter(c => c.status === 'Contacted').length;
-        const noReply = data.filter(c => c.status === 'No Reply').length;
+        const reached = data.filter(c => c.contactStatus !== 'To Contact').length;
+        const registered = data.filter(c => c.relationshipStatus === 'Registered').length;
+        const interested = data.filter(c => c.relationshipStatus === 'Interested').length;
+        const contacted = data.filter(c => c.contactStatus === 'Contacted').length;
+        const noReply = data.filter(c => c.contactStatus === 'No Reply').length;
         const totalFollowUps = data.reduce((acc, c) => acc + (c.followUpsCompleted || 0), 0);
 
         // Distributions
@@ -231,7 +232,7 @@ export default function Analytics() {
 
         data.forEach(c => {
             // Sponsorship (Only for registered)
-            if (c.status === 'Registered' && c.sponsorshipTier) {
+            if (c.relationshipStatus === 'Registered' && c.sponsorshipTier) {
                 sponsorshipDist[c.sponsorshipTier] = (sponsorshipDist[c.sponsorshipTier] || 0) + 1;
             }
 
@@ -263,8 +264,8 @@ export default function Analytics() {
             }
             const s = memberStats.get(pic)!;
             s.assigned++;
-            if (c.status === 'Registered') s.registered++;
-            if (!['To Contact'].includes(c.status)) s.contacted++;
+            if (c.relationshipStatus === 'Registered') s.registered++;
+            if (c.contactStatus !== 'To Contact') s.contacted++;
         });
 
         const leaderboard = Array.from(memberStats.entries())

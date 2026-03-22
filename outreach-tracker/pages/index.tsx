@@ -18,7 +18,8 @@ interface Company {
     id: string;
     companyName: string;
     name?: string;
-    status: string;
+    contactStatus: string;
+    relationshipStatus: string;
     isFlagged: boolean;
     contacts: any[];
     lastUpdated?: string;
@@ -192,12 +193,12 @@ export default function Home() {
         if (data.length === 0) return null;
 
         const total = data.length;
-        const reached = data.filter(c => !['To Contact', 'Rejected'].includes(c.status)).length;
-        const registered = data.filter(c => c.status === 'Registered').length;
-        const interested = data.filter(c => c.status === 'Interested').length;
-        const contacted = data.filter(c => c.status === 'Contacted').length;
-        const noReply = data.filter(c => c.status === 'No Reply').length;
-        const rejected = data.filter(c => c.status === 'Rejected').length;
+        const reached = data.filter(c => c.contactStatus !== 'To Contact').length;
+        const registered = data.filter(c => c.relationshipStatus === 'Registered').length;
+        const interested = data.filter(c => c.relationshipStatus === 'Interested').length;
+        const contacted = data.filter(c => c.contactStatus === 'Contacted').length;
+        const noReply = data.filter(c => c.contactStatus === 'No Reply').length;
+        const rejected = data.filter(c => c.relationshipStatus === 'Rejected').length;
         const totalFollowUps = data.reduce((acc, c) => acc + (c.followUpsCompleted || 0), 0);
         const flaggedCount = data.filter(c => c.isFlagged).length;
 
@@ -209,7 +210,7 @@ export default function Home() {
         }).length;
 
         const companyStalledCount = data.filter(c => {
-            if (c.status !== 'Contacted' || !c.lastCompanyActivity) return false;
+            if (c.contactStatus !== 'Contacted' || !c.lastCompanyActivity) return false;
             const daysSinceActivity = (Date.now() - new Date(c.lastCompanyActivity).getTime()) / (1000 * 60 * 60 * 24);
             return daysSinceActivity > 7;
         }).length;
@@ -221,7 +222,7 @@ export default function Home() {
         const dayTierBreakdown: Record<string, Record<string, number>> = {};
 
         data.forEach(c => {
-            if (c.status === 'Registered' && c.sponsorshipTier) {
+            if (c.relationshipStatus === 'Registered' && c.sponsorshipTier) {
                 sponsorshipDist[c.sponsorshipTier] = (sponsorshipDist[c.sponsorshipTier] || 0) + 1;
             }
             if (c.discipline) {
@@ -235,7 +236,7 @@ export default function Home() {
                     const trimmed = d.trim();
                     if (trimmed) {
                         dayDist[trimmed] = (dayDist[trimmed] || 0) + 1;
-                        if (c.status === 'Registered' && c.sponsorshipTier) {
+                        if (c.relationshipStatus === 'Registered' && c.sponsorshipTier) {
                             if (!dayTierBreakdown[trimmed]) dayTierBreakdown[trimmed] = {};
                             dayTierBreakdown[trimmed][c.sponsorshipTier] = (dayTierBreakdown[trimmed][c.sponsorshipTier] || 0) + 1;
                         }
@@ -254,8 +255,8 @@ export default function Home() {
             const s = memberStats.get(pic)!;
             s.assigned++;
             s.followUps += (c.followUpsCompleted || 0);
-            if (c.status === 'Registered') s.registered++;
-            if (!['To Contact'].includes(c.status)) s.contacted++;
+            if (c.relationshipStatus === 'Registered') s.registered++;
+            if (c.contactStatus !== 'To Contact') s.contacted++;
         });
 
         const leaderboard = Array.from(memberStats.entries())

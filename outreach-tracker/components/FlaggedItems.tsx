@@ -5,7 +5,8 @@ import { ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 interface FlaggedCompany {
     id: string;
     name: string;
-    status: string;
+    contactStatus: string;
+    relationshipStatus: string;
     assignedTo: string;
     reason?: string;
     flaggedDate: string;
@@ -44,16 +45,23 @@ export default function FlaggedItems({ companies, onCompanyClick }: FlaggedItems
         return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
     };
 
-    const getStatusColor = (status: string) => {
+    const getContactStatusColor = (s: string) => {
         const colors: Record<string, string> = {
             'To Contact': 'bg-slate-100 text-slate-700',
             'Contacted': 'bg-blue-100 text-blue-700',
+            'To Follow Up': 'bg-amber-100 text-amber-700',
+            'No Reply': 'bg-gray-100 text-gray-500',
+        };
+        return colors[s] || 'bg-slate-100 text-slate-700';
+    };
+
+    const getRelationshipStatusColor = (s: string) => {
+        const colors: Record<string, string> = {
             'Interested': 'bg-purple-100 text-purple-700',
             'Registered': 'bg-green-100 text-green-700',
             'Rejected': 'bg-red-100 text-red-700',
-            'No Reply': 'bg-gray-100 text-gray-500',
         };
-        return colors[status] || 'bg-slate-100 text-slate-700';
+        return colors[s] || '';
     };
 
     return (
@@ -97,9 +105,14 @@ export default function FlaggedItems({ companies, onCompanyClick }: FlaggedItems
                                 <div className="flex-1 min-w-0">
                                     <h4 className="font-medium text-slate-900 truncate">{company.name}</h4>
                                     <div className="flex items-center gap-2 mt-1 flex-wrap">
-                                        <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${getStatusColor(company.status)}`}>
-                                            {company.status}
+                                        <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${getContactStatusColor(company.contactStatus)}`}>
+                                            {company.contactStatus || 'To Contact'}
                                         </span>
+                                        {company.relationshipStatus && (
+                                            <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${getRelationshipStatusColor(company.relationshipStatus)}`}>
+                                                {company.relationshipStatus}
+                                            </span>
+                                        )}
                                         <span className="text-xs text-slate-500">•</span>
                                         <span className="text-xs text-slate-600">Assigned to {company.assignedTo}</span>
                                     </div>

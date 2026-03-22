@@ -54,7 +54,7 @@ export default async function handler(
         console.log(">>> [API DATA] Tracker Rows...");
         const trackerResponse = await sheets.spreadsheets.values.get({
             spreadsheetId: trackerSpreadsheetId,
-            range: `${trackerSheetName}!A2:N`,
+            range: `${trackerSheetName}!A2:O`,
         });
         const trackerRows = trackerResponse.data.values || [];
 
@@ -84,17 +84,19 @@ export default async function handler(
         try {
             const statsResponse = await sheets.spreadsheets.values.get({
                 spreadsheetId: trackerSpreadsheetId,
-                range: `Daily_Stats!A2:H`,
+                // Daily_Stats columns: Date, Total, To Contact, Contacted, To Follow Up, Interested, Registered, No Reply, Rejected
+                range: `Daily_Stats!A2:I`,
             });
             dailyStats = (statsResponse.data.values || []).map(row => ({
                 date: row[0],
-                total: parseInt(row[1]) || 0,
-                toContact: parseInt(row[2]) || 0,
-                contacted: parseInt(row[3]) || 0,
-                interested: parseInt(row[4]) || 0,
-                registered: parseInt(row[5]) || 0,
-                noReply: parseInt(row[6]) || 0,
-                rejected: parseInt(row[7]) || 0,
+                total: parseInt(row[1], 10) || 0,
+                toContact: parseInt(row[2], 10) || 0,
+                contacted: parseInt(row[3], 10) || 0,
+                toFollowUp: parseInt(row[4], 10) || 0,
+                interested: parseInt(row[5], 10) || 0,
+                registered: parseInt(row[6], 10) || 0,
+                noReply: parseInt(row[7], 10) || 0,
+                rejected: parseInt(row[8], 10) || 0,
             }));
         } catch (e) {
             console.warn("Daily Stats fetch failed, sheet might not exist yet");
@@ -108,18 +110,19 @@ export default async function handler(
             trackerMap.set(row[0], {
                 companyId: row[0],
                 companyName: row[1],
-                status: row[2] || 'To Contact',
-                channel: row[3] || '',
-                urgencyScore: parseInt(row[4]) || 0,
-                previousResponse: row[5],
-                assignedPic: row[6],
-                lastCompanyContact: row[7],
-                lastContact: row[8],
-                followUpsCompleted: parseInt(row[9]) || 0,
-                sponsorshipTier: row[10] || '',
-                daysAttending: row[11] || '',
-                remarks: row[12] || '',
-                lastUpdate: row[13]
+                contactStatus: row[2] || 'To Contact',
+                relationshipStatus: row[3] || '',
+                channel: row[4] || '',
+                urgencyScore: parseInt(row[5]) || 0,
+                previousResponse: row[6],
+                assignedPic: row[7],
+                lastCompanyContact: row[8],
+                lastContact: row[9],
+                followUpsCompleted: parseInt(row[10]) || 0,
+                sponsorshipTier: row[11] || '',
+                daysAttending: row[12] || '',
+                remarks: row[13] || '',
+                lastUpdate: row[14]
             });
         });
 
@@ -132,7 +135,8 @@ export default async function handler(
                 companyMap.set(id, {
                     id,
                     companyName: t?.companyName || row[1] || 'Unknown',
-                    status: t?.status || 'To Contact',
+                    contactStatus: t?.contactStatus || 'To Contact',
+                    relationshipStatus: t?.relationshipStatus || '',
                     channel: t?.channel || '',
                     urgencyScore: t?.urgencyScore || 0,
                     pic: t?.assignedPic || 'Unassigned',
