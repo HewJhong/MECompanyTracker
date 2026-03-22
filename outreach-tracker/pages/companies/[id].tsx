@@ -1372,7 +1372,7 @@ export default function CompanyDetailPage() {
                 const data = await res.json().catch(() => ({}));
                 throw new Error(data.message || 'Delete failed');
             }
-            completeTask(taskId, 'Company deleted');
+            completeTask(taskId, 'Company archived');
             setShowConfirmDeleteCompanyModal(false);
             router.push('/companies');
         } catch (err) {
@@ -2205,19 +2205,19 @@ export default function CompanyDetailPage() {
                                 </div>
                             )}
 
-                            {/* Danger zone: Delete company — admin only */}
+                            {/* Danger zone: Archive company — admin only */}
                             {user?.isAdmin && (
                                 <div className="pt-6 mt-6 border-t border-red-200">
                                     <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
                                         <h4 className="text-sm font-semibold text-red-800 mb-1">Danger zone</h4>
-                                        <p className="text-xs text-red-700 mb-3">Permanently remove this company from the tracker and database. This cannot be undone.</p>
+                                        <p className="text-xs text-red-700 mb-3">Archive this company to remove it from the active list. You can restore it later from Settings → Archived Companies.</p>
                                         <button
                                             type="button"
                                             onClick={() => setShowConfirmDeleteCompanyModal(true)}
                                             className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors"
                                         >
                                             <TrashIcon className="w-4 h-4" />
-                                            Delete company
+                                            Archive company
                                         </button>
                                     </div>
                                 </div>
@@ -2589,14 +2589,14 @@ export default function CompanyDetailPage() {
                 isLoading={isSettingSchedule}
             />
 
-            {/* Delete Company Confirmation Modal */}
+            {/* Archive Company Confirmation Modal */}
             <ConfirmModal
                 isOpen={showConfirmDeleteCompanyModal}
                 onClose={() => !isDeletingCompany && setShowConfirmDeleteCompanyModal(false)}
                 onConfirm={confirmDeleteCompany}
-                title="Delete company"
-                message={`Are you sure you want to permanently delete ${company?.companyName || company?.name || company?.id}? This will remove the company from the tracker and database and cannot be undone.`}
-                confirmText="Delete company"
+                title="Archive company"
+                message={`Archive ${company?.companyName || company?.name || company?.id}? The company will be removed from the active list but can be restored later from Settings → Archived Companies.`}
+                confirmText="Archive"
                 cancelText="Cancel"
                 variant="danger"
                 isLoading={isDeletingCompany}

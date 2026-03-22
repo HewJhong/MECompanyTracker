@@ -115,6 +115,20 @@ export async function requireEffectiveAdmin(req: NextApiRequest, res: NextApiRes
     return ctx;
 }
 
+export async function requireSuperAdmin(req: NextApiRequest, res: NextApiResponse) {
+    const ctx = await requireAuthzContext(req, res);
+    if (!ctx) return null;
+    if (ctx.isImpersonating) {
+        res.status(403).json({ error: 'Superadmin features require stopping impersonation' });
+        return null;
+    }
+    if (!ctx.realMember || !ctx.isRealSuperAdmin) {
+        res.status(403).json({ error: 'Superadmin access required' });
+        return null;
+    }
+    return ctx;
+}
+
 export async function requireEffectiveCanEditCompanies(req: NextApiRequest, res: NextApiResponse) {
     const ctx = await requireAuthzContext(req, res);
     if (!ctx) return null;

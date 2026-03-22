@@ -11,15 +11,15 @@ export async function syncDailyStats(sheets: sheets_v4.Sheets, spreadsheetId: st
             return;
         }
 
-        // 2. Fetch ID (A), contactStatus (C), and relationshipStatus (D)
+        // 2. Fetch ID (A), contactStatus (C), relationshipStatus (D), Deleted (P)
         const dataRange = await sheets.spreadsheets.values.get({
             spreadsheetId,
-            range: `${trackerSheetName}!A2:D`, // Skip header
+            range: `${trackerSheetName}!A2:P`, // Skip header; P = Deleted for soft delete
         });
 
         const rows = dataRange.data.values || [];
 
-        // 3. Aggregate counts
+        // 3. Aggregate counts (exclude soft-deleted companies)
         // Contact status counts and relationship status counts are independent:
         // a company contributes to one contact bucket AND one relationship bucket.
         let toContact = 0, contacted = 0, toFollowUp = 0, noReply = 0;
@@ -29,6 +29,9 @@ export async function syncDailyStats(sheets: sheets_v4.Sheets, spreadsheetId: st
         rows.forEach((row) => {
             // Only count if Company ID (row[0]) exists
             if (!row[0] || !row[0].trim()) return;
+            // Exclude soft-deleted companies
+            const deleted = (row[15] || '').toString().trim().toUpperCase() === 'Y';
+            if (deleted) return;
 
             total++;
 

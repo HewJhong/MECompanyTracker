@@ -12,6 +12,8 @@ import {
     ArrowRightIcon,
     XMarkIcon,
     AdjustmentsHorizontalIcon,
+    ArchiveBoxIcon,
+    ArrowPathIcon,
 } from '@heroicons/react/24/solid';
 import { useCurrentUser } from '../contexts/CurrentUserContext';
 import DuplicateMergeModal from '../components/DuplicateMergeModal';
@@ -21,14 +23,18 @@ function SettingsContent() {
     const router = useRouter();
     const { user, realUser } = useCurrentUser();
     const isSuperAdmin = realUser?.isSuperAdmin === true;
-    const [activeTab, setActiveTab] = useState<'profile' | 'notifications' | 'security' | 'appearance' | 'limits'>('profile');
+    const [activeTab, setActiveTab] = useState<'profile' | 'notifications' | 'security' | 'appearance' | 'limits' | 'archived'>('profile');
 
     useEffect(() => {
         const tab = router.query.tab as string | undefined;
-        if (tab && ['profile', 'notifications', 'security', 'appearance', 'limits'].includes(tab)) {
-            setActiveTab(tab as typeof activeTab);
+        if (tab && ['profile', 'notifications', 'security', 'appearance', 'limits', 'archived'].includes(tab)) {
+            if (tab === 'archived' && realUser && !realUser.isSuperAdmin) {
+                setActiveTab('profile');
+            } else {
+                setActiveTab(tab as typeof activeTab);
+            }
         }
-    }, [router.query.tab]);
+    }, [router.query.tab, realUser]);
     const [saving, setSaving] = useState(false);
     const [saved, setSaved] = useState(false);
 
@@ -81,6 +87,12 @@ function SettingsContent() {
     const [savingLimits, setSavingLimits] = useState(false);
     const [limitsResult, setLimitsResult] = useState<{ success: boolean; message: string } | null>(null);
 
+    // Archived companies (soft-deleted)
+    const [deletedCompanies, setDeletedCompanies] = useState<Array<{ id: string; name: string }>>([]);
+    const [loadingDeleted, setLoadingDeleted] = useState(false);
+    const [restoringId, setRestoringId] = useState<string | null>(null);
+    const [archivedResult, setArchivedResult] = useState<{ success: boolean; message: string } | null>(null);
+
     const [profile, setProfile] = useState({
         name: '',
         email: '',
@@ -119,6 +131,54 @@ function SettingsContent() {
             fetchLimits();
         }
     }, [activeTab, limits.length]);
+
+    // Fetch archived companies when tab becomes active
+    useEffect(() => {
+        if (activeTab === 'archived') {
+            const fetchDeleted = async () => {
+                setLoadingDeleted(true);
+                setArchivedResult(null);
+                try {
+                    const res = await fetch('/api/deleted-companies');
+                    const data = await res.json();
+                    if (res.ok && data.deleted) {
+                        setDeletedCompanies(data.deleted);
+                    } else {
+                        setArchivedResult({ success: false, message: data.message || 'Failed to fetch archived companies.' });
+                    }
+                } catch (error) {
+                    setArchivedResult({ success: false, message: 'An error occurred.' });
+                } finally {
+                    setLoadingDeleted(false);
+                }
+            };
+            fetchDeleted();
+        }
+    }, [activeTab]);
+
+    const handleRestoreCompany = async (companyId: string) => {
+        setRestoringId(companyId);
+        setArchivedResult(null);
+        try {
+            const res = await fetch('/api/restore-company', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ companyId, user: user?.name || user?.email }),
+            });
+            const data = await res.json();
+            if (data.success) {
+                setDeletedCompanies(prev => prev.filter(c => c.id !== companyId));
+                setArchivedResult({ success: true, message: `Restored ${companyId}` });
+                setTimeout(() => setArchivedResult(null), 3000);
+            } else {
+                setArchivedResult({ success: false, message: data.message || 'Restore failed.' });
+            }
+        } catch (error) {
+            setArchivedResult({ success: false, message: 'An error occurred.' });
+        } finally {
+            setRestoringId(null);
+        }
+    };
 
     // ... (rest of state initializers unchanged) ...
     // Notification settings
@@ -418,13 +478,15 @@ function SettingsContent() {
         }
     };
 
-    const tabs = [
+    const allTabs = [
         { id: 'profile', label: 'Profile', icon: UserCircleIcon },
         { id: 'notifications', label: 'Notifications', icon: BellIcon },
         { id: 'security', label: 'Security', icon: ShieldCheckIcon },
         { id: 'appearance', label: 'Appearance', icon: PaintBrushIcon },
-        { id: 'limits', label: 'Sponsorship Limits', icon: AdjustmentsHorizontalIcon }
+        { id: 'limits', label: 'Sponsorship Limits', icon: AdjustmentsHorizontalIcon },
+        { id: 'archived', label: 'Archived Companies', icon: ArchiveBoxIcon }
     ];
+    const tabs = realUser?.isSuperAdmin ? allTabs : allTabs.filter(t => t.id !== 'archived');
 
     return (
         <Layout title="Settings | Outreach Tracker">
@@ -772,8 +834,58 @@ function SettingsContent() {
                             </div>
                         )}
 
+                        {/* Archived Companies Tab */}
+                        {activeTab === 'archived' && (
+                            <div className="p-6 space-y-6">
+                                <div>
+                                    <h2 className="text-xl font-semibold text-slate-900 mb-1">Archived Companies</h2>
+                                    <p className="text-sm text-slate-600">Companies removed from the active list can be restored here.</p>
+                                </div>
+
+                                {archivedResult && (
+                                    <div className={`p-4 rounded-lg text-sm ${archivedResult.success ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+                                        {archivedResult.message}
+                                    </div>
+                                )}
+
+                                {loadingDeleted ? (
+                                    <div className="flex items-center gap-2 text-slate-600">
+                                        <div className="animate-spin rounded-full h-4 w-4 border-2 border-slate-300 border-t-blue-600"></div>
+                                        <span>Loading archived companies...</span>
+                                    </div>
+                                ) : deletedCompanies.length === 0 ? (
+                                    <div className="p-6 bg-slate-50 rounded-lg text-center text-slate-600">
+                                        <ArchiveBoxIcon className="w-12 h-12 mx-auto mb-2 opacity-50" />
+                                        <p>No archived companies</p>
+                                    </div>
+                                ) : (
+                                    <ul className="divide-y divide-slate-200 border border-slate-200 rounded-lg overflow-hidden">
+                                        {deletedCompanies.map((c) => (
+                                            <li key={c.id} className="flex items-center justify-between px-4 py-3 bg-white hover:bg-slate-50">
+                                                <span className="font-medium text-slate-900">{c.id}</span>
+                                                <span className="text-slate-600 flex-1 mx-4 truncate">{c.name || '—'}</span>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleRestoreCompany(c.id)}
+                                                    disabled={restoringId === c.id}
+                                                    className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-blue-700 bg-blue-50 rounded-lg hover:bg-blue-100 disabled:opacity-50"
+                                                >
+                                                    {restoringId === c.id ? (
+                                                        <div className="animate-spin rounded-full h-4 w-4 border-2 border-blue-300 border-t-blue-600"></div>
+                                                    ) : (
+                                                        <ArrowPathIcon className="w-4 h-4" />
+                                                    )}
+                                                    Restore
+                                                </button>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                )}
+                            </div>
+                        )}
+
                         {/* Save Button (Hide for Limits tab as it has its own save mechanism) */}
-                        {activeTab !== 'limits' && (
+                        {activeTab !== 'limits' && activeTab !== 'archived' && (
                             <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-3">
                                 {saved && (
                                     <div className="flex items-center gap-2 text-green-700">

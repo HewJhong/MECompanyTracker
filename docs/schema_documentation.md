@@ -31,6 +31,7 @@ Both sheets are linked via **Company ID** (format: ME-0001, ME-0002, etc.)
 | L | 11 | Reference | String | Lecturer/referral name |
 | M | 12 | Remarks | String | Contact-specific or general notes |
 | N | 13 | Is_Active | Boolean | TRUE/FALSE for active contact (hidden, drives conditional formatting) |
+| P | 15 | Deleted | Y/empty | Soft-delete flag: "Y" = archived (synced from Tracker), empty = active |
 
 **Notes:**
 - Multiple rows can have the same Company ID (one per contact)
@@ -57,9 +58,11 @@ Both sheets are linked via **Company ID** (format: ME-0001, ME-0002, etc.)
 | I | 8 | Sponsorship Tier | String | Official Partners, Gold, Silver, Bronze |
 | J | 9 | Remarks | String | Company-level outreach notes |
 | K | 10 | Last Update | String/Date | Any update timestamp |
+| P | 15 | Deleted | Y/empty | Soft-delete flag: "Y" = archived, empty = active |
 
 **Notes:**
 - Company ID must be unique (one row per company)
+- **Deleted (P)**: When "Y", the company is archived and excluded from the main list. Restorable from Settings → Archived Companies.
 - Status drives Kanban board columns
 - Urgency Score will be populated by email automation
 

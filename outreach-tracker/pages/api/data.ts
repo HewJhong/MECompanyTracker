@@ -53,7 +53,7 @@ export default async function handler(
         console.log(">>> [API DATA] Tracker Rows...");
         const trackerResponse = await sheets.spreadsheets.values.get({
             spreadsheetId: trackerSpreadsheetId,
-            range: `${trackerSheetName}!A2:O`,
+            range: `${trackerSheetName}!A2:P`,
         });
         const trackerRows = trackerResponse.data.values || [];
 
@@ -106,6 +106,7 @@ export default async function handler(
         const trackerMap = new Map();
         trackerRows.forEach((row) => {
             if (!row[0]) return;
+            const deleted = (row[15] || '').toString().trim().toUpperCase() === 'Y';
             trackerMap.set(row[0], {
                 companyId: row[0],
                 companyName: row[1],
@@ -121,7 +122,8 @@ export default async function handler(
                 sponsorshipTier: row[11] || '',
                 daysAttending: row[12] || '',
                 remarks: row[13] || '',
-                lastUpdate: row[14]
+                lastUpdate: row[14],
+                deleted
             });
         });
 
@@ -131,6 +133,7 @@ export default async function handler(
             if (!id) return;
             if (!companyMap.has(id)) {
                 const t = trackerMap.get(id);
+                const isDeleted = !!t?.deleted;
                 companyMap.set(id, {
                     id,
                     companyName: row[1] || t?.companyName || 'Unknown',
@@ -151,6 +154,7 @@ export default async function handler(
                     targetSponsorshipTier: row[3],
                     reference: row[10],
                     isFlagged: false,
+                    isDeleted,
                     contacts: []
                 });
             }
@@ -183,12 +187,13 @@ export default async function handler(
         trackerRows.forEach((row: any) => {
             const id = row[0]?.toString().trim();
             const name = (row[1] || '').toString().trim();
-            if (id && !dbIds.has(id)) {
+            const deleted = (row[15] || '').toString().trim().toUpperCase() === 'Y';
+            if (id && !dbIds.has(id) && !deleted) {
                 trackerOnlyCompanies.push({ id, name: name || id });
             }
         });
 
-        const data = Array.from(companyMap.values());
+        const data = Array.from(companyMap.values()).filter(c => !c.isDeleted);
         data.forEach(c => {
             // No filter other than companyId – show all thread history for this company.
             // Sort newest first so the latest updates appear at the top.
