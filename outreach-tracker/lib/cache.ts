@@ -1,9 +1,12 @@
 import { LRUCache } from 'lru-cache';
 
 // Shared cache options
+// NOTE: Cache is in-memory and process-local. In multi-instance deployments,
+// one instance can serve stale data after another instance updates Sheets.
+// TTL reduced to limit staleness window. Long-term: shared cache (e.g. Redis).
 const options = {
     max: 500, // Maximum number of items
-    ttl: 1000 * 60, // 1 minute TTL
+    ttl: 1000 * 30, // 30 seconds TTL (was 60s; reduced to limit cross-instance staleness)
     allowStale: false,
 };
 

@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getGoogleSheetsClient } from '../../lib/google-sheets';
+import { getCompanyDatabaseSheet } from '../../lib/spreadsheet-utils';
 import { cache } from '../../lib/cache';
 import { requireEffectiveCanEditCompanies } from '../../lib/authz';
 import { formatActorLabel } from '../../lib/authz';
@@ -30,9 +31,7 @@ export default async function handler(
         }
 
         const metadata = await sheets.spreadsheets.get({ spreadsheetId });
-        const dbSheet = metadata.data.sheets?.find(s => s.properties?.title?.includes('[AUTOMATION ONLY]'));
-        const sheetId = dbSheet?.properties?.sheetId;
-        const sheetName = dbSheet?.properties?.title || metadata.data.sheets?.[0].properties?.title;
+        const { title: sheetName, sheetId } = getCompanyDatabaseSheet(metadata.data.sheets);
 
         const rowData = await sheets.spreadsheets.values.get({
             spreadsheetId,
@@ -65,6 +64,9 @@ export default async function handler(
         const companyRowCount = allIds.filter(r => r[0] === companyId).length;
 
         if (companyRowCount > 1) {
+            if (sheetId === undefined) {
+                throw new Error('Sheet ID required for row deletion but not available');
+            }
             await sheets.spreadsheets.batchUpdate({
                 spreadsheetId,
                 requestBody: {
@@ -72,7 +74,7 @@ export default async function handler(
                         {
                             deleteDimension: {
                                 range: {
-                                    sheetId: sheetId,
+                                    sheetId,
                                     dimension: 'ROWS',
                                     startIndex: rowNumber - 1,
                                     endIndex: rowNumber,

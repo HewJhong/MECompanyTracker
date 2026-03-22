@@ -626,8 +626,8 @@ export default function Analytics() {
                     </div>
                 )}
 
-                {/* Admin-Only: Full Logs View */}
-                {currentUser?.role === 'Admin' && (
+                {/* Admin-Only: Full Logs View (Admin + Superadmin) */}
+                {currentUser?.isAdmin && (
                     <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
                         <div className="p-6 border-b border-slate-100 flex items-center justify-between">
                             <h3 className="text-sm font-semibold text-slate-500 uppercase tracking-wider flex items-center gap-2">

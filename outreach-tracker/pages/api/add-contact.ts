@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getGoogleSheetsClient } from '../../lib/google-sheets';
+import { getCompanyDatabaseSheet } from '../../lib/spreadsheet-utils';
 import { cache } from '../../lib/cache';
 import { requireEffectiveCanEditCompanies } from '../../lib/authz';
 import { formatActorLabel } from '../../lib/authz';
@@ -31,8 +32,7 @@ export default async function handler(
         }
 
         const metadata = await sheets.spreadsheets.get({ spreadsheetId: databaseSpreadsheetId });
-        const dbSheet = metadata.data.sheets?.find(s => s.properties?.title?.includes('[AUTOMATION ONLY]'));
-        const sheetName = dbSheet?.properties?.title || metadata.data.sheets?.[0].properties?.title;
+        const { title: sheetName } = getCompanyDatabaseSheet(metadata.data.sheets);
 
         // Fetch existing company rows to get exact mapping if needed, or just append with provided data
         // For consistency, we try to put empty placeholders for data we don't have for contacts
@@ -66,12 +66,13 @@ export default async function handler(
             contact.linkedin?.trim() || '',
             '', // Reference
             contact.remark?.trim() || '',
-            contact.isActive ? 'TRUE' : 'FALSE'
+            contact.isActive ? 'TRUE' : 'FALSE',
+            '', // O: activeMethods (comma-separated)
         ];
 
         await sheets.spreadsheets.values.append({
             spreadsheetId: databaseSpreadsheetId,
-            range: `${sheetName}!A:N`,
+            range: `${sheetName}!A:O`,
             valueInputOption: 'USER_ENTERED',
             requestBody: { values: [newRow] }
         });

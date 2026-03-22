@@ -1,7 +1,8 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getGoogleSheetsClient } from '../../lib/google-sheets';
+import { getCompanyDatabaseSheet } from '../../lib/spreadsheet-utils';
 import { cache } from '../../lib/cache';
-import { requireEffectiveCanEditCompanies } from '../../lib/authz';
+import { requireEffectiveCanEditCompanies, formatActorLabel } from '../../lib/authz';
 
 export default async function handler(
     req: NextApiRequest,
@@ -24,14 +25,7 @@ export default async function handler(
 
         // 1. Get metadata to find the correct sheet
         const dbMetadata = await sheets.spreadsheets.get({ spreadsheetId: databaseSpreadsheetId });
-        const dbSheet = dbMetadata.data.sheets?.find(s => s.properties?.title?.includes('[AUTOMATION ONLY]'));
-        const sheetName = dbSheet?.properties?.title;
-
-        if (!sheetName) {
-            throw new Error('Could not find the [AUTOMATION ONLY] sheet');
-        }
-
-        const sheetId = dbSheet.properties?.sheetId;
+        const { title: sheetName, sheetId } = getCompanyDatabaseSheet(dbMetadata.data.sheets);
 
         // 2. Fetch existing rows (excluding header)
         const dbResponse = await sheets.spreadsheets.values.get({
@@ -64,6 +58,30 @@ export default async function handler(
         });
 
         // Optional: clear any trailing rows if the sortedRows length is smaller somehow (unlikely since we just reordered)
+
+        // Log to Thread_History and Logs_DoNotEdit
+        const trackerSpreadsheetId = process.env.SPREADSHEET_ID_2;
+        if (trackerSpreadsheetId) {
+            const now = new Date().toISOString();
+            const actorName = formatActorLabel(ctx);
+            const firstId = sortedRows[0]?.[0] || 'ME-0001';
+            await sheets.spreadsheets.values.append({
+                spreadsheetId: trackerSpreadsheetId,
+                range: 'Thread_History!A:D',
+                valueInputOption: 'RAW',
+                requestBody: {
+                    values: [[now, firstId, actorName, `Reorder rows: sorted ${sortedRows.length} rows in Database by Company ID`]],
+                },
+            });
+            await sheets.spreadsheets.values.append({
+                spreadsheetId: trackerSpreadsheetId,
+                range: 'Logs_DoNotEdit!A:E',
+                valueInputOption: 'RAW',
+                requestBody: {
+                    values: [[now, actorName, 'REORDER_ROWS', `Sorted ${sortedRows.length} rows in Database by Company ID`, JSON.stringify({ rowCount: sortedRows.length })]],
+                },
+            });
+        }
 
         // Clear cache so frontend fetches new order
         cache.delete('sheet_data');

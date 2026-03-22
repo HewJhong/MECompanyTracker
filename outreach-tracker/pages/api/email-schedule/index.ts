@@ -9,9 +9,7 @@ import {
 } from '../../../lib/email-schedule';
 import { formatActorLabel, requireEffectiveAdmin } from '../../../lib/authz';
 
-async function appendThreadHistory(
-    rows: string[][],
-) {
+async function appendThreadHistory(rows: string[][]) {
     if (rows.length === 0) return;
     try {
         const spreadsheetId = process.env.SPREADSHEET_ID_2;
@@ -25,6 +23,24 @@ async function appendThreadHistory(
         });
     } catch (err) {
         console.error('Failed to write email schedule action to Thread_History:', err);
+    }
+}
+
+async function appendLogsDoNotEdit(actorName: string, action: string, details: string, data: string) {
+    try {
+        const spreadsheetId = process.env.SPREADSHEET_ID_2;
+        if (!spreadsheetId) return;
+        const sheets = await getGoogleSheetsClient();
+        await sheets.spreadsheets.values.append({
+            spreadsheetId,
+            range: 'Logs_DoNotEdit!A:E',
+            valueInputOption: 'RAW',
+            requestBody: {
+                values: [[new Date().toISOString(), actorName, action, details, data]],
+            },
+        });
+    } catch (err) {
+        console.error('Failed to write email schedule action to Logs_DoNotEdit:', err);
     }
 }
 
@@ -84,6 +100,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 entries.map(e => [now, e.companyId, actorName, `Email schedule set for ${e.date} at ${e.time} (assigned to ${pic})`])
             );
 
+            // Log to Logs_DoNotEdit for full audit trail
+            const dataCol = entries.map(e => `${e.companyId} (${e.companyName || e.companyId}) → ${e.time}`).join('; ');
+            await appendLogsDoNotEdit(
+                actorName,
+                'SCHEDULE_CREATE',
+                `Created email schedule for ${entries.length} companies on ${date} (assigned to ${pic})`,
+                dataCol,
+            );
+
             return res.status(200).json({ success: true, entries });
         }
 
@@ -116,11 +141,29 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
             await saveEmailScheduleEntries(toSave);
 
-            // Log to Thread_History: one row per entry
+            const completedCount = toSave.filter(e => e.completed === 'Y').length;
+
+            // Log to Thread_History: one row per entry (use accurate message for the action)
             const nowPut = new Date().toISOString();
-            await appendThreadHistory(
-                toSave.map(e => [nowPut, e.companyId, actorName, `Email schedule updated to ${e.date} at ${e.time} (assigned to ${e.pic})`])
-            );
+            const threadRows = toSave.map(e => {
+                const remark = completedCount === toSave.length
+                    ? `Marked schedule as complete for ${e.date} at ${e.time}`
+                    : completedCount === 0
+                        ? `Marked schedule as pending for ${e.date} at ${e.time}`
+                        : `Email schedule updated to ${e.date} at ${e.time} (assigned to ${e.pic})`;
+                return [nowPut, e.companyId, actorName, remark];
+            });
+            await appendThreadHistory(threadRows);
+
+            // Log to Logs_DoNotEdit for full audit trail
+            const action = completedCount === toSave.length ? 'SCHEDULE_MARK_COMPLETE' : completedCount === 0 ? 'SCHEDULE_MARK_PENDING' : 'SCHEDULE_UPDATE';
+            const details = completedCount === toSave.length
+                ? `Marked ${toSave.length} schedule entries as complete`
+                : completedCount === 0
+                    ? `Marked ${toSave.length} schedule entries as pending`
+                    : `Updated ${toSave.length} schedule entries (${completedCount} complete, ${toSave.length - completedCount} pending)`;
+            const dataCol = toSave.map(e => `${e.companyId} (${e.companyName || e.companyId}) ${e.date} ${e.time}`).join('; ');
+            await appendLogsDoNotEdit(actorName, action, details, dataCol);
 
             return res.status(200).json({ success: true, entries: toSave });
         }
@@ -145,6 +188,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             const nowDel = new Date().toISOString();
             await appendThreadHistory(
                 companyIds.map(id => [nowDel, id, actorName, `Email schedule removed for ${date}`])
+            );
+
+            // Log to Logs_DoNotEdit for full audit trail
+            await appendLogsDoNotEdit(
+                actorName,
+                'SCHEDULE_DELETE',
+                `Removed email schedule for ${companyIds.length} companies on ${date}`,
+                companyIds.join('; '),
             );
 
             return res.status(200).json({ success: true });

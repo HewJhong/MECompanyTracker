@@ -1,7 +1,8 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getGoogleSheetsClient } from '../../../lib/google-sheets';
+import { getCompanyDatabaseSheet } from '../../../lib/spreadsheet-utils';
 import { cache } from '../../../lib/cache';
-import { requireEffectiveAdmin } from '../../../lib/authz';
+import { requireEffectiveAdmin, formatActorLabel } from '../../../lib/authz';
 
 // Sanitize user input to prevent formula injection and other issues
 function sanitizeInput(input: string, maxLength: number = 500): string {
@@ -65,11 +66,7 @@ export default async function handler(
 
         // 3. Fetch Database sheet
         const dbMetadata = await sheets.spreadsheets.get({ spreadsheetId: databaseSpreadsheetId });
-        const dbSheet = dbMetadata.data.sheets?.find(sheet =>
-            sheet.properties?.title?.includes('[AUTOMATION ONLY]')
-        );
-        const dbSheetName = dbSheet?.properties?.title;
-        if (!dbSheetName) throw new Error('Company Database sheet not found');
+        const { title: dbSheetName } = getCompanyDatabaseSheet(dbMetadata.data.sheets);
 
         const dbResponse = await sheets.spreadsheets.values.get({
             spreadsheetId: databaseSpreadsheetId,
@@ -236,10 +233,30 @@ export default async function handler(
             }
         });
 
-        // 10. Clear cache
+        // 10. Log to Thread_History and Logs_DoNotEdit
+        const now = new Date().toISOString();
+        const actorName = formatActorLabel(ctx);
+        await sheets.spreadsheets.values.append({
+            spreadsheetId: trackerSpreadsheetId,
+            range: 'Thread_History!A:D',
+            valueInputOption: 'RAW',
+            requestBody: {
+                values: [[now, insertAtId, actorName, `Inserted company at ${insertAtId} (${shiftCount} companies shifted)`]],
+            },
+        });
+        await sheets.spreadsheets.values.append({
+            spreadsheetId: trackerSpreadsheetId,
+            range: 'Logs_DoNotEdit!A:E',
+            valueInputOption: 'RAW',
+            requestBody: {
+                values: [[now, actorName, 'INSERT_COMPANY', `${insertAtId} – ${sanitizedName}`, JSON.stringify({ insertAtId, companiesShifted: shiftCount })]],
+            },
+        });
+
+        // 11. Clear cache
         cache.clear();
 
-        // 11. Return success
+        // 12. Return success
         return res.status(200).json({
             success: true,
             insertedId: insertAtId,

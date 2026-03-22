@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getGoogleSheetsClient } from '../../lib/google-sheets';
+import { getCompanyDatabaseSheet } from '../../lib/spreadsheet-utils';
 import { cache } from '../../lib/cache';
 import { requireEffectiveCanEditCompanies } from '../../lib/authz';
 import { formatActorLabel } from '../../lib/authz';
@@ -30,8 +31,7 @@ export default async function handler(
         }
 
         const metadata = await sheets.spreadsheets.get({ spreadsheetId });
-        const dbSheet = metadata.data.sheets?.find(s => s.properties?.title?.includes('[AUTOMATION ONLY]'));
-        const sheetName = dbSheet?.properties?.title || metadata.data.sheets?.[0].properties?.title;
+        const { title: sheetName } = getCompanyDatabaseSheet(metadata.data.sheets);
 
         const CONTACT_COL_MAP: Record<string, string> = {
             'picName': 'F',

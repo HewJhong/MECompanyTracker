@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getGoogleSheetsClient } from '../../lib/google-sheets';
+import { getCompanyDatabaseSheet } from '../../lib/spreadsheet-utils';
 import { cache } from '../../lib/cache';
 import { syncDailyStats } from '../../lib/daily-stats';
 import { requireEffectiveCanEditCompanies } from '../../lib/authz';
@@ -121,8 +122,7 @@ export default async function handler(
         }
 
         const dbMeta = await sheets.spreadsheets.get({ spreadsheetId: spreadsheetId1 });
-        const dbSheet = dbMeta.data.sheets?.find(s => s.properties?.title?.includes('[AUTOMATION ONLY]'));
-        const dbSheetName = dbSheet?.properties?.title || dbMeta.data.sheets?.[0].properties?.title;
+        const { title: dbSheetName } = getCompanyDatabaseSheet(dbMeta.data.sheets);
 
         const dbIdRange = await sheets.spreadsheets.values.get({
             spreadsheetId: spreadsheetId1,
@@ -163,13 +163,41 @@ export default async function handler(
         }
 
         if (dbUpdates.length > 0) {
-            await sheets.spreadsheets.values.batchUpdate({
-                spreadsheetId: spreadsheetId1,
-                requestBody: {
-                    valueInputOption: 'USER_ENTERED',
-                    data: dbUpdates
+            try {
+                await sheets.spreadsheets.values.batchUpdate({
+                    spreadsheetId: spreadsheetId1,
+                    requestBody: {
+                        valueInputOption: 'USER_ENTERED',
+                        data: dbUpdates
+                    }
+                });
+            } catch (dbErr) {
+                const err = dbErr as Error;
+                console.error('Database write failed after Tracker succeeded (partial dual-write):', err);
+                try {
+                    await sheets.spreadsheets.values.append({
+                        spreadsheetId: spreadsheetId2,
+                        range: 'Logs_DoNotEdit!A:E',
+                        valueInputOption: 'RAW',
+                        requestBody: {
+                            values: [[
+                                new Date().toISOString(),
+                                formatActorLabel(ctx),
+                                'PARTIAL_WRITE_ERROR',
+                                `Tracker updated but Database failed for company ${companyId}: ${err.message}`,
+                                JSON.stringify({ companyId, operation: 'COMPANY_UPDATE', payload: updates }),
+                            ]],
+                        },
+                    });
+                } catch (logErr) {
+                    console.error('Could not log partial write error:', logErr);
                 }
-            });
+                return res.status(207).json({
+                    success: false,
+                    message: `Tracker was updated but Database sync failed. Data may be out of sync. Company: ${companyId}. Check Logs_DoNotEdit for details.`,
+                    partialSuccess: { tracker: true, database: false },
+                });
+            }
         }
 
         const logSheetName = 'Logs_DoNotEdit';

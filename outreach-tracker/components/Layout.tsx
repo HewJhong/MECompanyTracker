@@ -93,7 +93,8 @@ export default function Layout({ children, title = 'Outreach Tracker' }: LayoutP
 
             {/* Sidebar Navigation */}
             <aside className={`
-                fixed inset-y-0 left-0 z-50 w-72 bg-gradient-to-b from-slate-900 via-slate-900 to-slate-800 text-white transform transition-transform duration-300 ease-in-out lg:translate-x-0 lg:static lg:inset-0
+                fixed inset-y-0 left-0 z-50 w-72 bg-gradient-to-b from-slate-900 via-slate-900 to-slate-800 text-white transform transition-transform duration-300 ease-in-out
+                lg:translate-x-0 lg:static lg:inset-0 lg:sticky lg:top-0 lg:h-screen lg:self-start
                 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
             `}>
                 {/* Logo Area */}

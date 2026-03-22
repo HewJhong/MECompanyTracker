@@ -1,6 +1,11 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { getServerSession } from 'next-auth/next';
+import { authOptions } from '../../../lib/auth';
+import { getCommitteeMembers } from '../../../lib/committee-members';
 import { getGoogleSheetsClient } from '../../../lib/google-sheets';
+import { getCompanyDatabaseSheet } from '../../../lib/spreadsheet-utils';
 import { cache } from '../../../lib/cache';
+import { invalidateScheduleCache } from '../../../lib/email-schedule';
 
 export default async function handler(
     req: NextApiRequest,
@@ -10,7 +15,22 @@ export default async function handler(
         return res.status(405).json({ message: 'Method not allowed' });
     }
 
+    const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body || {};
+    const operationId = body.operationId;
+
     try {
+        const session = await getServerSession(req, res, authOptions);
+        if (!session?.user?.email) {
+            return res.status(401).json({ message: 'Unauthorized' });
+        }
+        const members = await getCommitteeMembers();
+        const userEmail = session.user.email.toLowerCase().trim();
+        const user = members.find(m => m.email?.toLowerCase().trim() === userEmail);
+        const roleLower = user?.role?.toLowerCase() || '';
+        if (!user || roleLower !== 'superadmin') {
+            return res.status(403).json({ message: 'Superadmin access required' });
+        }
+
         const sheets = await getGoogleSheetsClient();
         const databaseSpreadsheetId = process.env.SPREADSHEET_ID_1;
         const trackerSpreadsheetId = process.env.SPREADSHEET_ID_2;
@@ -18,11 +38,7 @@ export default async function handler(
         // 1. Fetch Data
         // Database
         const dbMetadata = await sheets.spreadsheets.get({ spreadsheetId: databaseSpreadsheetId });
-        const dbSheet = dbMetadata.data.sheets?.find(sheet =>
-            sheet.properties?.title?.includes('[AUTOMATION ONLY]')
-        );
-        const dbSheetName = dbSheet?.properties?.title;
-        if (!dbSheetName) throw new Error('Company Database sheet not found');
+        const { title: dbSheetName } = getCompanyDatabaseSheet(dbMetadata.data.sheets);
 
         const dbResponse = await sheets.spreadsheets.values.get({
             spreadsheetId: databaseSpreadsheetId,
@@ -71,6 +87,14 @@ export default async function handler(
             return res.status(200).json({ success: true, message: 'No gaps to fix', changes: [] });
         }
 
+        // Require operation ID from preview – ensures user reviewed before applying
+        if (!operationId || typeof operationId !== 'string' || !operationId.startsWith('renumber-')) {
+            return res.status(400).json({
+                success: false,
+                message: 'operationId required. Run ID gap scan first to get preview and operationId, then confirm apply.',
+            });
+        }
+
         // 3. Prepare Updates
 
         // Update Database Rows
@@ -107,7 +131,38 @@ export default async function handler(
             })
         ]);
 
-        // 5. Update Thread_History so activity logs still match companies (column B = companyId)
+        // 5. Update Email_Schedule column A (companyId) so schedule entries stay linked after renumber
+        try {
+            const scheduleResponse = await sheets.spreadsheets.values.get({
+                spreadsheetId: trackerSpreadsheetId,
+                range: 'Email_Schedule!A2:A',
+            });
+            const scheduleRows = (scheduleResponse.data.values || []) as string[][];
+            if (scheduleRows.length > 0) {
+                const newScheduleIds = scheduleRows.map(row => {
+                    const oldId = row[0] ? String(row[0]).trim() : '';
+                    const newId = oldId && idMap.has(oldId) ? idMap.get(oldId)! : oldId;
+                    return [newId];
+                });
+                const changedCount = newScheduleIds.filter((row, i) => {
+                    const old = scheduleRows[i]?.[0]?.trim() || '';
+                    return old && idMap.has(old);
+                }).length;
+                if (changedCount > 0) {
+                    await sheets.spreadsheets.values.update({
+                        spreadsheetId: trackerSpreadsheetId,
+                        range: `Email_Schedule!A2:A${1 + newScheduleIds.length}`,
+                        valueInputOption: 'RAW',
+                        requestBody: { values: newScheduleIds },
+                    });
+                    invalidateScheduleCache();
+                }
+            }
+        } catch (scheduleErr) {
+            console.warn('Email_Schedule update during fix ID gaps failed (sheet may not exist):', scheduleErr);
+        }
+
+        // 6. Update Thread_History so activity logs still match companies (column B = companyId)
         try {
             const historyResponse = await sheets.spreadsheets.values.get({
                 spreadsheetId: trackerSpreadsheetId,
@@ -129,6 +184,49 @@ export default async function handler(
             }
         } catch (historyErr) {
             console.warn('Thread_History update during fix ID gaps failed (sheet may not exist):', historyErr);
+        }
+
+        // 7. Append RENUMBER_APPLY and RENUMBER_REVERT_MAP to Logs with operation ID for audit/revert
+        const forwardMap = Object.fromEntries(idMap);
+        const reverseMap: Record<string, string> = {};
+        idMap.forEach((newId, oldId) => { reverseMap[newId] = oldId; });
+
+        const dbAffected = (dbRows as string[][]).filter(row => row[0] && idMap.has(row[0])).length;
+        const trackerAffected = (trackerRows as string[][]).filter(row => row[0] && idMap.has(row[0])).length;
+
+        try {
+            const actorName = user?.name || user?.email || session?.user?.email || 'FixIdGaps';
+            const now = new Date().toISOString();
+            await sheets.spreadsheets.values.append({
+                spreadsheetId: trackerSpreadsheetId,
+                range: 'Logs_DoNotEdit!A:E',
+                valueInputOption: 'RAW',
+                requestBody: {
+                    values: [
+                        [now, actorName, 'RENUMBER_APPLY', JSON.stringify({
+                            operationId,
+                            changesCount: changes.length,
+                            forwardMap,
+                            dbRowsAffected: dbAffected,
+                            trackerRowsAffected: trackerAffected,
+                            scheduleRowsAffected: 'see Email_Schedule',
+                            threadHistoryRowsAffected: 'see Thread_History',
+                        })],
+                        [now, actorName, 'RENUMBER_REVERT_MAP', JSON.stringify({ operationId, reverseMap })],
+                    ],
+                },
+            });
+            const firstId = changes[0]?.newId || 'ME-0001';
+            await sheets.spreadsheets.values.append({
+                spreadsheetId: trackerSpreadsheetId,
+                range: 'Thread_History!A:D',
+                valueInputOption: 'RAW',
+                requestBody: {
+                    values: [[now, firstId, actorName, `Fix ID Gaps: renumbered ${changes.length} companies (opId=${operationId}, see Logs for revert map)`]],
+                },
+            });
+        } catch (logErr) {
+            console.warn('Failed to append RENUMBER logs to Logs_DoNotEdit:', logErr);
         }
 
         // 6. Clear Cache

@@ -1,9 +1,10 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getGoogleSheetsClient } from '../../lib/google-sheets';
+import { getCompanyDatabaseSheet } from '../../lib/spreadsheet-utils';
 import { cache } from '../../lib/cache';
 import { disciplineToDatabase } from '../../lib/discipline-mapping';
 import { syncDailyStats } from '../../lib/daily-stats';
-import { requireEffectiveCanEditCompanies } from '../../lib/authz';
+import { requireEffectiveCanEditCompanies, formatActorLabel } from '../../lib/authz';
 
 export default async function handler(
     req: NextApiRequest,
@@ -32,16 +33,9 @@ export default async function handler(
         const databaseSpreadsheetId = process.env.SPREADSHEET_ID_1; // Company Database
         const trackerSpreadsheetId = process.env.SPREADSHEET_ID_2;  // Outreach Tracker
 
-        // 1. Find the [AUTOMATION ONLY] sheet in the database
+        // 1. Find the canonical company database sheet
         const dbMetadata = await sheets.spreadsheets.get({ spreadsheetId: databaseSpreadsheetId });
-        const dbSheet = dbMetadata.data.sheets?.find(sheet =>
-            sheet.properties?.title?.includes('[AUTOMATION ONLY]')
-        );
-        const dbSheetName = dbSheet?.properties?.title;
-
-        if (!dbSheetName) {
-            throw new Error('Company Database sheet with [AUTOMATION ONLY] label not found');
-        }
+        const { title: dbSheetName } = getCompanyDatabaseSheet(dbMetadata.data.sheets);
 
         // 2. Get existing data to determine next ID
         const dbResponse = await sheets.spreadsheets.values.get({
@@ -123,10 +117,29 @@ export default async function handler(
             }
         });
 
-        // 7. Clear cache to force refresh
+        // 7. Log to Thread_History and Logs_DoNotEdit
+        if (trackerSpreadsheetId) {
+            const actorName = formatActorLabel(ctx);
+            await sheets.spreadsheets.values.append({
+                spreadsheetId: trackerSpreadsheetId,
+                range: 'Thread_History!A:D',
+                valueInputOption: 'USER_ENTERED',
+                requestBody: { values: [[timestamp, newCompanyId, actorName, `Added new company ${companyName}`]] },
+            });
+            await sheets.spreadsheets.values.append({
+                spreadsheetId: trackerSpreadsheetId,
+                range: 'Logs_DoNotEdit!A:E',
+                valueInputOption: 'RAW',
+                requestBody: {
+                    values: [[timestamp, actorName, 'ADD_COMPANY', `${newCompanyId} – ${companyName}`, JSON.stringify({ discipline, assignedTo })]],
+                },
+            });
+        }
+
+        // 8. Clear cache to force refresh
         cache.clear();
 
-        // 8. Sync daily stats
+        // 9. Sync daily stats
         if (trackerSpreadsheetId) {
             await syncDailyStats(sheets, trackerSpreadsheetId);
         }

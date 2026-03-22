@@ -26,7 +26,6 @@ import {
     ChevronRightIcon,
     CheckCircleIcon,
     Bars3Icon,
-    PencilSquareIcon,
     ArrowRightIcon,
     UserGroupIcon,
     ChevronDownIcon,
@@ -436,7 +435,7 @@ function DroppableSlotBlock({
             <div className="flex-1 flex flex-col gap-1.5 py-2 pr-2 min-w-0 w-0">
                 {hasAny ? (
                     sortedEntries.map(entry => (
-                        <div key={entryId(entry)} className={`w-full flex items-center ${viewMode === 'full' && entry.note ? 'min-h-[52px]' : 'min-h-[40px]'}`}>
+                        <div key={entryId(entry)} className={`w-full flex items-center ${viewMode === 'full' ? 'min-h-[52px]' : 'min-h-[40px]'}`}>
                             <ScheduleChip
                                 entry={entry}
                                 displayCompanyName={resolveRow(entry).label}
@@ -451,7 +450,7 @@ function DroppableSlotBlock({
                         </div>
                     ))
                 ) : !blocked ? (
-                    <div className="min-h-[40px] w-full flex items-center">
+                    <div className={`${viewMode === 'full' ? 'min-h-[52px]' : 'min-h-[40px]'} w-full flex items-center`}>
                         <span className="text-[10px] text-slate-300">Drop here</span>
                     </div>
                 ) : null}
@@ -495,7 +494,6 @@ function EmailScheduleContent() {
     const [moveDate, setMoveDate] = useState('');
     const [moveTime, setMoveTime] = useState('');
     const [moveError, setMoveError] = useState<string | null>(null);
-    const [bulkEditPic, setBulkEditPic] = useState('');
     const [bulkDeleteCount, setBulkDeleteCount] = useState<number | null>(null);
     const [showSettings, setShowSettings] = useState(false);
     const [settings, setSettings] = useState<ScheduleSettings>(DEFAULT_SCHEDULE_SETTINGS);
@@ -627,6 +625,7 @@ function EmailScheduleContent() {
         entries.forEach(e => {
             const pic = e.pic?.trim() || 'Unassigned';
             if (!scheduledByPic.has(pic)) scheduledByPic.set(pic, new Set());
+            // Count as "with time" if: has any entry (includes upcoming schedules)
             scheduledByPic.get(pic)!.add(e.companyId);
         });
         const byPic = new Map<string, { companies: Map<string, string> }>();
@@ -813,20 +812,6 @@ function EmailScheduleContent() {
         [entries, selectedIds],
     );
 
-    const selectedUniquePic = useMemo(() => {
-        if (selectedEntries.length === 0) return '';
-        const pics = [...new Set(selectedEntries.map(e => e.pic))];
-        return pics.length === 1 ? pics[0] : '';
-    }, [selectedEntries]);
-
-    const assignPicValue = bulkEditPic || selectedUniquePic;
-
-    useEffect(() => {
-        if (selectedUniquePic === '' && selectedEntries.length > 0) {
-            setBulkEditPic('');
-        }
-    }, [selectedUniquePic, selectedEntries.length]);
-
     const handleBulkMove = useCallback(async () => {
         setMoveError(null);
         if (selectedIds.size === 0) return;
@@ -916,42 +901,53 @@ function EmailScheduleContent() {
         }
     }, [selectedIds, moveDate, moveTime, visibleTimeSlots, settings, addTask, completeTask, failTask, fetchEntries]);
 
-    const handleBulkPicChange = useCallback(async () => {
-        const picToApply = assignPicValue.trim();
-        if (selectedEntries.length === 0 || !picToApply) return;
-        const taskId = addTask('Updating PIC...');
-        const updated = selectedEntries.map(e => ({ ...e, pic: picToApply }));
+    const handleBulkMarkComplete = useCallback(async () => {
+        if (selectedEntries.length === 0) return;
+        const taskId = addTask('Marking as complete...');
+        const updated = selectedEntries.map(e => ({ ...e, completed: 'Y' }));
         setEntries(prev => prev.map(e => {
-            const u = updated.find(u => u.companyId === e.companyId && u.date === e.date);
-            return u ? { ...e, pic: u.pic } : e;
+            const u = updated.find(u => u.companyId === e.companyId && u.date === e.date && u.time === e.time);
+            return u ? { ...e, completed: 'Y' } : e;
         }));
         setSelectedIds(new Set());
-        setBulkEditPic('');
         try {
             const res = await fetch('/api/email-schedule', {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ entries: updated }),
             });
-            const json = await res.json().catch(() => ({}));
             if (!res.ok) throw new Error('Save failed');
-            completeTask(taskId, 'PIC updated');
-            // Merge server response into state so we don't refetch (avoids stale cache showing old date/committee)
-            const savedEntries = json.entries as ScheduleEntry[] | undefined;
-            if (Array.isArray(savedEntries) && savedEntries.length > 0) {
-                setEntries(prev => {
-                    const byKey = new Map(prev.map(e => [`${e.companyId}|${e.date}`, e]));
-                    savedEntries.forEach(e => byKey.set(`${e.companyId}|${e.date}`, { ...e, order: e.order ?? 0 }));
-                    return Array.from(byKey.values()).sort((a, b) =>
-                        a.date.localeCompare(b.date) || normalizeTime(a.time).localeCompare(normalizeTime(b.time)) || a.order - b.order
-                    );
-                });
-            }
+            completeTask(taskId, 'Marked as complete');
+            fetchEntries({ silent: true });
         } catch {
-            failTask(taskId, 'Failed to update PIC');
+            failTask(taskId, 'Failed to update');
             fetchEntries({ silent: true });
         }
-    }, [selectedEntries, assignPicValue, addTask, completeTask, failTask, fetchEntries]);
+    }, [selectedEntries, addTask, completeTask, failTask, fetchEntries]);
+
+    const handleBulkMarkPending = useCallback(async () => {
+        if (selectedEntries.length === 0) return;
+        const taskId = addTask('Marking as pending...');
+        const updated = selectedEntries.map(e => ({ ...e, completed: '' }));
+        setEntries(prev => prev.map(e => {
+            const u = updated.find(u => u.companyId === e.companyId && u.date === e.date && u.time === e.time);
+            return u ? { ...e, completed: '' } : e;
+        }));
+        setSelectedIds(new Set());
+        try {
+            const res = await fetch('/api/email-schedule', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ entries: updated }),
+            });
+            if (!res.ok) throw new Error('Save failed');
+            completeTask(taskId, 'Marked as pending');
+            fetchEntries({ silent: true });
+        } catch {
+            failTask(taskId, 'Failed to update');
+            fetchEntries({ silent: true });
+        }
+    }, [selectedEntries, addTask, completeTask, failTask, fetchEntries]);
 
     const handleBulkDelete = useCallback(async () => {
         if (selectedEntries.length === 0) return;
@@ -1061,17 +1057,6 @@ function EmailScheduleContent() {
                         <svg className={`w-5 h-5 ${loading ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                         </svg>
-                    </button>
-                    <button
-                        onClick={() => setViewMode(v => v === 'compact' ? 'full' : 'compact')}
-                        className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors border ${viewMode === 'full' ? 'bg-indigo-50 text-indigo-700 border-indigo-200' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'}`}
-                        title={viewMode === 'full' ? 'Switch to compact view' : 'Switch to full view (shows notes)'}
-                    >
-                        {viewMode === 'full' ? (
-                            <><svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" /></svg>Compact</>
-                        ) : (
-                            <><svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5h18M3 10h18M3 15h18M3 20h18" /></svg>Full</>
-                        )}
                     </button>
                     {user?.isAdmin && (
                         <button
@@ -1236,10 +1221,23 @@ function EmailScheduleContent() {
                     <span className="text-xs font-medium text-indigo-700">Syncing schedule…</span>
                 </div>
             )}
-            <p className="mb-3 text-xs text-slate-500 flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-sm border border-green-400 bg-green-100" aria-hidden />
-                Green border = email sent
-            </p>
+            <div className="mb-3 flex items-center justify-between gap-4">
+                <p className="text-xs text-slate-500 flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-sm border border-green-400 bg-green-100" aria-hidden />
+                    Green border = email sent
+                </p>
+                <button
+                    onClick={() => setViewMode(v => v === 'compact' ? 'full' : 'compact')}
+                    className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors border ${viewMode === 'full' ? 'bg-indigo-50 text-indigo-700 border-indigo-200' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'}`}
+                    title={viewMode === 'full' ? 'Switch to compact view' : 'Switch to full view (shows notes)'}
+                >
+                    {viewMode === 'full' ? (
+                        <><svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" /></svg>Compact</>
+                    ) : (
+                        <><svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5h18M3 10h18M3 15h18M3 20h18" /></svg>Full</>
+                    )}
+                </button>
+            </div>
                 <DndContext
                     sensors={sensors}
                     onDragStart={handleDragStart}
@@ -1347,27 +1345,23 @@ function EmailScheduleContent() {
                                 </button>
                             </div>
                             <div className="flex items-end gap-2">
-                                <div>
-                                    <label className="block text-xs text-slate-300 mb-0.5">Assign PIC</label>
-                                    <select
-                                        value={assignPicValue}
-                                        onChange={e => setBulkEditPic(e.target.value)}
-                                        className="px-2 py-1.5 rounded bg-slate-700 border border-slate-600 text-sm text-white min-w-[120px]"
-                                    >
-                                        <option value="">Select PIC</option>
-                                        {members.map(m => (
-                                            <option key={m.name} value={m.name}>{m.name}</option>
-                                        ))}
-                                    </select>
-                                </div>
                                 <button
                                     type="button"
-                                    onClick={handleBulkPicChange}
-                                    disabled={!assignPicValue.trim()}
-                                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-600 hover:bg-slate-500 disabled:opacity-50 text-sm font-medium"
+                                    onClick={handleBulkMarkComplete}
+                                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-green-600 hover:bg-green-500 text-sm font-medium"
+                                    title="Mark selected as complete (email sent)"
                                 >
-                                    <PencilSquareIcon className="w-4 h-4" />
-                                    Apply
+                                    <CheckCircleIcon className="w-4 h-4" />
+                                    Mark complete
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={handleBulkMarkPending}
+                                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-600 hover:bg-slate-500 text-sm font-medium"
+                                    title="Mark selected as pending"
+                                >
+                                    <CheckIcon className="w-4 h-4" />
+                                    Mark pending
                                 </button>
                             </div>
                             <button

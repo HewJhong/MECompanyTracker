@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useRouter } from 'next/router';
 import { signOut } from 'next-auth/react';
 import Layout from '../components/Layout';
 import {
@@ -8,21 +9,26 @@ import {
     ShieldCheckIcon,
     PaintBrushIcon,
     CheckCircleIcon,
-    CircleStackIcon, // Import added
-    ArrowPathIcon,   // Import added
-    ArrowRightIcon,  // Import added
-    ExclamationTriangleIcon, // Import added
-    QueueListIcon,    // Import added
+    ArrowRightIcon,
     XMarkIcon,
-    AdjustmentsHorizontalIcon // Import added
+    AdjustmentsHorizontalIcon,
 } from '@heroicons/react/24/solid';
 import { useCurrentUser } from '../contexts/CurrentUserContext';
 import DuplicateMergeModal from '../components/DuplicateMergeModal';
 import AdminRoute from '../components/AdminRoute';
 
 function SettingsContent() {
-    const { user } = useCurrentUser();
-    const [activeTab, setActiveTab] = useState<'profile' | 'notifications' | 'security' | 'appearance' | 'data' | 'limits'>('profile');
+    const router = useRouter();
+    const { user, realUser } = useCurrentUser();
+    const isSuperAdmin = realUser?.isSuperAdmin === true;
+    const [activeTab, setActiveTab] = useState<'profile' | 'notifications' | 'security' | 'appearance' | 'limits'>('profile');
+
+    useEffect(() => {
+        const tab = router.query.tab as string | undefined;
+        if (tab && ['profile', 'notifications', 'security', 'appearance', 'limits'].includes(tab)) {
+            setActiveTab(tab as typeof activeTab);
+        }
+    }, [router.query.tab]);
     const [saving, setSaving] = useState(false);
     const [saved, setSaved] = useState(false);
 
@@ -38,10 +44,18 @@ function SettingsContent() {
     const [showScanResults, setShowScanResults] = useState(false);
     const [selectedGroup, setSelectedGroup] = useState<any>(null); // For Modal
 
+    // Audit Recovery States
+    const [auditScanning, setAuditScanning] = useState(false);
+    const [auditMismatches, setAuditMismatches] = useState<any[]>([]);
+    const [auditApplying, setAuditApplying] = useState(false);
+    const [auditResult, setAuditResult] = useState<{ success: boolean; message: string } | null>(null);
+    const [auditWarning, setAuditWarning] = useState<string | null>(null);
+
     // ID Gap States
     const [gapScanning, setGapScanning] = useState(false);
-    const [gapResults, setGapResults] = useState<{ count: number; missingIds: string[]; minId: number; maxId: number; totalCompanies: number } | null>(null);
+    const [gapResults, setGapResults] = useState<{ count: number; missingIds: string[]; minId: number; maxId: number; totalCompanies: number; proposedChanges?: Array<{ oldId: string; newId: string; name: string }>; operationId?: string; impactSummary?: { dbRowsAffected: number; trackerRowsAffected: number; scheduleRowsAffected: number; threadHistoryRowsAffected: number } } | null>(null);
     const [fixingGaps, setFixingGaps] = useState(false);
+    const [showRenumberPreview, setShowRenumberPreview] = useState(false);
     const [showFixConfirm, setShowFixConfirm] = useState(false);
     const [fixResult, setFixResult] = useState<{ success: boolean; message: string } | null>(null);
 
@@ -203,6 +217,7 @@ function SettingsContent() {
     const handleScanIdGaps = async () => {
         setGapScanning(true);
         setFixResult(null);
+        setShowRenumberPreview(false);
         try {
             const res = await fetch('/api/id-gaps/scan');
             const data = await res.json();
@@ -217,21 +232,78 @@ function SettingsContent() {
     };
 
     const handleFixIdGaps = async () => {
+        const operationId = gapResults?.operationId;
+        if (!operationId) {
+            setFixResult({ success: false, message: 'No preview available. Run ID gap scan first to get operation ID.' });
+            return;
+        }
         setFixingGaps(true);
+        setFixResult(null);
         try {
-            const res = await fetch('/api/id-gaps/fix', { method: 'POST' });
+            const res = await fetch('/api/id-gaps/fix', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ operationId }),
+            });
             const data = await res.json();
             if (data.success) {
                 setFixResult({ success: true, message: `Successfully renumbered ${data.totalRenumbered} companies to close gaps.` });
-                setGapResults(null); // Clear results as they are invalid now
+                setGapResults(null);
                 setShowFixConfirm(false);
             } else {
-                setFixResult({ success: false, message: 'Failed to fix gaps.' });
+                setFixResult({ success: false, message: data.message || 'Failed to fix gaps.' });
             }
         } catch (error) {
             setFixResult({ success: false, message: 'An error occurred.' });
         } finally {
             setFixingGaps(false);
+        }
+    };
+
+    const handleAuditScan = async () => {
+        setAuditScanning(true);
+        setAuditResult(null);
+        setAuditMismatches([]);
+        setAuditWarning(null);
+        try {
+            const res = await fetch('/api/audit-recover-ids');
+            const data = await res.json();
+            if (data.success) {
+                setAuditMismatches(data.mismatches || []);
+                setAuditWarning(data.warning || null);
+                if (!data.mismatches?.length) {
+                    setAuditResult({ success: true, message: `No ID/name mismatches found. Audited ${data.companiesScanned} companies using logs.` });
+                }
+            } else {
+                setAuditResult({ success: false, message: data.message || 'Audit scan failed.' });
+            }
+        } catch (error) {
+            setAuditResult({ success: false, message: 'An error occurred during audit scan.' });
+        } finally {
+            setAuditScanning(false);
+        }
+    };
+
+    const handleAuditApply = async (corrections: Array<{ rowIndex: number; newName: string }>) => {
+        setAuditApplying(true);
+        setAuditResult(null);
+        try {
+            const res = await fetch('/api/audit-recover-ids', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ corrections }),
+            });
+            const data = await res.json();
+            if (data.success) {
+                setAuditResult({ success: true, message: `Applied ${data.applied} corrections from audit trail.` });
+                setAuditMismatches(prev => prev.filter(m => !corrections.some(c => c.rowIndex === m.rowIndex)));
+            } else {
+                setAuditResult({ success: false, message: data.message || 'Apply failed.' });
+            }
+        } catch (error) {
+            setAuditResult({ success: false, message: 'An error occurred.' });
+        } finally {
+            setAuditApplying(false);
         }
     };
 
@@ -351,8 +423,7 @@ function SettingsContent() {
         { id: 'notifications', label: 'Notifications', icon: BellIcon },
         { id: 'security', label: 'Security', icon: ShieldCheckIcon },
         { id: 'appearance', label: 'Appearance', icon: PaintBrushIcon },
-        { id: 'data', label: 'Data Management', icon: CircleStackIcon }, // New Tab
-        { id: 'limits', label: 'Sponsorship Limits', icon: AdjustmentsHorizontalIcon } // New Tab
+        { id: 'limits', label: 'Sponsorship Limits', icon: AdjustmentsHorizontalIcon }
     ];
 
     return (
@@ -614,665 +685,6 @@ function SettingsContent() {
                             </div>
                         )}
 
-                        {/* Data Management Tab */}
-                        {activeTab === 'data' && (
-                            <div className="p-6 space-y-6">
-                                <div>
-                                    <h2 className="text-xl font-semibold text-slate-900 mb-1">Data Management</h2>
-                                    <p className="text-sm text-slate-600">Synchronize and manage company data</p>
-                                </div>
-
-                                <div className="space-y-6">
-                                    {/* Sync Database */}
-                                    <div className="p-4 bg-slate-50 border border-slate-200 rounded-lg">
-                                        <div className="flex items-start gap-3">
-                                            <div className="p-2 bg-blue-100 rounded-lg">
-                                                <ArrowPathIcon className={`w-6 h-6 text-blue-600 ${syncing ? 'animate-spin' : ''}`} />
-                                            </div>
-                                            <div className="flex-1">
-                                                <h3 className="text-base font-medium text-slate-900">Synchronize Database</h3>
-                                                <p className="text-sm text-slate-600 mt-1">
-                                                    Aligns the Outreach Tracker with the Company Database. This will:
-                                                </p>
-                                                <ul className="list-disc list-inside text-sm text-slate-600 mt-2 space-y-1">
-                                                    <li>Add new companies found in Database to Tracker</li>
-                                                    <li>Update company names in Tracker to match Database</li>
-                                                </ul>
-
-                                                {syncResult && (
-                                                    <div className={`mt-4 p-3 rounded-lg text-sm font-medium ${syncResult.success ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'
-                                                        }`}>
-                                                        <p>{syncResult.message}</p>
-                                                        {syncResult.details && (
-                                                            <div className="mt-2 text-xs space-y-1">
-                                                                {syncResult.details.addedIds?.length > 0 && (
-                                                                    <div className="font-semibold">Added {syncResult.details.addedIds.length} new companies.</div>
-                                                                )}
-                                                                {syncResult.details.updatedNameIds?.length > 0 && (
-                                                                    <div className="font-semibold text-blue-700">Updated names for {syncResult.details.updatedNameIds.length} companies.</div>
-                                                                )}
-                                                                {syncResult.details.idChanges?.length > 0 && (
-                                                                    <div className="space-y-1">
-                                                                        <div className="font-semibold text-purple-700">Healed {syncResult.details.idChanges.length} ID Drifts:</div>
-                                                                        <ul className="list-disc list-inside bg-purple-100 p-2 rounded text-purple-800">
-                                                                            {syncResult.details.idChanges.map((c: any, i: number) => (
-                                                                                <li key={i}>
-                                                                                    {c.name}: <span className="font-mono">{c.oldId}</span> <ArrowRightIcon className="w-3 h-3 inline mx-1" /> <span className="font-mono font-bold">{c.newId}</span>
-                                                                                </li>
-                                                                            ))}
-                                                                        </ul>
-                                                                    </div>
-                                                                )}
-                                                                {syncResult.details.idNameMismatches?.length > 0 && (
-                                                                    <div className="space-y-1 mt-2">
-                                                                        <div className="font-semibold text-orange-700">ID/Name Mismatch — Manual Review ({syncResult.details.idNameMismatches.length}):</div>
-                                                                        <ul className="list-disc list-inside bg-orange-50 p-2 rounded text-orange-800 text-xs">
-                                                                            {syncResult.details.idNameMismatches.map((c: any, i: number) => (
-                                                                                <li key={i}>
-                                                                                    <span className="font-mono">{c.id}</span>: &quot;{c.trackerName}&quot; ≠ DB &quot;{c.dbName}&quot;
-                                                                                </li>
-                                                                            ))}
-                                                                        </ul>
-                                                                    </div>
-                                                                )}
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                )}
-
-                                                <div className="mt-4">
-                                                    {!showSyncPreview ? (
-                                                        <button
-                                                            onClick={() => handleSyncDatabase(true)}
-                                                            disabled={syncing}
-                                                            className="px-4 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                                                        >
-                                                            {syncing ? 'Analyzing...' : 'Preview Sync'}
-                                                        </button>
-                                                    ) : (
-                                                        <div className="space-y-4">
-                                                            {syncPreviewData?.success ? (
-                                                                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                                                                    <div className="flex justify-between items-start mb-4">
-                                                                        <div className="flex items-center gap-2 text-blue-800 font-bold">
-                                                                            <ExclamationTriangleIcon className="w-5 h-5" />
-                                                                            Sync Preview: Proposed Changes
-                                                                        </div>
-                                                                        <button
-                                                                            onClick={() => { setShowSyncPreview(false); setSyncPreviewData(null); }}
-                                                                            className="text-blue-400 hover:text-blue-600"
-                                                                        >
-                                                                            <XMarkIcon className="w-5 h-5" />
-                                                                        </button>
-                                                                    </div>
-
-                                                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                                                                        <div className="p-3 bg-white rounded border border-blue-100 shadow-sm">
-                                                                            <div className="text-xs font-bold text-slate-400 uppercase mb-1">Tracker Additions</div>
-                                                                            <div className="text-xl font-bold text-blue-700">+{syncPreviewData.stats.added}</div>
-                                                                            <div className="text-xs text-slate-500">New companies from Database</div>
-                                                                        </div>
-                                                                        <div className="p-3 bg-white rounded border border-green-100 shadow-sm">
-                                                                            <div className="text-xs font-bold text-slate-400 uppercase mb-1">Database Additions</div>
-                                                                            <div className="text-xl font-bold text-green-700">+{syncPreviewData.stats.addedToDatabase}</div>
-                                                                            <div className="text-xs text-slate-500">Add Tracker rows to Master DB</div>
-                                                                        </div>
-                                                                        <div className="p-3 bg-white rounded border border-amber-100 shadow-sm">
-                                                                            <div className="text-xs font-bold text-slate-400 uppercase mb-1">Corrections</div>
-                                                                            <div className="text-xl font-bold text-amber-600">{syncPreviewData.stats.updated}</div>
-                                                                            <div className="text-xs text-slate-500">Name updates & ID healing</div>
-                                                                        </div>
-                                                                        <div className="p-3 bg-white rounded border border-red-100 shadow-sm">
-                                                                            <div className="text-xs font-bold text-slate-400 uppercase mb-1">Tracker Cleanup</div>
-                                                                            <div className="text-xl font-bold text-red-600">-{syncPreviewData.stats.duplicatesRemoved}</div>
-                                                                            <div className="text-xs text-slate-500">Duplicate rows to remove</div>
-                                                                        </div>
-                                                                        {(syncPreviewData.stats.idNameMismatchesCount ?? 0) > 0 && (
-                                                                            <div className="p-3 bg-white rounded border border-orange-200 shadow-sm md:col-span-2">
-                                                                                <div className="text-xs font-bold text-slate-400 uppercase mb-1">Needs Manual Review</div>
-                                                                                <div className="text-xl font-bold text-orange-600">{syncPreviewData.stats.idNameMismatchesCount}</div>
-                                                                                <div className="text-xs text-slate-500">ID matched but name differs — status may belong to different company</div>
-                                                                            </div>
-                                                                        )}
-                                                                    </div>
-
-                                                                    <div className="space-y-6 mb-4 max-h-96 overflow-y-auto pr-2 custom-scrollbar">
-                                                                        {/* Target: Master Database */}
-                                                                        {(syncPreviewData.details.missingInDatabase.length > 0) && (
-                                                                            <div className="space-y-3">
-                                                                                <div className="flex items-center gap-2 text-green-700">
-                                                                                    <div className="h-px flex-1 bg-green-100"></div>
-                                                                                    <span className="text-[10px] font-bold uppercase tracking-wider">Target: Master Database</span>
-                                                                                    <div className="h-px flex-1 bg-green-100"></div>
-                                                                                </div>
-                                                                                <div className="bg-white p-3 rounded border border-green-100 shadow-sm">
-                                                                                    <div className="text-xs font-bold text-green-700 uppercase mb-2">Add New Companies to Master DB (+{syncPreviewData.details.missingInDatabase.length})</div>
-                                                                                    <ul className="space-y-1">
-                                                                                        {syncPreviewData.details.missingInDatabase.map((c: any, i: number) => (
-                                                                                            <li key={i} className="text-xs flex justify-between items-center text-slate-700">
-                                                                                                <span className="font-medium">{c.name}</span>
-                                                                                                <span className="font-mono text-slate-400 text-[10px]">{c.id}</span>
-                                                                                            </li>
-                                                                                        ))}
-                                                                                    </ul>
-                                                                                </div>
-                                                                            </div>
-                                                                        )}
-
-                                                                        {/* Target: Outreach Tracker */}
-                                                                        {(syncPreviewData.details.added.length > 0 ||
-                                                                            syncPreviewData.details.nameCorrections.length > 0 ||
-                                                                            syncPreviewData.details.idNameMismatches?.length > 0 ||
-                                                                            syncPreviewData.details.idChanges.length > 0 ||
-                                                                            syncPreviewData.details.duplicatesRemoved.length > 0) && (
-                                                                                <div className="space-y-3">
-                                                                                    <div className="flex items-center gap-2 text-blue-700">
-                                                                                        <div className="h-px flex-1 bg-blue-100"></div>
-                                                                                        <span className="text-[10px] font-bold uppercase tracking-wider">Target: Outreach Tracker</span>
-                                                                                        <div className="h-px flex-1 bg-blue-100"></div>
-                                                                                    </div>
-
-                                                                                    {syncPreviewData.details.added.length > 0 && (
-                                                                                        <div className="bg-white p-3 rounded border border-blue-100 shadow-sm">
-                                                                                            <div className="text-xs font-bold text-blue-700 uppercase mb-2">Add to Tracker (+{syncPreviewData.details.added.length})</div>
-                                                                                            <ul className="space-y-1">
-                                                                                                {syncPreviewData.details.added.map((c: any, i: number) => (
-                                                                                                    <li key={i} className="text-xs flex justify-between items-center text-slate-700">
-                                                                                                        <span className="font-medium">{c.name}</span>
-                                                                                                        <span className="font-mono text-slate-400 text-[10px]">{c.id}</span>
-                                                                                                    </li>
-                                                                                                ))}
-                                                                                            </ul>
-                                                                                        </div>
-                                                                                    )}
-
-                                                                                    {syncPreviewData.details.nameCorrections.length > 0 && (
-                                                                                        <div className="bg-white p-3 rounded border border-amber-100 shadow-sm">
-                                                                                            <div className="text-xs font-bold text-amber-700 uppercase mb-2">Correct Names in Tracker ({syncPreviewData.details.nameCorrections.length})</div>
-                                                                                            <ul className="space-y-2">
-                                                                                                {syncPreviewData.details.nameCorrections.map((c: any, i: number) => (
-                                                                                                    <li key={i} className="text-xs text-slate-700">
-                                                                                                        <div className="flex justify-between items-center mb-0.5">
-                                                                                                            <span className="font-mono text-slate-400 text-[10px]">{c.id}</span>
-                                                                                                        </div>
-                                                                                                        <div className="flex items-center gap-1.5 line-through text-slate-400 text-[10px]">
-                                                                                                            {c.oldName}
-                                                                                                        </div>
-                                                                                                        <div className="flex items-center gap-1.5 font-medium text-amber-700">
-                                                                                                            <ArrowRightIcon className="w-3 h-3" /> {c.newName}
-                                                                                                        </div>
-                                                                                                    </li>
-                                                                                                ))}
-                                                                                            </ul>
-                                                                                        </div>
-                                                                                    )}
-
-                                                                                    {syncPreviewData.details.idNameMismatches?.length > 0 && (
-                                                                                        <div className="bg-white p-3 rounded border border-orange-200 shadow-sm">
-                                                                                            <div className="text-xs font-bold text-orange-700 uppercase mb-2">ID/Name Mismatch — Manual Review ({syncPreviewData.details.idNameMismatches.length})</div>
-                                                                                            <p className="text-[10px] text-slate-500 mb-2">ID matches but tracker name differs; status/remarks may belong to a different company. Not auto-updating.</p>
-                                                                                            <ul className="space-y-1">
-                                                                                                {syncPreviewData.details.idNameMismatches.map((c: any, i: number) => (
-                                                                                                    <li key={i} className="text-xs text-slate-700 flex justify-between items-center gap-2">
-                                                                                                        <span className="font-mono text-slate-400 text-[10px]">{c.id}</span>
-                                                                                                        <span className="text-slate-400 truncate flex-1 text-right mx-1">{c.trackerName}</span>
-                                                                                                        <span className="text-orange-600 font-medium">≠</span>
-                                                                                                        <span className="text-slate-600 truncate flex-1">{c.dbName}</span>
-                                                                                                    </li>
-                                                                                                ))}
-                                                                                            </ul>
-                                                                                        </div>
-                                                                                    )}
-
-                                                                                    {syncPreviewData.details.idChanges.length > 0 && (
-                                                                                        <div className="bg-white p-3 rounded border border-purple-100 shadow-sm">
-                                                                                            <div className="text-xs font-bold text-purple-700 uppercase mb-2">Heal IDs in Tracker ({syncPreviewData.details.idChanges.length})</div>
-                                                                                            <ul className="space-y-1">
-                                                                                                {syncPreviewData.details.idChanges.map((c: any, i: number) => (
-                                                                                                    <li key={i} className="text-xs flex items-center gap-2 text-slate-700">
-                                                                                                        <span className="font-medium truncate flex-1">{c.name}</span>
-                                                                                                        <div className="flex items-center gap-1 font-mono text-[10px]">
-                                                                                                            <span className="text-slate-400">{c.oldId}</span>
-                                                                                                            <ArrowRightIcon className="w-2.5 h-2.5 text-purple-400" />
-                                                                                                            <span className="text-purple-700 font-bold">{c.newId}</span>
-                                                                                                        </div>
-                                                                                                    </li>
-                                                                                                ))}
-                                                                                            </ul>
-                                                                                        </div>
-                                                                                    )}
-
-                                                                                    {syncPreviewData.details.duplicatesRemoved.length > 0 && (
-                                                                                        <div className="bg-white p-3 rounded border border-red-100 shadow-sm">
-                                                                                            <div className="text-xs font-bold text-red-700 uppercase mb-2">Remove Duplicates from Tracker (-{syncPreviewData.details.duplicatesRemoved.length})</div>
-                                                                                            <ul className="space-y-1">
-                                                                                                {syncPreviewData.details.duplicatesRemoved.map((c: any, i: number) => (
-                                                                                                    <li key={i} className="text-xs flex justify-between items-center text-slate-700">
-                                                                                                        <div className="flex flex-col">
-                                                                                                            <span className="font-medium">{c.name}</span>
-                                                                                                            <span className="text-[10px] text-slate-400">Row {c.rowIndex} • {c.id}</span>
-                                                                                                        </div>
-                                                                                                        <span className="text-[10px] bg-red-50 text-red-600 px-1.5 py-0.5 rounded border border-red-100">Delete</span>
-                                                                                                    </li>
-                                                                                                ))}
-                                                                                            </ul>
-                                                                                        </div>
-                                                                                    )}
-                                                                                </div>
-                                                                            )}
-                                                                    </div>
-
-                                                                    <div className="flex gap-3">
-                                                                        <button
-                                                                            onClick={() => handleSyncDatabase(false)}
-                                                                            disabled={syncing}
-                                                                            className="px-4 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 flex items-center gap-2"
-                                                                        >
-                                                                            {syncing ? 'Syncing...' : 'Yes, Confirm & Sync'}
-                                                                        </button>
-                                                                        <button
-                                                                            onClick={() => { setShowSyncPreview(false); setSyncPreviewData(null); }}
-                                                                            disabled={syncing}
-                                                                            className="px-4 py-2 bg-white text-slate-700 border border-slate-300 font-medium rounded-lg hover:bg-slate-50 transition-colors"
-                                                                        >
-                                                                            Cancel
-                                                                        </button>
-                                                                    </div>
-                                                                </div>
-                                                            ) : (
-                                                                <div className="p-3 bg-red-50 text-red-700 border border-red-200 rounded-lg text-sm">
-                                                                    {syncPreviewData.message}
-                                                                </div>
-                                                            )}
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    {/* Reorder Rows */}
-                                    <div className="p-4 bg-slate-50 border border-slate-200 rounded-lg">
-                                        <div className="flex items-start gap-3">
-                                            <div className="p-2 bg-indigo-100 rounded-lg">
-                                                <svg className="w-6 h-6 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4h13M3 8h9m-9 4h6m4 0l4-4m0 0l4 4m-4-4v12" />
-                                                </svg>
-                                            </div>
-                                            <div className="flex-1">
-                                                <div className="flex justify-between items-start">
-                                                    <div>
-                                                        <h3 className="text-base font-medium text-slate-900">Reorder Rows</h3>
-                                                        <p className="text-sm text-slate-600 mt-1">
-                                                            Sort all rows in the Database sheet by Company ID to keep it organized (especially after adding new contacts).
-                                                        </p>
-                                                    </div>
-                                                    <button
-                                                        onClick={handleReorderRows}
-                                                        disabled={reordering}
-                                                        className="px-3 py-1.5 text-sm bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50"
-                                                    >
-                                                        {reordering ? 'Reordering...' : 'Reorder Rows'}
-                                                    </button>
-                                                </div>
-
-                                                {/* Reorder Result */}
-                                                {reorderResult && (
-                                                    <div className={`mt-4 p-3 rounded-lg text-sm ${reorderResult.success
-                                                        ? 'bg-green-50 text-green-700 border border-green-200'
-                                                        : 'bg-red-50 text-red-700 border border-red-200'
-                                                        }`}>
-                                                        <p className="font-medium">{reorderResult.message}</p>
-                                                    </div>
-                                                )}
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    {/* Duplicate Management */}
-                                    <div className="p-4 bg-slate-50 border border-slate-200 rounded-lg">
-                                        <div className="flex items-start gap-3">
-                                            <div className="p-2 bg-purple-100 rounded-lg">
-                                                <CircleStackIcon className="w-6 h-6 text-purple-600" />
-                                            </div>
-                                            <div className="flex-1">
-                                                <div className="flex justify-between items-start">
-                                                    <div>
-                                                        <h3 className="text-base font-medium text-slate-900">Duplicate Management</h3>
-                                                        <p className="text-sm text-slate-600 mt-1">
-                                                            Find companies with identical names but different IDs.
-                                                        </p>
-                                                    </div>
-                                                    <button
-                                                        onClick={handleScanDuplicates}
-                                                        disabled={scanning}
-                                                        className="px-3 py-1.5 text-sm bg-purple-600 text-white font-medium rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-50"
-                                                    >
-                                                        {scanning ? 'Scanning...' : 'Scan for Duplicates'}
-                                                    </button>
-                                                </div>
-
-                                                {/* Scan Results */}
-                                                {showScanResults && !scanning && (
-                                                    <div className="mt-4 space-y-3">
-                                                        {duplicates.length === 0 ? (
-                                                            <div className="p-3 bg-green-50 text-green-700 border border-green-200 rounded-lg text-sm">
-                                                                No duplicates found! Your database looks clean.
-                                                            </div>
-                                                        ) : (
-                                                            <div className="space-y-3">
-                                                                <p className="text-sm font-medium text-slate-700">Found {duplicates.length} potential duplicate groups:</p>
-                                                                {duplicates.map((group, idx) => (
-                                                                    <div key={idx} className="bg-white border border-slate-200 rounded-lg p-3 shadow-sm">
-                                                                        <div className="flex justify-between items-center mb-2">
-                                                                            <h4 className="font-medium text-slate-900">{group.name}</h4>
-                                                                            <span className="text-xs bg-slate-100 text-slate-600 px-2 py-1 rounded-full">
-                                                                                {group.count} records
-                                                                            </span>
-                                                                        </div>
-                                                                        <div className="space-y-1 mb-3">
-                                                                            {group.companies.map((c: any) => (
-                                                                                <div key={c.id} className="text-xs flex gap-2 text-slate-600">
-                                                                                    <span className="font-mono bg-slate-50 px-1 border rounded">{c.id}</span>
-                                                                                    <span className={c.relationshipStatus === 'Registered' ? 'text-green-600' : ''}>{c.contactStatus || 'To Contact'}{c.relationshipStatus ? ` · ${c.relationshipStatus}` : ''}</span>
-                                                                                    {c.pic && <span className="text-slate-400">• {c.pic}</span>}
-                                                                                </div>
-                                                                            ))}
-                                                                        </div>
-                                                                        <button
-                                                                            className="w-full py-1.5 text-xs font-medium text-purple-700 bg-purple-50 hover:bg-purple-100 rounded border border-purple-200 transition-colors"
-                                                                            onClick={() => setSelectedGroup(group)}
-                                                                        >
-                                                                            Resolve Conflict
-                                                                        </button>
-                                                                    </div>
-                                                                ))}
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                )}
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    {/* ID Gap Management */}
-                                    <div className="p-4 bg-slate-50 border border-slate-200 rounded-lg">
-                                        <div className="flex items-start gap-3">
-                                            <div className="p-2 bg-amber-100 rounded-lg">
-                                                <QueueListIcon className="w-6 h-6 text-amber-600" />
-                                            </div>
-                                            <div className="flex-1">
-                                                <div className="flex justify-between items-start">
-                                                    <div>
-                                                        <h3 className="text-base font-medium text-slate-900">ID Gap Management</h3>
-                                                        <p className="text-sm text-slate-600 mt-1">
-                                                            Identify and fix missing company IDs to keep numbering sequential.
-                                                        </p>
-                                                    </div>
-                                                    <button
-                                                        onClick={handleScanIdGaps}
-                                                        disabled={gapScanning}
-                                                        className="px-3 py-1.5 text-sm bg-amber-600 text-white font-medium rounded-lg hover:bg-amber-700 transition-colors disabled:opacity-50"
-                                                    >
-                                                        {gapScanning ? 'Scanning...' : 'Scan for Gaps'}
-                                                    </button>
-                                                </div>
-
-                                                {/* Fix Result Message */}
-                                                {fixResult && (
-                                                    <div className={`mt-4 p-3 rounded-lg text-sm font-medium ${fixResult.success ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'
-                                                        }`}>
-                                                        {fixResult.message}
-                                                    </div>
-                                                )}
-
-                                                {/* Gap Results */}
-                                                {gapResults && (
-                                                    <div className="mt-4 space-y-4">
-                                                        {gapResults.count === 0 ? (
-                                                            <div className="p-3 bg-green-50 text-green-700 border border-green-200 rounded-lg text-sm flex items-center gap-2">
-                                                                <CheckCircleIcon className="w-5 h-5" />
-                                                                No gaps found! IDs are sequential from ME-{String(gapResults.minId).padStart(4, '0')} to ME-{String(gapResults.maxId).padStart(4, '0')}.
-                                                            </div>
-                                                        ) : (
-                                                            <div className="bg-white border border-slate-200 rounded-lg p-4 shadow-sm">
-                                                                <div className="flex items-start gap-3 mb-4">
-                                                                    <ExclamationTriangleIcon className="w-5 h-5 text-amber-500 mt-0.5" />
-                                                                    <div>
-                                                                        <h4 className="font-medium text-slate-900">Found {gapResults.count} missing IDs</h4>
-                                                                        <p className="text-sm text-slate-600 mt-1">
-                                                                            Range: ME-{String(gapResults.minId).padStart(4, '0')} — ME-{String(gapResults.maxId).padStart(4, '0')}
-                                                                        </p>
-                                                                    </div>
-                                                                </div>
-
-                                                                <div className="bg-slate-50 rounded border border-slate-200 p-3 mb-4 max-h-32 overflow-y-auto">
-                                                                    <p className="text-xs font-semibold text-slate-500 mb-2 uppercase">Missing IDs:</p>
-                                                                    <div className="flex flex-wrap gap-2">
-                                                                        {gapResults.missingIds.map(id => (
-                                                                            <span key={id} className="text-xs font-mono bg-white px-2 py-1 rounded border border-slate-200 text-slate-600">
-                                                                                {id}
-                                                                            </span>
-                                                                        ))}
-                                                                    </div>
-                                                                </div>
-
-                                                                {!showFixConfirm ? (
-                                                                    <button
-                                                                        onClick={() => setShowFixConfirm(true)}
-                                                                        className="text-sm font-medium text-amber-700 hover:text-amber-800 underline"
-                                                                    >
-                                                                        Fix these gaps (Renumber Companies)
-                                                                    </button>
-                                                                ) : (
-                                                                    <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
-                                                                        <p className="text-sm font-bold text-amber-800 mb-2">Warning: Breaking Change</p>
-                                                                        <p className="text-xs text-amber-700 mb-3">
-                                                                            This will renumber approximately {gapResults.totalCompanies} companies to close the gaps.
-                                                                            Any external links or bookmarks referencing specific Company IDs (e.g. ME-0669) will point to different companies.
-                                                                            Data integrity within the app is preserved.
-                                                                        </p>
-                                                                        <div className="flex gap-2">
-                                                                            <button
-                                                                                onClick={handleFixIdGaps}
-                                                                                disabled={fixingGaps}
-                                                                                className="px-3 py-1.5 text-sm bg-amber-600 text-white font-medium rounded hover:bg-amber-700 transition-colors disabled:opacity-50"
-                                                                            >
-                                                                                {fixingGaps ? 'Fixing...' : 'Yes, Renumber Companies'}
-                                                                            </button>
-                                                                            <button
-                                                                                onClick={() => setShowFixConfirm(false)}
-                                                                                disabled={fixingGaps}
-                                                                                className="px-3 py-1.5 text-sm bg-white text-slate-700 border border-slate-300 font-medium rounded hover:bg-slate-50 transition-colors"
-                                                                            >
-                                                                                Cancel
-                                                                            </button>
-                                                                        </div>
-                                                                    </div>
-                                                                )}
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                )}
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    {/* Company Insertion at Specific ID */}
-                                    <div className="p-4 bg-slate-50 border border-slate-200 rounded-lg">
-                                        <div className="flex items-start gap-3">
-                                            <div className="p-2 bg-green-100 rounded-lg">
-                                                <svg className="w-6 h-6 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v3m0 0v3m0-3h3m-3 0H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                                </svg>
-                                            </div>
-                                            <div className="flex-1">
-                                                <h3 className="text-base font-medium text-slate-900">Insert Company at Specific ID</h3>
-                                                <p className="text-sm text-slate-600 mt-1">
-                                                    Add a new company at a specific ID and shift all subsequent companies down.
-                                                </p>
-
-                                                {/* Insert Result Message */}
-                                                {insertResult && (
-                                                    <div className={`mt-4 p-3 rounded-lg text-sm font-medium ${insertResult.success
-                                                        ? 'bg-green-50 text-green-700 border border-green-200'
-                                                        : 'bg-red-50 text-red-700 border border-red-200'
-                                                        }`}>
-                                                        {insertResult.message}
-                                                    </div>
-                                                )}
-
-                                                <div className="mt-4 space-y-3">
-                                                    <div>
-                                                        <label className="block text-sm font-medium text-slate-700 mb-2">
-                                                            Insert at ID (e.g., ME-0042)
-                                                        </label>
-                                                        <input
-                                                            type="text"
-                                                            value={insertIdInput}
-                                                            onChange={(e) => setInsertIdInput(e.target.value.toUpperCase())}
-                                                            placeholder="ME-0042"
-                                                            className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 font-mono"
-                                                        />
-                                                    </div>
-
-                                                    <div>
-                                                        <label className="block text-sm font-medium text-slate-700 mb-2">
-                                                            Company Name *
-                                                        </label>
-                                                        <input
-                                                            type="text"
-                                                            value={insertCompanyName}
-                                                            onChange={(e) => setInsertCompanyName(e.target.value)}
-                                                            placeholder="Company Name"
-                                                            className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
-                                                        />
-                                                    </div>
-
-                                                    <div>
-                                                        <label className="block text-sm font-medium text-slate-700 mb-2">
-                                                            Discipline (Optional)
-                                                        </label>
-                                                        <input
-                                                            type="text"
-                                                            value={insertDiscipline}
-                                                            onChange={(e) => setInsertDiscipline(e.target.value)}
-                                                            placeholder="Engineering, Finance, etc."
-                                                            className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
-                                                        />
-                                                    </div>
-
-                                                    {!showInsertConfirm ? (
-                                                        <button
-                                                            onClick={() => {
-                                                                if (!insertIdInput || !insertCompanyName) {
-                                                                    alert('Please enter both ID and Company Name');
-                                                                    return;
-                                                                }
-                                                                if (!/^ME-\d{4}$/.test(insertIdInput)) {
-                                                                    alert('Invalid ID format. Expected ME-XXXX (e.g., ME-0042)');
-                                                                    return;
-                                                                }
-                                                                setShowInsertConfirm(true);
-                                                            }}
-                                                            disabled={!insertIdInput || !insertCompanyName}
-                                                            className="px-4 py-2 bg-green-600 text-white font-medium rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                                                        >
-                                                            Insert Company
-                                                        </button>
-                                                    ) : (
-                                                        <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-                                                            <div className="flex items-start gap-2 mb-3">
-                                                                <ExclamationTriangleIcon className="w-5 h-5 text-red-600 mt-0.5" />
-                                                                <div>
-                                                                    <p className="text-sm font-bold text-red-800 mb-1">Critical: Breaking Change</p>
-                                                                    <p className="text-xs text-red-700 mb-2">
-                                                                        Inserting at {insertIdInput} will shift ALL companies with IDs ≥ {insertIdInput} down by one.
-                                                                        This means:
-                                                                    </p>
-                                                                    <ul className="text-xs text-red-700 list-disc list-inside space-y-1 mb-3">
-                                                                        <li>External links to companies will break</li>
-                                                                        <li>Bookmarks will point to different companies</li>
-                                                                        <li>Data integrity is preserved but IDs change</li>
-                                                                    </ul>
-                                                                    <p className="text-xs font-semibold text-red-800">
-                                                                        You will insert: "{insertCompanyName}" at {insertIdInput}
-                                                                    </p>
-                                                                </div>
-                                                            </div>
-                                                            <div className="flex gap-2">
-                                                                <button
-                                                                    onClick={handleInsertCompany}
-                                                                    disabled={insertingCompany}
-                                                                    className="px-3 py-1.5 text-sm bg-red-600 text-white font-medium rounded hover:bg-red-700 transition-colors disabled:opacity-50"
-                                                                >
-                                                                    {insertingCompany ? 'Inserting...' : 'Yes, Insert and Shift Companies'}
-                                                                </button>
-                                                                <button
-                                                                    onClick={() => setShowInsertConfirm(false)}
-                                                                    disabled={insertingCompany}
-                                                                    className="px-3 py-1.5 text-sm bg-white text-slate-700 border border-slate-300 font-medium rounded hover:bg-slate-50 transition-colors"
-                                                                >
-                                                                    Cancel
-                                                                </button>
-                                                            </div>
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    {/* Import Previous Responses */}
-                                    <div className="p-4 bg-slate-50 border border-slate-200 rounded-lg">
-                                        <div className="flex items-start gap-3">
-                                            <div className="p-2 bg-blue-100 rounded-lg">
-                                                <svg className="w-6 h-6 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10" />
-                                                </svg>
-                                            </div>
-                                            <div className="flex-1">
-                                                <div className="flex justify-between items-start">
-                                                    <div>
-                                                        <h3 className="text-base font-medium text-slate-900">Import Previous Responses</h3>
-                                                        <p className="text-sm text-slate-600 mt-1">
-                                                            Sync "Previous Response" data from the original manual sheet by matching company names.
-                                                        </p>
-                                                    </div>
-                                                    <button
-                                                        onClick={handleImportPreviousResponses}
-                                                        disabled={importingResponses}
-                                                        className="px-3 py-1.5 text-sm bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
-                                                    >
-                                                        {importingResponses ? 'Importing...' : 'Import Responses'}
-                                                    </button>
-                                                </div>
-
-                                                {/* Import Result */}
-                                                {importResult && (
-                                                    <div className={`mt-4 p-3 rounded-lg text-sm ${importResult.success
-                                                        ? 'bg-green-50 text-green-700 border border-green-200'
-                                                        : 'bg-red-50 text-red-700 border border-red-200'
-                                                        }`}>
-                                                        <p className="font-medium mb-2">{importResult.message}</p>
-                                                        {importResult.success && importResult.stats && (
-                                                            <div className="text-xs space-y-1">
-                                                                <p>• Total companies in original sheet: {importResult.stats.totalInOriginal}</p>
-                                                                <p>• Successfully matched: {importResult.stats.matched}</p>
-                                                                {importResult.stats.totalUnmatched > 0 && (
-                                                                    <p className="text-amber-700">• Not found in tracker: {importResult.stats.totalUnmatched}</p>
-                                                                )}
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                )}
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        )}
-
                         {/* Limits Tab */}
                         {activeTab === 'limits' && (
                             <div className="p-6 space-y-6">
@@ -1360,8 +772,8 @@ function SettingsContent() {
                             </div>
                         )}
 
-                        {/* Save Button (Hide for Data and Limits tabs as they have their own save mechanisms) */}
-                        {activeTab !== 'data' && activeTab !== 'limits' && (
+                        {/* Save Button (Hide for Limits tab as it has its own save mechanism) */}
+                        {activeTab !== 'limits' && (
                             <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-3">
                                 {saved && (
                                     <div className="flex items-center gap-2 text-green-700">

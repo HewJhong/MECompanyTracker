@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getGoogleSheetsClient } from '../../lib/google-sheets';
+import { getCompanyDatabaseSheet } from '../../lib/spreadsheet-utils';
 import { cache } from '../../lib/cache';
 import { requireEffectiveCanEditCompanies } from '../../lib/authz';
 import { formatActorLabel } from '../../lib/authz';
@@ -30,8 +31,7 @@ export default async function handler(
         }
 
         const metadata = await sheets.spreadsheets.get({ spreadsheetId });
-        const dbSheet = metadata.data.sheets?.find(s => s.properties?.title?.includes('[AUTOMATION ONLY]'));
-        const sheetName = dbSheet?.properties?.title || metadata.data.sheets?.[0].properties?.title;
+        const { title: sheetName } = getCompanyDatabaseSheet(metadata.data.sheets);
 
         // Get current activeMethods to append/remove correctly
         const dbResponse = await sheets.spreadsheets.values.get({
@@ -68,14 +68,23 @@ export default async function handler(
         const spreadsheetId2 = process.env.SPREADSHEET_ID_2;
         if (spreadsheetId2) {
             const timestamp = new Date().toISOString();
+            const actorName = formatActorLabel(ctx);
             const action = isMethodActive
                 ? `Marked ${method} as currently contacting (row ${rowNumber})`
                 : `Unmarked ${method} as currently contacting (row ${rowNumber})`;
             await sheets.spreadsheets.values.append({
                 spreadsheetId: spreadsheetId2,
-                range: `Thread_History!A:D`,
+                range: 'Thread_History!A:D',
                 valueInputOption: 'USER_ENTERED',
-                requestBody: { values: [[timestamp, companyId, formatActorLabel(ctx), action]] }
+                requestBody: { values: [[timestamp, companyId, actorName, action]] },
+            });
+            await sheets.spreadsheets.values.append({
+                spreadsheetId: spreadsheetId2,
+                range: 'Logs_DoNotEdit!A:E',
+                valueInputOption: 'RAW',
+                requestBody: {
+                    values: [[timestamp, actorName, 'SET_PRIMARY_CONTACT', `${companyId} – ${action}`, JSON.stringify({ rowNumber, method, isMethodActive })]],
+                },
             });
         }
 

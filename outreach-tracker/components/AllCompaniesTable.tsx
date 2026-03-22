@@ -145,6 +145,14 @@ const DEFAULT_VISIBLE_COLUMNS: Record<ColumnKey, boolean> = {
     followUps: true,
 };
 
+const UNMARKED_TIER = 'Not set';
+
+const SCHEDULE_FILTER_OPTIONS = [
+    { value: 'upcoming', label: 'Has upcoming schedule' },
+    { value: 'overdue', label: 'Overdue (email not sent)' },
+    { value: 'none', label: 'No schedule' },
+] as const;
+
 interface Company {
     id: string;
     name: string;
@@ -319,7 +327,7 @@ function ColumnPicker({
     );
 }
 
-type SortField = 'id' | 'name' | 'contactStatus' | 'assignedTo' | 'lastUpdated' | 'followUpsCompleted' | 'targetSponsorshipTier';
+type SortField = 'id' | 'name' | 'contactStatus' | 'assignedTo' | 'scheduled' | 'lastUpdated' | 'followUpsCompleted' | 'targetSponsorshipTier';
 type SortDirection = 'asc' | 'desc';
 
 export default function AllCompaniesTable({
@@ -361,6 +369,7 @@ export default function AllCompaniesTable({
         discipline: [] as string[],
         targetSponsorshipTier: [] as string[],
         assignedTo: [] as string[],
+        scheduled: [] as string[],
         contact: '',
         emails: '',
         phones: ''
@@ -449,10 +458,10 @@ export default function AllCompaniesTable({
         });
         return Array.from(all).sort();
     }, [companies]);
-    const targetTiers = useMemo(() =>
-        Array.from(new Set(companies.map(c => c.targetSponsorshipTier).filter(Boolean) as string[])).sort(),
-        [companies]
-    );
+    const targetTiers = useMemo(() => {
+        const tiers = Array.from(new Set(companies.map(c => c.targetSponsorshipTier).filter(Boolean) as string[])).sort();
+        return [UNMARKED_TIER, ...tiers];
+    }, [companies]);
     const assignees = useMemo(() =>
         Array.from(new Set(companies.map(c => c.assignedTo))).sort(),
         [companies]
@@ -503,7 +512,10 @@ export default function AllCompaniesTable({
             const matchesRelationshipStatus = columnFilters.relationshipStatus.length === 0 || columnFilters.relationshipStatus.includes(company.relationshipStatus);
             const companyDisciplines = company.discipline ? company.discipline.split(',').map((d: string) => d.trim()).filter(Boolean) : [];
             const matchesDiscipline = columnFilters.discipline.length === 0 || columnFilters.discipline.some((d: string) => companyDisciplines.includes(d));
-            const matchesTier = columnFilters.targetSponsorshipTier.length === 0 || (company.targetSponsorshipTier && columnFilters.targetSponsorshipTier.includes(company.targetSponsorshipTier));
+            const hasTier = !!(company.targetSponsorshipTier && String(company.targetSponsorshipTier).trim());
+            const matchesTier = columnFilters.targetSponsorshipTier.length === 0 || columnFilters.targetSponsorshipTier.some((opt: string) =>
+                opt === UNMARKED_TIER ? !hasTier : (hasTier && company.targetSponsorshipTier === opt)
+            );
             const matchesAssignee = columnFilters.assignedTo.length === 0 || columnFilters.assignedTo.includes(company.assignedTo);
             const matchesContact =
                 !columnFilters.contact.trim() ||
@@ -512,20 +524,42 @@ export default function AllCompaniesTable({
             const matchesEmails = !columnFilters.emails.trim() || normalise(company.email).includes(normalise(columnFilters.emails));
             const matchesPhones = !columnFilters.phones.trim() || normalise(company.phone || '').includes(normalise(columnFilters.phones));
 
-            return matchesId && matchesName && matchesContactStatus && matchesRelationshipStatus && matchesDiscipline && matchesTier && matchesAssignee && matchesContact && matchesEmails && matchesPhones;
+            // Schedule filter: All | Has upcoming | Overdue (email not sent) | No schedule
+            const hasSchedule = !!(company.scheduledDate && company.scheduledTime);
+            const scheduleOpts = columnFilters.scheduled;
+            const matchesScheduled = scheduleOpts.length === 0 || scheduleOpts.some((opt: string) => {
+                if (opt === 'Has upcoming schedule') return hasSchedule && !company.scheduledIsOverdue;
+                if (opt === 'Overdue (email not sent)') return company.scheduledIsOverdue;
+                if (opt === 'No schedule') return !hasSchedule;
+                return false;
+            });
+
+            return matchesId && matchesName && matchesContactStatus && matchesRelationshipStatus && matchesDiscipline && matchesTier && matchesAssignee && matchesContact && matchesEmails && matchesPhones && matchesScheduled;
         });
 
-        result.sort((a, b) => {
-            let aValue: any = a[sortField];
-            let bValue: any = b[sortField];
-            if (sortField === 'lastUpdated') {
-                aValue = new Date(aValue).getTime();
-                bValue = new Date(bValue).getTime();
-            } else {
-                aValue = aValue?.toLowerCase() || '';
-                bValue = bValue?.toLowerCase() || '';
+        const getScheduledTimestamp = (c: Company) => {
+            if (c.scheduledDate && c.scheduledTime) {
+                const dt = `${c.scheduledDate}T${c.scheduledTime}`;
+                const ts = new Date(dt).getTime();
+                return isNaN(ts) ? Infinity : ts;
             }
-            return sortDirection === 'asc' ? (aValue > bValue ? 1 : -1) : (aValue < bValue ? 1 : -1);
+            return Infinity; // no schedule sorts last
+        };
+
+        result.sort((a, b) => {
+            let aVal: string | number = (a as unknown as Record<string, unknown>)[sortField] as string | number;
+            let bVal: string | number = (b as unknown as Record<string, unknown>)[sortField] as string | number;
+            if (sortField === 'lastUpdated') {
+                aVal = new Date(aVal as string | number | Date).getTime();
+                bVal = new Date(bVal as string | number | Date).getTime();
+            } else if (sortField === 'scheduled') {
+                aVal = getScheduledTimestamp(a);
+                bVal = getScheduledTimestamp(b);
+            } else {
+                aVal = (typeof aVal === 'string' ? aVal : String(aVal ?? '')).toLowerCase();
+                bVal = (typeof bVal === 'string' ? bVal : String(bVal ?? '')).toLowerCase();
+            }
+            return sortDirection === 'asc' ? (aVal > bVal ? 1 : -1) : (aVal < bVal ? 1 : -1);
         });
 
         return result;
@@ -613,13 +647,13 @@ export default function AllCompaniesTable({
     const hasColumnFilters = !!(columnFilters.id || columnFilters.name || columnFilters.contactStatus.length > 0 ||
         columnFilters.relationshipStatus.length > 0 || columnFilters.discipline.length > 0 ||
         columnFilters.targetSponsorshipTier.length > 0 || columnFilters.assignedTo.length > 0 ||
-        columnFilters.contact || columnFilters.emails || columnFilters.phones);
+        columnFilters.scheduled.length > 0 || columnFilters.contact || columnFilters.emails || columnFilters.phones);
     const hasAnyFilter = !!debouncedSearch || hasColumnFilters;
 
     const clearAllFilters = () => {
         setDebouncedSearch('');
         if (typeof window !== 'undefined') sessionStorage.setItem(GLOBAL_SEARCH_STORAGE_KEY, '');
-        setColumnFilters({ id: '', name: '', contactStatus: [], relationshipStatus: [], discipline: [], targetSponsorshipTier: [], assignedTo: [], contact: '', emails: '', phones: '' });
+        setColumnFilters({ id: '', name: '', contactStatus: [], relationshipStatus: [], discipline: [], targetSponsorshipTier: [], assignedTo: [], scheduled: [], contact: '', emails: '', phones: '' });
     };
 
     // Dynamic column count for colSpan
@@ -766,7 +800,9 @@ export default function AllCompaniesTable({
                                 )}
                                 {col.scheduled && (
                                     <th className="px-6 py-3 text-xs font-medium text-slate-600 tracking-wider bg-slate-50 whitespace-nowrap" style={{ width: COLUMN_WIDTHS.scheduled }}>
-                                        <span>Scheduled</span>
+                                        <button onClick={() => handleSort('scheduled')} className="flex items-center gap-2 hover:text-slate-900 transition-colors">
+                                            Scheduled <SortIcon field="scheduled" />
+                                        </button>
                                     </th>
                                 )}
                                 {col.lastUpdated && (
@@ -865,7 +901,16 @@ export default function AllCompaniesTable({
                                         <FilterRowMultiSelect options={assignees} selected={columnFilters.assignedTo} onChange={s => setColumnFilters({ ...columnFilters, assignedTo: s })} />
                                     </th>
                                 )}
-                                {col.scheduled && <th className="px-6 py-2 bg-white" style={{ width: COLUMN_WIDTHS.scheduled }} />}
+                                {col.scheduled && (
+                                    <th className="px-6 py-2 bg-white" style={{ width: COLUMN_WIDTHS.scheduled }}>
+                                        <FilterRowMultiSelect
+                                            options={SCHEDULE_FILTER_OPTIONS.map(o => o.label)}
+                                            selected={columnFilters.scheduled}
+                                            onChange={s => setColumnFilters({ ...columnFilters, scheduled: s })}
+                                            placeholder="Schedule…"
+                                        />
+                                    </th>
+                                )}
                                 {col.lastUpdated && <th className="px-6 py-2 bg-white" style={{ width: COLUMN_WIDTHS.lastUpdated }} />}
                                 {col.followUps && <th className="px-6 py-2 bg-white" style={{ width: COLUMN_WIDTHS.followUps }} />}
                             </tr>

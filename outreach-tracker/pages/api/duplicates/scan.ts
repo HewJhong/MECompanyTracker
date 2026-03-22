@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getGoogleSheetsClient } from '../../../lib/google-sheets';
+import { getCompanyDatabaseSheet } from '../../../lib/spreadsheet-utils';
 
 export default async function handler(
     req: NextApiRequest,
@@ -32,8 +33,7 @@ export default async function handler(
         // 2a. Fetch Contacts from Database
         const databaseSpreadsheetId = process.env.SPREADSHEET_ID_1;
         const dbMetadata = await sheets.spreadsheets.get({ spreadsheetId: databaseSpreadsheetId });
-        const dbSheet = dbMetadata.data.sheets?.find(s => s.properties?.title?.includes('[AUTOMATION ONLY]'));
-        const dbSheetName = dbSheet?.properties?.title;
+        const { title: dbSheetName } = getCompanyDatabaseSheet(dbMetadata.data.sheets);
 
         const dbResponse = await sheets.spreadsheets.values.get({
             spreadsheetId: databaseSpreadsheetId,

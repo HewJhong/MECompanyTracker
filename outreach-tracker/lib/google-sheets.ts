@@ -1,6 +1,8 @@
 import { google } from 'googleapis';
+import { validateEnv } from './env-check';
 
 export async function getGoogleSheetsClient() {
+    validateEnv();
   try {
     const scopes = ['https://www.googleapis.com/auth/spreadsheets'];
     

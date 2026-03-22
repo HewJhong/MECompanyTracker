@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getGoogleSheetsClient } from '../../lib/google-sheets';
+import { getCompanyDatabaseSheet } from '../../lib/spreadsheet-utils';
 import { cache } from '../../lib/cache';
 import { deleteEmailScheduleEntriesForCompanies } from '../../lib/email-schedule';
 import { syncDailyStats } from '../../lib/daily-stats';
@@ -30,11 +31,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
         // 1. Company database (SPREADSHEET_ID_1): delete all rows where column A = companyId
         const dbMeta = await sheets.spreadsheets.get({ spreadsheetId: databaseSpreadsheetId });
-        const dbSheet = dbMeta.data.sheets?.find(s => s.properties?.title?.includes('[AUTOMATION ONLY]'));
-        const dbSheetId = dbSheet?.properties?.sheetId;
-        const dbSheetName = dbSheet?.properties?.title;
-        if (!dbSheetName || dbSheetId === undefined) {
-            return res.status(500).json({ message: 'Database sheet not found' });
+        const { title: dbSheetName, sheetId: dbSheetId } = getCompanyDatabaseSheet(dbMeta.data.sheets);
+        if (dbSheetId === undefined) {
+            return res.status(500).json({ message: 'Database sheet ID not available for row deletion' });
         }
 
         const dbColA = await sheets.spreadsheets.values.get({
@@ -110,14 +109,25 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             console.warn('Could not clear email schedule for deleted company:', scheduleErr);
         }
 
-        // 4. Log and cache
+        // 4. Log to Thread_History and Logs_DoNotEdit (intentionally retained as immutable audit records).
+        // Deleted companies are removed from live Database/Tracker rows, but Thread_History and
+        // Logs_DoNotEdit entries are preserved for audit purposes. History consumers should handle
+        // deleted company IDs gracefully (e.g. display as "Unknown" or filter).
         const timestamp = new Date().toISOString();
+        const actorName = formatActorLabel(ctx);
+        const deleteRemark = `Company ${companyId} deleted from tracker and database`;
         await sheets.spreadsheets.values.append({
             spreadsheetId: trackerSpreadsheetId,
             range: 'Thread_History!A:D',
             valueInputOption: 'USER_ENTERED',
+            requestBody: { values: [[timestamp, companyId, actorName, deleteRemark]] },
+        });
+        await sheets.spreadsheets.values.append({
+            spreadsheetId: trackerSpreadsheetId,
+            range: 'Logs_DoNotEdit!A:E',
+            valueInputOption: 'RAW',
             requestBody: {
-                values: [[timestamp, companyId, formatActorLabel(ctx), `Company ${companyId} deleted from tracker and database`]],
+                values: [[timestamp, actorName, 'DELETE_COMPANY', `${companyId} – ${deleteRemark}`, JSON.stringify({ companyId, dbRowsDeleted: dbRowNumbersToDelete.length })]],
             },
         });
         cache.delete('sheet_data');

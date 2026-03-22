@@ -5,6 +5,8 @@ import { getCommitteeMembers } from '../../lib/committee-members';
 import { getGoogleSheetsClient } from '../../lib/google-sheets';
 import { cache } from '../../lib/cache';
 import { syncDailyStats } from '../../lib/daily-stats';
+import { invalidateScheduleCache } from '../../lib/email-schedule';
+import { getCompanyDatabaseSheet } from '../../lib/spreadsheet-utils';
 
 interface NameMismatch {
     rowIndex: number;
@@ -82,8 +84,8 @@ export default async function handler(
         const userEmail = session.user.email.toLowerCase().trim();
         const user = members.find(m => m.email?.toLowerCase().trim() === userEmail);
         const roleLower = user?.role?.toLowerCase() || '';
-        if (!user || (roleLower !== 'admin' && roleLower !== 'superadmin')) {
-            return res.status(403).json({ message: 'Admin access required' });
+        if (!user || roleLower !== 'superadmin') {
+            return res.status(403).json({ message: 'Superadmin access required' });
         }
 
         const { preview = false } = req.body;
@@ -103,9 +105,7 @@ export default async function handler(
         // 1. Fetch Data
         // Database: Get ID (A) and Name (B)
         const dbMetadata = await sheets.spreadsheets.get({ spreadsheetId: databaseSpreadsheetId });
-        const dbSheet = dbMetadata.data.sheets?.find(s => s.properties?.title?.includes('[AUTOMATION ONLY]'));
-        if (!dbSheet) throw new Error('Database sheet not found');
-        const dbSheetName = dbSheet.properties?.title;
+        const { title: dbSheetName } = getCompanyDatabaseSheet(dbMetadata.data.sheets);
 
         const dbResponse = await sheets.spreadsheets.values.get({
             spreadsheetId: databaseSpreadsheetId,
@@ -417,37 +417,55 @@ export default async function handler(
             stats.updated += idMismatches.length;
             console.log(`${preview ? '[PREVIEW] ' : ''}Updated IDs for ${idMismatches.length} companies (full row).`);
 
-            // Update Thread_History so activity logs stay linked to corrected IDs
+            // Update Email_Schedule so schedule entries stay linked to corrected IDs.
+            // NOTE: Logs_DoNotEdit and Thread_History are NOT altered here so they remain
+            // the immutable audit trail for audit-based ID recovery.
             if (!preview && idMismatches.length > 0) {
                 try {
                     const idMap = new Map(idMismatches.map(m => [m.oldId, m.newId]));
-                    const historyResponse = await sheets.spreadsheets.values.get({
-                        spreadsheetId: trackerSpreadsheetId,
-                        range: 'Thread_History!B2:B',
-                    });
-                    const historyCompanyIds = (historyResponse.data.values || []) as string[][];
-                    if (historyCompanyIds.length > 0) {
-                        const newHistoryIds = historyCompanyIds.map(row => {
-                            const oldId = row[0] ? String(row[0]).trim() : '';
-                            const newId = oldId && idMap.has(oldId) ? idMap.get(oldId)! : oldId;
-                            return [newId];
-                        });
-                        await sheets.spreadsheets.values.update({
+
+                    // Update Email_Schedule column A (companyId) so schedule entries stay linked to corrected IDs
+                    try {
+                        const scheduleResponse = await sheets.spreadsheets.values.get({
                             spreadsheetId: trackerSpreadsheetId,
-                            range: `Thread_History!B2:B${1 + newHistoryIds.length}`,
-                            valueInputOption: 'RAW',
-                            requestBody: { values: newHistoryIds },
+                            range: 'Email_Schedule!A2:A',
                         });
+                        const scheduleRows = (scheduleResponse.data.values || []) as string[][];
+                        if (scheduleRows.length > 0) {
+                            const newScheduleIds = scheduleRows.map(row => {
+                                const oldId = row[0] ? String(row[0]).trim() : '';
+                                const newId = oldId && idMap.has(oldId) ? idMap.get(oldId)! : oldId;
+                                return [newId];
+                            });
+                            const changedCount = newScheduleIds.filter((row, i) => {
+                                const old = scheduleRows[i]?.[0]?.trim() || '';
+                                return old && idMap.has(old);
+                            }).length;
+                            if (changedCount > 0) {
+                                await sheets.spreadsheets.values.update({
+                                    spreadsheetId: trackerSpreadsheetId,
+                                    range: `Email_Schedule!A2:A${1 + newScheduleIds.length}`,
+                                    valueInputOption: 'RAW',
+                                    requestBody: { values: newScheduleIds },
+                                });
+                                invalidateScheduleCache();
+                                console.log(`Updated ${changedCount} Email_Schedule company IDs during sync.`);
+                            }
+                        }
+                    } catch (scheduleErr) {
+                        console.warn('Email_Schedule update during sync ID fix failed (sheet may not exist):', scheduleErr);
                     }
-                    // Audit trail in Logs_DoNotEdit
+
+                    // Audit trail in Logs_DoNotEdit and Thread_History
                     const actorName = user?.name || user?.email || session?.user?.email || 'Sync';
+                    const now = new Date().toISOString();
                     await sheets.spreadsheets.values.append({
                         spreadsheetId: trackerSpreadsheetId,
                         range: 'Logs_DoNotEdit!A:E',
                         valueInputOption: 'RAW',
                         requestBody: {
                             values: [[
-                                new Date().toISOString(),
+                                now,
                                 actorName,
                                 'SYNC_ID_FIX',
                                 `Updated ${idMismatches.length} company IDs during database sync`,
@@ -455,8 +473,15 @@ export default async function handler(
                             ]],
                         },
                     });
-                } catch (historyErr) {
-                    console.warn('Thread_History update during sync ID fix failed:', historyErr);
+                    const threadRows = idMismatches.map(m => [now, m.newId, actorName, `ID healed: ${m.oldId} → ${m.newId} (${m.name})`]);
+                    await sheets.spreadsheets.values.append({
+                        spreadsheetId: trackerSpreadsheetId,
+                        range: 'Thread_History!A:D',
+                        valueInputOption: 'RAW',
+                        requestBody: { values: threadRows },
+                    });
+                } catch (err) {
+                    console.warn('Email_Schedule or audit append during sync ID fix failed:', err);
                 }
             }
         }

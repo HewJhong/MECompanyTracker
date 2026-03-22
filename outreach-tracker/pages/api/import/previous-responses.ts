@@ -1,7 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getGoogleSheetsClient } from '../../../lib/google-sheets';
 import { cache } from '../../../lib/cache';
-import { requireEffectiveAdmin } from '../../../lib/authz';
+import { requireEffectiveAdmin, formatActorLabel } from '../../../lib/authz';
 
 export default async function handler(
     req: NextApiRequest,
@@ -177,10 +177,71 @@ export default async function handler(
             console.log('[Import] Applied', batchUpdates.length, 'updates');
         }
 
-        // 10. Clear cache
+        // 9b. Update Tracker column G (Previous Response) so the app sees imported values immediately
+        // The app reads previousResponse from Tracker column G when building /api/data
+        if (batchUpdates.length > 0) {
+            const trackerMetadata = await sheets.spreadsheets.get({ spreadsheetId: trackerSpreadsheetId });
+            const trackerSheetName = trackerMetadata.data.sheets?.[0]?.properties?.title;
+            if (trackerSheetName) {
+                const trackerResponse = await sheets.spreadsheets.values.get({
+                    spreadsheetId: trackerSpreadsheetId,
+                    range: `${trackerSheetName}!A2:O`,
+                });
+                const trackerRows = (trackerResponse.data.values || []) as string[][];
+                const trackerUpdates: { range: string; values: string[][] }[] = [];
+                targetRows.forEach((row, index) => {
+                    const companyId = row[0]?.toString().trim();
+                    const companyName = row[1]?.trim();
+                    if (!companyName || !responsesMap.has(companyName)) return;
+                    const previousResponse = responsesMap.get(companyName) || '';
+                    const trackerRowIndex = trackerRows.findIndex(r => (r[0] || '').toString().trim() === companyId);
+                    if (trackerRowIndex >= 0) {
+                        trackerUpdates.push({
+                            range: `${trackerSheetName}!G${trackerRowIndex + 2}`,
+                            values: [[previousResponse]],
+                        });
+                    }
+                });
+                if (trackerUpdates.length > 0) {
+                    await sheets.spreadsheets.values.batchUpdate({
+                        spreadsheetId: trackerSpreadsheetId,
+                        requestBody: {
+                            valueInputOption: 'RAW',
+                            data: trackerUpdates,
+                        },
+                    });
+                    console.log('[Import] Updated', trackerUpdates.length, 'Tracker column G (Previous Response) for app visibility');
+                }
+            }
+        }
+
+        // 10. Log to Thread_History and Logs_DoNotEdit (only when updates were applied)
+        if (batchUpdates.length > 0) {
+            const now = new Date().toISOString();
+            const actorName = formatActorLabel(ctx);
+            const firstId = targetRows[0]?.[0] || 'ME-0001';
+            await sheets.spreadsheets.values.append({
+            spreadsheetId: trackerSpreadsheetId,
+            range: 'Thread_History!A:D',
+            valueInputOption: 'RAW',
+            requestBody: {
+                values: [[now, firstId, actorName, `Import previous responses: updated ${matched.length} companies`]],
+            },
+        });
+        await sheets.spreadsheets.values.append({
+            spreadsheetId: trackerSpreadsheetId,
+            range: 'Logs_DoNotEdit!A:E',
+            valueInputOption: 'RAW',
+            requestBody: {
+                values: [[now, actorName, 'IMPORT_PREVIOUS_RESPONSES', `Updated Previous Response for ${matched.length} companies`, JSON.stringify({ matched: matched.length, unmatched: unmatched.length })]],
+            },
+        });
+        }
+
+        // 11. Clear cache
         cache.clear();
 
-        // 11. Return statistics
+        // 12. Return statistics
         return res.status(200).json({
             success: true,
             stats: {

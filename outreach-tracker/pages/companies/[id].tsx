@@ -150,7 +150,7 @@ export default function CompanyDetailPage() {
     const [channel, setChannel] = useState('');
     const [scheduledDate, setScheduledDate] = useState<string>('');
     const [scheduledTime, setScheduledTime] = useState<string>('');
-    const [scheduleEntries, setScheduleEntries] = useState<{ companyId: string; date: string; time: string; note?: string; completed?: string }[]>([]);
+    const [scheduleEntries, setScheduleEntries] = useState<{ companyId: string; date: string; time: string; note?: string; completed?: string; order?: number; pic?: string; companyName?: string }[]>([]);
     const [outreachScheduleDate, setOutreachScheduleDate] = useState('');
     const [outreachScheduleTime, setOutreachScheduleTime] = useState('');
     const [outreachScheduleNote, setOutreachScheduleNote] = useState('');
@@ -291,7 +291,7 @@ export default function CompanyDetailPage() {
             const res = await fetch('/api/email-schedule');
             if (!res.ok) return;
             const json = await res.json();
-            const allEntries = (json.entries || []) as { companyId: string; date: string; time: string; note?: string; completed?: string }[];
+            const allEntries = (json.entries || []) as { companyId: string; date: string; time: string; note?: string; completed?: string; order?: number; pic?: string; companyName?: string }[];
             const companyEntries = allEntries
                 .filter(e => e.companyId === company.id)
                 .sort((a, b) => a.date.localeCompare(b.date));
@@ -483,6 +483,68 @@ export default function CompanyDetailPage() {
         setEditScheduleTime('');
         setEditScheduleNote('');
     }, []);
+
+    const handleMarkScheduleEntryComplete = useCallback(async (entry: { companyId: string; date: string; time: string; note?: string; completed?: string; order?: number; pic?: string; companyName?: string }) => {
+        if (!company || !user?.isAdmin || entry.completed === 'Y') return;
+        setIsSettingSchedule(true);
+        const taskId = addTask('Marking schedule as complete...');
+        try {
+            await fetch('/api/email-schedule', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    entries: [{
+                        companyId: company.id,
+                        companyName: company.companyName || company.name || company.id,
+                        pic: entry.pic || assignedTo || '',
+                        date: entry.date,
+                        time: entry.time,
+                        order: entry.order ?? 0,
+                        note: entry.note,
+                        completed: 'Y',
+                    }],
+                }),
+            });
+            completeTask(taskId, 'Schedule marked complete');
+            fetchScheduleForCompany();
+        } catch (err) {
+            console.error('Mark complete failed', err);
+            failTask(taskId, 'Failed to mark complete');
+        } finally {
+            setIsSettingSchedule(false);
+        }
+    }, [company, user?.isAdmin, assignedTo, addTask, completeTask, failTask, fetchScheduleForCompany]);
+
+    const handleUnmarkScheduleEntryComplete = useCallback(async (entry: { companyId: string; date: string; time: string; note?: string; completed?: string; order?: number; pic?: string; companyName?: string }) => {
+        if (!company || !user?.isAdmin || entry.completed !== 'Y') return;
+        setIsSettingSchedule(true);
+        const taskId = addTask('Cancelling completion...');
+        try {
+            await fetch('/api/email-schedule', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    entries: [{
+                        companyId: company.id,
+                        companyName: company.companyName || company.name || company.id,
+                        pic: entry.pic || assignedTo || '',
+                        date: entry.date,
+                        time: entry.time,
+                        order: entry.order ?? 0,
+                        note: entry.note,
+                        completed: '',
+                    }],
+                }),
+            });
+            completeTask(taskId, 'Completion cancelled');
+            fetchScheduleForCompany();
+        } catch (err) {
+            console.error('Cancel completion failed', err);
+            failTask(taskId, 'Failed to cancel completion');
+        } finally {
+            setIsSettingSchedule(false);
+        }
+    }, [company, user?.isAdmin, assignedTo, addTask, completeTask, failTask, fetchScheduleForCompany]);
 
     const handleSaveScheduleEntryEdit = useCallback(async () => {
         if (!company || !user?.isAdmin || editingScheduleEntryIndex === null) return;
@@ -2032,6 +2094,27 @@ export default function CompanyDetailPage() {
                                                                 <span className="text-xs text-slate-500 italic">— {entry.note}</span>
                                                             )}
                                                             <span className="inline-flex items-center gap-1 ml-auto shrink-0">
+                                                                {!isCompleted ? (
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => handleMarkScheduleEntryComplete(entry)}
+                                                                        disabled={isSettingSchedule}
+                                                                        className="p-1 text-slate-500 hover:text-green-600 rounded hover:bg-green-50 disabled:opacity-50"
+                                                                        title="Mark email as sent"
+                                                                    >
+                                                                        <CheckCircleIcon className="w-3.5 h-3.5" />
+                                                                    </button>
+                                                                ) : (
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => handleUnmarkScheduleEntryComplete(entry)}
+                                                                        disabled={isSettingSchedule}
+                                                                        className="p-1 text-slate-500 hover:text-amber-600 rounded hover:bg-amber-50 disabled:opacity-50"
+                                                                        title="Cancel completion"
+                                                                    >
+                                                                        <XCircleIcon className="w-3.5 h-3.5" />
+                                                                    </button>
+                                                                )}
                                                                 <button
                                                                     type="button"
                                                                     onClick={() => handleStartEditScheduleEntry(entry, idx)}

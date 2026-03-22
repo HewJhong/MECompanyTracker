@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getGoogleSheetsClient } from '../../../lib/google-sheets';
+import { getCompanyDatabaseSheet } from '../../../lib/spreadsheet-utils';
 import { cache } from '../../../lib/cache';
 import { formatActorLabel, requireEffectiveAdmin } from '../../../lib/authz';
 
@@ -95,9 +96,10 @@ export default async function handler(
         // So we must handle ID updates for ALL contacts of both companies + shifted companies.
 
         const dbMetadata = await sheets.spreadsheets.get({ spreadsheetId: databaseSpreadsheetId });
-        const dbSheet = dbMetadata.data.sheets?.find(s => s.properties?.title?.includes('[AUTOMATION ONLY]'));
-        const dbSheetName = dbSheet?.properties?.title;
-        const dbSheetId = dbSheet?.properties?.sheetId;
+        const { title: dbSheetName, sheetId: dbSheetId } = getCompanyDatabaseSheet(dbMetadata.data.sheets);
+        if (dbSheetId === undefined) {
+            throw new Error('Database sheet ID not available for row operations');
+        }
 
         const dbResponse = await sheets.spreadsheets.values.get({
             spreadsheetId: databaseSpreadsheetId,

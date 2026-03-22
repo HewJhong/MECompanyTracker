@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getGoogleSheetsClient } from '../../lib/google-sheets';
+import { getCompanyDatabaseSheet } from '../../lib/spreadsheet-utils';
 import { getCommitteeMembers, CommitteeMember } from '../../lib/committee-members';
 import { cache } from '../../lib/cache';
 
@@ -34,9 +35,7 @@ export default async function handler(
         // DB Fetch
         console.log(">>> [API DATA] DB Metadata...");
         const dbMetadata = await sheets.spreadsheets.get({ spreadsheetId: databaseSpreadsheetId });
-        const dbSheet = dbMetadata.data.sheets?.find(s => s.properties?.title?.includes('[AUTOMATION ONLY]'));
-        const dbSheetName = dbSheet?.properties?.title;
-        if (!dbSheetName) throw new Error('DB Sheet not found');
+        const { title: dbSheetName } = getCompanyDatabaseSheet(dbMetadata.data.sheets);
 
         console.log(">>> [API DATA] DB Rows...");
         const dbResponse = await sheets.spreadsheets.values.get({
@@ -134,7 +133,7 @@ export default async function handler(
                 const t = trackerMap.get(id);
                 companyMap.set(id, {
                     id,
-                    companyName: t?.companyName || row[1] || 'Unknown',
+                    companyName: row[1] || t?.companyName || 'Unknown',
                     contactStatus: t?.contactStatus || 'To Contact',
                     relationshipStatus: t?.relationshipStatus || '',
                     channel: t?.channel || '',
@@ -174,6 +173,21 @@ export default async function handler(
             }
         });
 
+        // Detect Tracker-only companies (exist in Tracker but not in Database)
+        const dbIds = new Set<string>();
+        dbRows.forEach((row: any) => {
+            const id = row[0]?.toString().trim();
+            if (id) dbIds.add(id);
+        });
+        const trackerOnlyCompanies: Array<{ id: string; name: string }> = [];
+        trackerRows.forEach((row: any) => {
+            const id = row[0]?.toString().trim();
+            const name = (row[1] || '').toString().trim();
+            if (id && !dbIds.has(id)) {
+                trackerOnlyCompanies.push({ id, name: name || id });
+            }
+        });
+
         const data = Array.from(companyMap.values());
         data.forEach(c => {
             // No filter other than companyId – show all thread history for this company.
@@ -198,7 +212,37 @@ export default async function handler(
             committeeMembers = await getCommitteeMembers();
         } catch (e) { }
 
-        const responseData = { companies: data, history: historyData, dailyStats, committeeMembers };
+        // When refreshing, check for ID/name mismatches (Tracker vs Database as source of truth)
+        let idNameMismatches: Array<{ id: string; trackerName: string; dbName: string }> = [];
+        if (refresh === 'true') {
+            const normalizeId = (s: string) => s?.toString().trim().toUpperCase() || '';
+            const normalizeName = (s: string) => s?.toLowerCase().replace(/\s+/g, ' ').trim() || '';
+            const dbIdToName = new Map<string, string>();
+            dbRows.forEach((row: any) => {
+                const id = row[0]?.toString().trim();
+                if (!id) return;
+                const key = normalizeId(id);
+                if (dbIdToName.has(key)) return;
+                dbIdToName.set(key, (row[1] || '').toString().trim());
+            });
+            trackerRows.forEach((row: any) => {
+                const id = row[0]?.toString().trim();
+                const trackerName = (row[1] || '').toString().trim();
+                if (!id || !trackerName) return;
+                const dbName = dbIdToName.get(normalizeId(id));
+                if (!dbName || normalizeName(trackerName) === normalizeName(dbName)) return;
+                idNameMismatches.push({ id, trackerName, dbName });
+            });
+        }
+
+        const responseData = {
+            companies: data,
+            history: historyData,
+            dailyStats,
+            committeeMembers,
+            idNameMismatches: idNameMismatches.length > 0 ? idNameMismatches : undefined,
+            trackerOnlyCompanies: trackerOnlyCompanies.length > 0 ? trackerOnlyCompanies : undefined,
+        };
         cache.set(CACHE_KEY, responseData);
 
         console.log(`>>> [API DATA] Done in ${Date.now() - startTime}ms`);
