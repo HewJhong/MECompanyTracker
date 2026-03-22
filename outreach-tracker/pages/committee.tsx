@@ -115,10 +115,16 @@ export default function CommitteePage() {
         const scheduled = scheduleMap[company.id];
         const showSchedule = !!(scheduled?.date && scheduled?.time);
 
+        // Don't show stale for "To Contact" with no schedule — they haven't been scheduled yet
+        const contactStatus = company.contactStatus || 'To Contact';
+        const isStale = daysSinceUpdate > 7 && (
+            contactStatus !== 'To Contact' || showSchedule
+        );
+
         return {
             id: company.id,
             name: company.companyName || company.name || '',
-            contactStatus: company.contactStatus || 'To Contact',
+            contactStatus,
             relationshipStatus: company.relationshipStatus || '',
             followUpsCompleted: company.followUpsCompleted ?? 0,
             lastContact: company.lastContact || '',
@@ -138,7 +144,7 @@ export default function CommitteePage() {
             email: company.contacts?.[0]?.email || '',
             lastUpdated: company.lastUpdated || '',
             isFlagged: company.isFlagged,
-            isStale: daysSinceUpdate > 7,
+            isStale,
             replyNeeded,
             // Show schedule badge for next pending schedule (overdue will be red)
             scheduledTime: showSchedule ? scheduled?.time : undefined,
