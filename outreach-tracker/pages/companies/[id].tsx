@@ -1374,7 +1374,7 @@ export default function CompanyDetailPage() {
             }
             completeTask(taskId, 'Company archived');
             setShowConfirmDeleteCompanyModal(false);
-            router.push('/companies');
+            router.push('/companies?refresh=1');
         } catch (err) {
             console.error('Delete company error:', err);
             failTask(taskId, err instanceof Error ? err.message : 'Delete failed');

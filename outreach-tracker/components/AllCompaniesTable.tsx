@@ -467,19 +467,6 @@ export default function AllCompaniesTable({
         [companies]
     );
 
-    const idGapInfo = useMemo(() => {
-        if (companies.length === 0) return null;
-        const ids = companies.map(c => {
-            const match = c.id.match(/ME-(\d+)/);
-            return match ? parseInt(match[1], 10) : 0;
-        }).filter(id => id > 0).sort((a, b) => a - b);
-        if (ids.length === 0) return null;
-        const minId = ids[0];
-        const maxId = ids[ids.length - 1];
-        const gapCount = (maxId - minId + 1) - ids.length;
-        return gapCount > 0 ? { minId, maxId, gapCount } : null;
-    }, [companies]);
-
     // Precompute one normalised search string per company so the filter loop only does includes()
     const companySearchStrings = useMemo(() =>
         companies.map(c => normalise([
@@ -678,15 +665,6 @@ export default function AllCompaniesTable({
                                     </span>
                                 ) : (
                                     <p className="text-sm text-slate-500">{companies.length} companies total</p>
-                                )}
-                                {idGapInfo && (
-                                    <span
-                                        className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 font-medium text-xs"
-                                        title={`${idGapInfo.gapCount} ID${idGapInfo.gapCount > 1 ? 's' : ''} missing between ME-${String(idGapInfo.minId).padStart(4, '0')} and ME-${String(idGapInfo.maxId).padStart(4, '0')}`}
-                                    >
-                                        <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-                                        {idGapInfo.gapCount} ID gap{idGapInfo.gapCount > 1 ? 's' : ''}
-                                    </span>
                                 )}
                             </div>
                         </div>

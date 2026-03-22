@@ -200,11 +200,16 @@ export default function CompaniesPage() {
     };
 
     useEffect(() => {
-        fetchData();
+        if (!router.isReady) return;
+        const forceRefresh = router.query.refresh === '1';
+        fetchData(forceRefresh);
         if (user?.isAdmin) {
             fetchCommitteeMembers();
         }
-    }, [user]);
+        if (forceRefresh) {
+            router.replace('/companies', undefined, { shallow: true });
+        }
+    }, [router.isReady, router.query.refresh, user]);
 
     useEffect(() => {
         if (data.length === 0) return;

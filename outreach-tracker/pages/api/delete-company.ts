@@ -19,8 +19,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (!companyId || !user) {
         return res.status(400).json({ message: 'Missing companyId or user' });
     }
-    console.log(`[ARCHIVE] Request to archive companyId: "${companyId}"`);
-
     const databaseSpreadsheetId = process.env.SPREADSHEET_ID_1;
     const trackerSpreadsheetId = process.env.SPREADSHEET_ID_2;
     if (!trackerSpreadsheetId) {
@@ -46,13 +44,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         const trackerRows = (trackerColA.data.values || []) as string[][];
         const trackerRowIndex = trackerRows.findIndex(row => row[0] && String(row[0]).trim() === String(companyId).trim());
         if (trackerRowIndex === -1) {
-            console.log(`[ARCHIVE] Company not found in tracker: "${companyId}"`);
             return res.status(404).json({ message: 'Company not found in tracker' });
         }
         // A:A includes header; index i = sheet row i+1
         const trackerRowNum = trackerRowIndex + 1;
-        const matchedId = trackerRows[trackerRowIndex]?.[0]?.toString().trim();
-        console.log(`[ARCHIVE] Tracker match: companyId="${companyId}" found at arrayIndex=${trackerRowIndex}, sheetRow=${trackerRowNum}, rowIdInSheet="${matchedId}"`);
 
         // Set column P (Deleted) to "Y" in Tracker
         await sheets.spreadsheets.values.update({
@@ -61,7 +56,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             valueInputOption: 'USER_ENTERED',
             requestBody: { values: [['Y']] },
         });
-        console.log(`[ARCHIVE] Set Tracker P${trackerRowNum}=Y for companyId="${companyId}"`);
 
         // 2. Set column P (Deleted) to "Y" in Database for all rows with this companyId
         if (databaseSpreadsheetId) {
@@ -80,7 +74,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                     }
                 });
                 if (dbRowNumbers.length > 0) {
-                    console.log(`[ARCHIVE] Updating Database: companyId="${companyId}", rows=${dbRowNumbers.join(', ')}`);
                     const data = dbRowNumbers.map(rowNum => ({
                         range: `${dbSheetName}!P${rowNum}`,
                         values: [['Y']],

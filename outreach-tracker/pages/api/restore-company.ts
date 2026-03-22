@@ -17,8 +17,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (!companyId || !user) {
         return res.status(400).json({ message: 'Missing companyId or user' });
     }
-    console.log(`[RESTORE] Request to restore companyId: "${companyId}"`);
-
     const databaseSpreadsheetId = process.env.SPREADSHEET_ID_1;
     const trackerSpreadsheetId = process.env.SPREADSHEET_ID_2;
     if (!trackerSpreadsheetId) {
@@ -53,8 +51,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         }
         // A2:P excludes header; index i = sheet row i+2
         const trackerRowNum = rowIndex + 2;
-        const matchedId = trackerRows[rowIndex]?.[0]?.toString().trim();
-        console.log(`[RESTORE] Tracker match: companyId="${companyId}" at arrayIndex=${rowIndex}, sheetRow=${trackerRowNum}, rowIdInSheet="${matchedId}"`);
 
         // Clear column P (Deleted) in Tracker
         await sheets.spreadsheets.values.update({
@@ -63,7 +59,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             valueInputOption: 'USER_ENTERED',
             requestBody: { values: [['']] },
         });
-        console.log(`[RESTORE] Cleared Tracker P${trackerRowNum} for companyId="${companyId}"`);
 
         // Clear column P (Deleted) in Database for all rows with this companyId
         if (databaseSpreadsheetId) {
@@ -82,7 +77,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                     }
                 });
                 if (dbRowNumbers.length > 0) {
-                    console.log(`[RESTORE] Clearing Database: companyId="${companyId}", rows=${dbRowNumbers.join(', ')}`);
                     const data = dbRowNumbers.map(rowNum => ({
                         range: `${dbSheetName}!P${rowNum}`,
                         values: [['']],
