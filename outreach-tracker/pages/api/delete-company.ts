@@ -87,8 +87,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                     }));
                     await sheets.spreadsheets.values.batchUpdate({
                         spreadsheetId: databaseSpreadsheetId,
-                        valueInputOption: 'USER_ENTERED',
-                        requestBody: { data },
+                        requestBody: {
+                            valueInputOption: 'USER_ENTERED',
+                            data,
+                        },
                     });
                 }
             } catch (dbErr) {
