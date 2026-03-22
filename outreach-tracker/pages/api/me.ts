@@ -131,9 +131,9 @@ export default async function handler(
             email: effectiveMember?.email || session.user.email || null,
             role: effectiveMember?.role || null,
             isCommitteeMember: Boolean(effectiveMember),
-            isAdmin: Boolean(effectiveMember) && effectiveFlags.isAdmin,
+            isAdmin: isImpersonating ? false : (Boolean(effectiveMember) && effectiveFlags.isAdmin),
             isSuperAdmin: Boolean(effectiveMember) && effectiveFlags.isSuperAdmin,
-            canEditCompanies: Boolean(effectiveMember) && effectiveFlags.canEditCompanies,
+            canEditCompanies: isImpersonating ? false : (Boolean(effectiveMember) && effectiveFlags.canEditCompanies),
         };
 
         return res.status(200).json({

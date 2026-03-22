@@ -104,6 +104,10 @@ export async function requireAuthzContext(req: NextApiRequest, res: NextApiRespo
 export async function requireEffectiveAdmin(req: NextApiRequest, res: NextApiResponse) {
     const ctx = await requireAuthzContext(req, res);
     if (!ctx) return null;
+    if (ctx.isImpersonating) {
+        res.status(403).json({ error: 'View-only mode: stop impersonation to make changes' });
+        return null;
+    }
     if (!ctx.effectiveMember || !isEffectiveAdmin(ctx)) {
         res.status(403).json({ error: 'Admin access required' });
         return null;
@@ -114,6 +118,10 @@ export async function requireEffectiveAdmin(req: NextApiRequest, res: NextApiRes
 export async function requireEffectiveCanEditCompanies(req: NextApiRequest, res: NextApiResponse) {
     const ctx = await requireAuthzContext(req, res);
     if (!ctx) return null;
+    if (ctx.isImpersonating) {
+        res.status(403).json({ message: 'View-only mode: stop impersonation to make changes' });
+        return null;
+    }
     if (!ctx.effectiveMember || !canEffectiveEditCompanies(ctx)) {
         res.status(403).json({ message: 'Not authorized to modify data' });
         return null;
