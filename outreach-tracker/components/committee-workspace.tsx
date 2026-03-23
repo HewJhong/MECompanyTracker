@@ -43,6 +43,18 @@ interface CommitteeWorkspaceProps {
 
 const TOOLTIP_DELAY_MS = 300;
 
+function getCompanySelectionKey(company: Company): string {
+    // Row-level identity to avoid cross-select when same ID appears in multiple cards
+    return [
+        company.id || '',
+        company.scheduledDate || '',
+        company.scheduledTime || '',
+        company.contactStatus || '',
+        company.relationshipStatus || '',
+        company.lastUpdated || '',
+    ].join('||');
+}
+
 /** Match email-schedule date handling for filtering */
 function normalizeScheduleDate(s?: string): string {
     if (!s?.trim()) return '';
@@ -101,8 +113,8 @@ export default function CommitteeWorkspace({
     const tooltipTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     const hoveredElementRef = useRef<HTMLElement | null>(null);
     const [cardLayout, setCardLayout] = useState<'full' | 'compact'>('full');
-    const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-    const [lastSelectedId, setLastSelectedId] = useState<string | null>(null);
+    const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
+    const [lastSelectedKey, setLastSelectedKey] = useState<string | null>(null);
     const [bulkUpdating, setBulkUpdating] = useState(false);
     const [bulkRemark, setBulkRemark] = useState('');
     const [bulkActionDate, setBulkActionDate] = useState(getNowDatetimeLocal);
@@ -179,34 +191,34 @@ export default function CommitteeWorkspace({
     const handleCompanySelect = useCallback((company: Company, e: React.MouseEvent) => {
         e.preventDefault();
         e.stopPropagation();
-        const id = company.id;
+        const key = getCompanySelectionKey(company);
         if (e.shiftKey) {
-            setSelectedIds(prev => {
-                if (!lastSelectedId) return new Set([id]);
-                const idxLast = companiesInOrder.findIndex(c => c.id === lastSelectedId);
-                const idxCur = companiesInOrder.findIndex(c => c.id === id);
-                if (idxLast === -1 || idxCur === -1) return new Set([id]);
+            setSelectedKeys(prev => {
+                if (!lastSelectedKey) return new Set([key]);
+                const idxLast = companiesInOrder.findIndex(c => getCompanySelectionKey(c) === lastSelectedKey);
+                const idxCur = companiesInOrder.findIndex(c => getCompanySelectionKey(c) === key);
+                if (idxLast === -1 || idxCur === -1) return new Set([key]);
                 const [lo, hi] = idxLast <= idxCur ? [idxLast, idxCur] : [idxCur, idxLast];
                 const next = new Set(prev);
-                for (let i = lo; i <= hi; i++) next.add(companiesInOrder[i].id);
+                for (let i = lo; i <= hi; i++) next.add(getCompanySelectionKey(companiesInOrder[i]));
                 return next;
             });
-            setLastSelectedId(id);
+            setLastSelectedKey(key);
             return;
         }
         if (e.ctrlKey || e.metaKey) {
-            setSelectedIds(prev => {
+            setSelectedKeys(prev => {
                 const next = new Set(prev);
-                if (next.has(id)) next.delete(id);
-                else next.add(id);
+                if (next.has(key)) next.delete(key);
+                else next.add(key);
                 return next;
             });
-            setLastSelectedId(id);
+            setLastSelectedKey(key);
             return;
         }
-        setSelectedIds(prev => (prev.has(id) && prev.size === 1 ? new Set() : new Set([id])));
-        setLastSelectedId(id);
-    }, [lastSelectedId, companiesInOrder]);
+        setSelectedKeys(prev => (prev.has(key) && prev.size === 1 ? new Set() : new Set([key])));
+        setLastSelectedKey(key);
+    }, [lastSelectedKey, companiesInOrder]);
 
     const handleCompanyDoubleClick = useCallback((companyId: string) => {
         onCompanyClick?.(companyId);
@@ -214,15 +226,15 @@ export default function CommitteeWorkspace({
 
     useEffect(() => {
         const onKeyDown = (e: KeyboardEvent) => {
-            if (e.key === 'Escape') setSelectedIds(new Set());
+            if (e.key === 'Escape') setSelectedKeys(new Set());
         };
         window.addEventListener('keydown', onKeyDown);
         return () => window.removeEventListener('keydown', onKeyDown);
     }, []);
 
     const selectedCompanies = useMemo(
-        () => companies.filter(c => selectedIds.has(c.id)),
-        [companies, selectedIds]
+        () => companies.filter(c => selectedKeys.has(getCompanySelectionKey(c))),
+        [companies, selectedKeys]
     );
 
     const getBulkTimestamp = useCallback(() => bulkActionDate.trim() ? new Date(bulkActionDate.trim()).toISOString() : new Date().toISOString(), [bulkActionDate]);
@@ -263,8 +275,8 @@ export default function CommitteeWorkspace({
                 });
                 if (!res.ok) throw new Error(`Update failed for ${c.id}`);
             }
-            setSelectedIds(new Set());
-            setLastSelectedId(null);
+            setSelectedKeys(new Set());
+            setLastSelectedKey(null);
             setBulkRemark('');
             setBulkActionDate(getNowDatetimeLocal());
             onRefresh?.();
@@ -300,8 +312,8 @@ export default function CommitteeWorkspace({
                 });
                 if (!res.ok) throw new Error(`Update failed for ${c.id}`);
             }
-            setSelectedIds(new Set());
-            setLastSelectedId(null);
+            setSelectedKeys(new Set());
+            setLastSelectedKey(null);
             setBulkRemark('');
             setBulkActionDate(getNowDatetimeLocal());
             onRefresh?.();
@@ -335,8 +347,8 @@ export default function CommitteeWorkspace({
                 });
                 if (!res.ok) throw new Error(`Update failed for ${c.id}`);
             }
-            setSelectedIds(new Set());
-            setLastSelectedId(null);
+            setSelectedKeys(new Set());
+            setLastSelectedKey(null);
             setBulkRemark('');
             setBulkActionDate(getNowDatetimeLocal());
             onRefresh?.();
@@ -370,8 +382,8 @@ export default function CommitteeWorkspace({
                 });
                 if (!res.ok) throw new Error(`Update failed for ${c.id}`);
             }
-            setSelectedIds(new Set());
-            setLastSelectedId(null);
+            setSelectedKeys(new Set());
+            setLastSelectedKey(null);
             setBulkRemark('');
             setBulkActionDate(getNowDatetimeLocal());
             onRefresh?.();
@@ -534,13 +546,13 @@ export default function CommitteeWorkspace({
             {/* Kanban View Toggle */}
             <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-1 w-fit">
                 <button
-                    onClick={() => { setKanbanView('contact'); setSelectedIds(new Set()); setLastSelectedId(null); }}
+                    onClick={() => { setKanbanView('contact'); setSelectedKeys(new Set()); setLastSelectedKey(null); }}
                     className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${kanbanView === 'contact' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
                 >
                     Contact Status
                 </button>
                 <button
-                    onClick={() => { setKanbanView('relationship'); setSelectedIds(new Set()); setLastSelectedId(null); }}
+                    onClick={() => { setKanbanView('relationship'); setSelectedKeys(new Set()); setLastSelectedKey(null); }}
                     className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${kanbanView === 'relationship' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
                 >
                     Relationship Status
@@ -569,10 +581,11 @@ export default function CommitteeWorkspace({
                                 </div>
                             ) : cardLayout === 'compact' ? (
                                 column.companies.map(company => {
-                                    const isSelected = selectedIds.has(company.id);
+                                    const companyKey = getCompanySelectionKey(company);
+                                    const isSelected = selectedKeys.has(companyKey);
                                     return (
                                     <div
-                                        key={company.id}
+                                        key={companyKey}
                                         onClick={(e) => handleCompanySelect(company, e)}
                                         onDoubleClick={() => handleCompanyDoubleClick(company.id)}
                                         onMouseLeave={handleNameMouseLeave}
@@ -601,10 +614,11 @@ export default function CommitteeWorkspace({
                                 })
                             ) : (
                                 column.companies.map(company => {
-                                    const isSelected = selectedIds.has(company.id);
+                                    const companyKey = getCompanySelectionKey(company);
+                                    const isSelected = selectedKeys.has(companyKey);
                                     return (
                                     <div
-                                        key={company.id}
+                                        key={companyKey}
                                         onClick={(e) => handleCompanySelect(company, e)}
                                         onDoubleClick={() => handleCompanyDoubleClick(company.id)}
                                         onMouseLeave={handleNameMouseLeave}
@@ -686,11 +700,11 @@ export default function CommitteeWorkspace({
             </div>
 
             {/* Multi-select action bar */}
-            {selectedIds.size >= 1 && (
+            {selectedKeys.size >= 1 && (
                 <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 w-full max-w-2xl mx-4">
                     <div className="bg-slate-800 text-white rounded-xl shadow-xl p-4 flex flex-col gap-4">
                         <p className="text-sm font-medium">
-                            {selectedIds.size} {selectedIds.size === 1 ? 'company' : 'companies'} selected · ESC to clear
+                            {selectedKeys.size} {selectedKeys.size === 1 ? 'company' : 'companies'} selected · ESC to clear
                         </p>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                             <div>

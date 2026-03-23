@@ -54,7 +54,9 @@ interface ScheduleEntry {
 
 /** Unique id for one schedule block (one company in one date/time slot). */
 function entryId(e: ScheduleEntry): string {
-    return `${e.companyId}|${e.date}|${e.time}`;
+    // Row-level identity for selection/dragging. Include order/pic so same company/date/time
+    // duplicates do not collapse into one selected item.
+    return `${e.companyId}|${e.date}|${normalizeTime(e.time)}|${e.order}|${e.pic}`;
 }
 
 type ScheduleRowResolve = { openId: string; label: string };
