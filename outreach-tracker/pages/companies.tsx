@@ -201,12 +201,14 @@ export default function CompaniesPage() {
 
     useEffect(() => {
         if (!router.isReady) return;
-        const forceRefresh = router.query.refresh === '1';
-        fetchData(forceRefresh);
+        const fromArchive = router.query.refresh === '1';
+        // Always bypass cache: serverless instances have separate caches, so archived
+        // companies may still appear if we use cached data from another instance
+        fetchData(true);
         if (user?.isAdmin) {
             fetchCommitteeMembers();
         }
-        if (forceRefresh) {
+        if (fromArchive) {
             router.replace('/companies', undefined, { shallow: true });
         }
     }, [router.isReady, router.query.refresh, user]);

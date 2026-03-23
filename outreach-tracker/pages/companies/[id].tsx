@@ -751,14 +751,14 @@ export default function CompanyDetailPage() {
     }));
     const history: HistoryEntry[] = company?.history || [];
 
-    const isCommitteeStalled = company?.lastUpdated ? (Date.now() - new Date(company.lastUpdated).getTime()) / (1000 * 60 * 60 * 24) > 7 : false;
+    const staleThresholdDays = 3;
     const isCompanyStalled = lastCompanyActivity ? (Date.now() - new Date(lastCompanyActivity).getTime()) / (1000 * 60 * 60 * 24) > 7 : false;
     // Follow-up due: only show when status is Contacted and it's been at least 3 days since last committee contact (lastContact = when we last contacted them)
-    const lastCommitteeContactDate = company?.lastContact || '';
-    const lastCommitteeContactTimestamp = parseIsoLikeTimestamp(lastCommitteeContactDate);
+    const lastCommitteeContactValue = company?.lastContact || '';
+    const lastCommitteeContactAtMs = parseIsoLikeTimestamp(lastCommitteeContactValue);
     const isFollowUpDue = company?.contactStatus === 'Contacted'
-        && lastCommitteeContactTimestamp !== null
-        && (Date.now() - lastCommitteeContactTimestamp) / (1000 * 60 * 60 * 24) >= 3;
+        && lastCommitteeContactAtMs !== null
+        && (Date.now() - lastCommitteeContactAtMs) / (1000 * 60 * 60 * 24) >= 3;
 
     // Warning Logic: Company Replied > Committee Contact > 3 Days
     const needsReplyWarning = (() => {
@@ -788,6 +788,12 @@ export default function CompanyDetailPage() {
         if (!next) return null;
         return { ...next, isOverdue: next.ts < now };
     })();
+    const daysSinceCommitteeContact = lastCommitteeContactAtMs === null
+        ? null
+        : (Date.now() - lastCommitteeContactAtMs) / (1000 * 60 * 60 * 24);
+    const isCommitteeStale = contactStatus === 'To Contact'
+        ? !!nextPendingEmailSchedule?.isOverdue
+        : (lastCommitteeContactAtMs === null || (daysSinceCommitteeContact !== null && daysSinceCommitteeContact > staleThresholdDays));
 
     // Success messages now shown via background tasks only
 
@@ -1596,14 +1602,14 @@ export default function CompanyDetailPage() {
 
                 {/* Header */}
                 <div className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-t-xl px-6 py-5">
-                    <div className="flex items-start justify-between gap-4">
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                         <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-3 flex-wrap">
-                                {relationshipStatus === 'Registered' && <CheckCircleIcon className="w-7 h-7 text-green-400 flex-shrink-0" aria-label="Registered" />}
-                                {relationshipStatus === 'Rejected' && <XCircleIcon className="w-7 h-7 text-red-400 flex-shrink-0" aria-label="Rejected" />}
-                                {relationshipStatus === 'Interested' && <ClockIconSolid className="w-7 h-7 text-amber-400 flex-shrink-0" aria-label="Interested" />}
+                            <div className="flex items-start gap-3">
+                                {relationshipStatus === 'Registered' && <CheckCircleIcon className="w-7 h-7 text-green-400 flex-shrink-0 mt-0.5" aria-label="Registered" />}
+                                {relationshipStatus === 'Rejected' && <XCircleIcon className="w-7 h-7 text-red-400 flex-shrink-0 mt-0.5" aria-label="Rejected" />}
+                                {relationshipStatus === 'Interested' && <ClockIconSolid className="w-7 h-7 text-amber-400 flex-shrink-0 mt-0.5" aria-label="Interested" />}
                                 {canEdit && isEditMode ? (
-                                    <div>
+                                    <div className="min-w-0">
                                         <input
                                             type="text"
                                             value={editedName}
@@ -1612,12 +1618,12 @@ export default function CompanyDetailPage() {
                                                 setHasUnsavedChanges(true);
                                                 setShowUnsavedWarning(true);
                                             }}
-                                            className="text-2xl font-bold bg-white/20 text-white border-b border-white/40 focus:outline-none focus:border-white px-2 py-1 rounded"
+                                            className="text-2xl font-bold bg-white/20 text-white border-b border-white/40 focus:outline-none focus:border-white px-2 py-1 rounded w-full"
                                         />
                                         <div className="text-sm text-blue-200/90 mt-0.5 font-mono">{company.id}</div>
                                     </div>
                                 ) : (
-                                    <div>
+                                    <div className="min-w-0">
                                         <h1 className="text-2xl font-bold text-white truncate">
                                             {company.companyName || company.name}
                                         </h1>
@@ -1626,51 +1632,6 @@ export default function CompanyDetailPage() {
                                         </div>
                                     </div>
                                 )}
-                                {canEdit && (
-                                    <button
-                                        type="button"
-                                        onClick={() => setIsEditMode(!isEditMode)}
-                                        className="p-1 rounded hover:bg-white/20 transition-colors"
-                                        title={isEditMode ? 'View Mode' : 'Edit Company Details'}
-                                    >
-                                        <PencilSquareIcon className="w-5 h-5 text-blue-200 hover:text-white" />
-                                    </button>
-                                )}
-                                {isFlagged && <FlagIcon className="w-6 h-6 text-red-400 flex-shrink-0" aria-label="Flagged" />}
-                                {isCommitteeStalled && (
-                                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-red-100 text-red-700 text-xs font-bold border border-red-200">
-                                        <span className="w-2 h-2 rounded-full bg-red-600 animate-pulse"></span>
-                                        ACTION NEEDED
-                                    </span>
-                                )}
-                                {isFollowUpDue && (
-                                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-100 text-amber-700 text-xs font-bold border border-amber-200">
-                                        <ClockIcon className="w-3 h-3" />
-                                        FOLLOW-UP DUE
-                                    </span>
-                                )}
-                                {needsReplyWarning && (
-                                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-red-100 text-red-700 text-xs font-bold border border-red-200 animate-pulse">
-                                        <ExclamationTriangleIcon className="w-3 h-3" />
-                                        REPLY OVERDUE
-                                    </span>
-                                )}
-                                {nextPendingEmailSchedule && (
-                                    <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold border ${nextPendingEmailSchedule.isOverdue ? 'bg-red-50 text-red-700 border-red-200' : 'bg-indigo-50 text-indigo-700 border-indigo-200'}`}>
-                                        <ClockIcon className="w-3 h-3" />
-                                        {new Date(nextPendingEmailSchedule.date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}, {formatTime(nextPendingEmailSchedule.time)}
-                                    </span>
-                                )}
-                                {(() => {
-                                    const hasIncompleteFollowUp = scheduleEntries.some(e => e.completed !== 'Y');
-                                    const isLaterStage = ['Interested', 'Registered'].includes(relationshipStatus);
-                                    return hasIncompleteFollowUp && isLaterStage ? (
-                                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-100 text-amber-700 text-xs font-bold border border-amber-200">
-                                            <CalendarDaysIcon className="w-3 h-3" />
-                                            Follow-up scheduled
-                                        </span>
-                                    ) : null;
-                                })()}
                             </div>
                             <div className="flex items-center gap-3 mt-2 flex-wrap">
                                 <span className={`inline-flex px-3 py-1 rounded-full text-xs font-medium ${getStatusColor(company.contactStatus)}`}>
@@ -1702,6 +1663,53 @@ export default function CompanyDetailPage() {
                                     </div>
                                 )}
                             </div>
+                        </div>
+                        <div className="flex flex-wrap items-start justify-start gap-2 lg:max-w-[50%] lg:justify-end">
+                            {canEdit && (
+                                <button
+                                    type="button"
+                                    onClick={() => setIsEditMode(!isEditMode)}
+                                    className="p-1 rounded hover:bg-white/20 transition-colors"
+                                    title={isEditMode ? 'View Mode' : 'Edit Company Details'}
+                                >
+                                    <PencilSquareIcon className="w-5 h-5 text-blue-200 hover:text-white" />
+                                </button>
+                            )}
+                            {isFlagged && <FlagIcon className="w-6 h-6 text-red-400 flex-shrink-0" aria-label="Flagged" />}
+                            {isCommitteeStale && (
+                                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-100 text-amber-700 text-xs font-bold border border-amber-200">
+                                    <ClockIcon className="w-3 h-3" />
+                                    STALE
+                                </span>
+                            )}
+                            {isFollowUpDue && (
+                                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-100 text-amber-700 text-xs font-bold border border-amber-200">
+                                    <ClockIcon className="w-3 h-3" />
+                                    FOLLOW-UP DUE
+                                </span>
+                            )}
+                            {needsReplyWarning && (
+                                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-red-100 text-red-700 text-xs font-bold border border-red-200 animate-pulse">
+                                    <ExclamationTriangleIcon className="w-3 h-3" />
+                                    REPLY OVERDUE
+                                </span>
+                            )}
+                            {nextPendingEmailSchedule && (
+                                <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold border ${nextPendingEmailSchedule.isOverdue ? 'bg-red-50 text-red-700 border-red-200' : 'bg-indigo-50 text-indigo-700 border-indigo-200'}`}>
+                                    <ClockIcon className="w-3 h-3" />
+                                    {new Date(nextPendingEmailSchedule.date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}, {formatTime(nextPendingEmailSchedule.time)}
+                                </span>
+                            )}
+                            {(() => {
+                                const hasIncompleteFollowUp = scheduleEntries.some(e => e.completed !== 'Y');
+                                const isLaterStage = ['Interested', 'Registered'].includes(relationshipStatus);
+                                return hasIncompleteFollowUp && isLaterStage ? (
+                                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-100 text-amber-700 text-xs font-bold border border-amber-200">
+                                        <CalendarDaysIcon className="w-3 h-3" />
+                                        Follow-up scheduled
+                                    </span>
+                                ) : null;
+                            })()}
                         </div>
                     </div>
                 </div>

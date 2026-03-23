@@ -10,6 +10,7 @@ import {
     ArrowPathIcon,
     ChatBubbleOvalLeftEllipsisIcon,
     ChatBubbleLeftRightIcon,
+    CalendarDaysIcon,
 } from '@heroicons/react/24/outline';
 import { useBackgroundTasks } from '../contexts/BackgroundTasksContext';
 
@@ -42,6 +43,25 @@ interface CommitteeWorkspaceProps {
 
 const TOOLTIP_DELAY_MS = 300;
 
+/** Match email-schedule date handling for filtering */
+function normalizeScheduleDate(s?: string): string {
+    if (!s?.trim()) return '';
+    const d = new Date(s.trim());
+    if (Number.isNaN(d.getTime())) return '';
+    return d.toISOString().slice(0, 10);
+}
+
+/** Parse schedule time (e.g. 8:00, 08:30) to minutes since midnight */
+function scheduleTimeToMinutes(t?: string): number | null {
+    if (!t?.trim()) return null;
+    const m = t.trim().match(/^(\d{1,2}):(\d{2})/);
+    if (!m) return null;
+    const h = parseInt(m[1], 10);
+    const min = parseInt(m[2], 10);
+    if (Number.isNaN(h) || Number.isNaN(min)) return null;
+    return h * 60 + min;
+}
+
 function getNowDatetimeLocal(): string {
     const n = new Date();
     const pad = (x: number) => String(x).padStart(2, '0');
@@ -72,6 +92,11 @@ export default function CommitteeWorkspace({
     const [searchTerm, setSearchTerm] = useState('');
     const [showOnlyStale, setShowOnlyStale] = useState(false);
     const [showReplyNeeded, setShowReplyNeeded] = useState(false);
+    /** Filter by next pending email schedule (YYYY-MM-DD from date input) */
+    const [scheduleDateFilter, setScheduleDateFilter] = useState('');
+    /** Optional time window on that day (HTML time input values HH:mm) */
+    const [scheduleTimeFrom, setScheduleTimeFrom] = useState('');
+    const [scheduleTimeTo, setScheduleTimeTo] = useState('');
     const [tooltip, setTooltip] = useState<{ name: string; rect: DOMRect } | null>(null);
     const tooltipTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     const hoveredElementRef = useRef<HTMLElement | null>(null);
@@ -109,7 +134,29 @@ export default function CommitteeWorkspace({
         const matchesStale = !showOnlyStale || company.isStale;
         const matchesReplyNeeded = !showReplyNeeded || company.replyNeeded;
 
-        return matchesSearch && matchesStale && matchesReplyNeeded;
+        let matchesSchedule = true;
+        if (scheduleDateFilter.trim()) {
+            const targetDate = scheduleDateFilter.trim();
+            const companyDate = normalizeScheduleDate(company.scheduledDate);
+            if (!company.scheduledDate || !company.scheduledTime || companyDate !== targetDate) {
+                matchesSchedule = false;
+            } else {
+                const tMin = scheduleTimeToMinutes(company.scheduledTime);
+                const fromMin = scheduleTimeFrom.trim() ? scheduleTimeToMinutes(scheduleTimeFrom) : null;
+                const toMin = scheduleTimeTo.trim() ? scheduleTimeToMinutes(scheduleTimeTo) : null;
+                const hasTimeWindow = fromMin !== null || toMin !== null;
+                if (hasTimeWindow) {
+                    if (tMin === null) {
+                        matchesSchedule = false;
+                    } else {
+                        if (fromMin !== null && tMin < fromMin) matchesSchedule = false;
+                        if (toMin !== null && tMin > toMin) matchesSchedule = false;
+                    }
+                }
+            }
+        }
+
+        return matchesSearch && matchesStale && matchesReplyNeeded && matchesSchedule;
     });
 
     // Group by the active kanban view
@@ -351,6 +398,13 @@ export default function CommitteeWorkspace({
 
     const staleCount = companies.filter(c => c.isStale).length;
     const replyNeededCount = companies.filter(c => c.replyNeeded).length;
+    const scheduledOnDateCount = useMemo(() => {
+        if (!scheduleDateFilter.trim()) return 0;
+        const target = scheduleDateFilter.trim();
+        return companies.filter(
+            c => normalizeScheduleDate(c.scheduledDate) === target && !!c.scheduledTime
+        ).length;
+    }, [companies, scheduleDateFilter]);
 
     return (
         <div className="space-y-6">
@@ -365,7 +419,7 @@ export default function CommitteeWorkspace({
                     </div>
 
                     {/* Filters */}
-                    <div className="flex items-center gap-3">
+                    <div className="flex flex-wrap items-center gap-3">
                         {/* Search */}
                         <div className="relative">
                             <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" aria-hidden="true" />
@@ -401,6 +455,58 @@ export default function CommitteeWorkspace({
                             <ClockIcon className="w-4 h-4" aria-hidden="true" />
                             Stale {staleCount > 0 && `(${staleCount})`}
                         </button>
+
+                        {/* Scheduled email date / time (next pending slot) */}
+                        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-300 bg-white px-2 py-1.5">
+                            <CalendarDaysIcon className="w-4 h-4 text-slate-500 flex-shrink-0" aria-hidden />
+                            <label className="sr-only" htmlFor="committee-schedule-date">Scheduled email date</label>
+                            <input
+                                id="committee-schedule-date"
+                                type="date"
+                                value={scheduleDateFilter}
+                                onChange={(e) => setScheduleDateFilter(e.target.value)}
+                                className="border-0 bg-transparent text-sm text-slate-800 focus:ring-0 py-1 max-w-[11rem]"
+                                title="Filter by scheduled email date"
+                            />
+                            <span className="text-slate-400 text-xs hidden sm:inline">Time</span>
+                            <input
+                                type="time"
+                                value={scheduleTimeFrom}
+                                onChange={(e) => setScheduleTimeFrom(e.target.value)}
+                                disabled={!scheduleDateFilter}
+                                className="border-0 bg-transparent text-sm text-slate-800 focus:ring-0 py-1 max-w-[6.5rem] disabled:opacity-40"
+                                title="From time (optional)"
+                                aria-label="Scheduled time from"
+                            />
+                            <span className="text-slate-400 text-xs">–</span>
+                            <input
+                                type="time"
+                                value={scheduleTimeTo}
+                                onChange={(e) => setScheduleTimeTo(e.target.value)}
+                                disabled={!scheduleDateFilter}
+                                className="border-0 bg-transparent text-sm text-slate-800 focus:ring-0 py-1 max-w-[6.5rem] disabled:opacity-40"
+                                title="To time (optional)"
+                                aria-label="Scheduled time to"
+                            />
+                            {scheduleDateFilter && (
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setScheduleDateFilter('');
+                                        setScheduleTimeFrom('');
+                                        setScheduleTimeTo('');
+                                    }}
+                                    className="text-xs font-medium text-blue-600 hover:text-blue-800 px-1"
+                                >
+                                    Clear
+                                </button>
+                            )}
+                            {scheduleDateFilter && scheduledOnDateCount > 0 && (
+                                <span className="text-xs text-slate-500 whitespace-nowrap">
+                                    {scheduledOnDateCount} on this date
+                                </span>
+                            )}
+                        </div>
 
                         {/* Layout toggle */}
                         <div className="flex rounded-lg border border-slate-300 overflow-hidden">

@@ -95,14 +95,25 @@ export default async function handler(
 
         if (!trackerSpreadsheetId) throw new Error('Tracker Spreadsheet ID not found');
 
-        // 0. Ensure Required Sheets and Headers
+        // 0. Pre-flight: Validate all required sheets exist in Tracker before any sync
+        // Tracker sheet always follows Database IDs. Email_Schedule, Thread_History, Logs_DoNotEdit
+        // must exist and be accessible for ID healing and audit trail.
+        const validation = await validateTrackerSheets(sheets, trackerSpreadsheetId);
+        if (!validation.valid) {
+            return res.status(400).json({
+                success: false,
+                message: `Pre-flight validation failed: ${validation.errors.join('; ')}. Fix the Tracker spreadsheet before syncing.`,
+            });
+        }
+
+        // 1. Ensure Required Sheets and Headers (creates missing sheets, adds headers if empty)
         if (!preview) {
             await ensureRequiredSheets(sheets, trackerSpreadsheetId);
         }
 
         console.log('Starting Database Sync...');
 
-        // 1. Fetch Data
+        // 2. Fetch Data
         // Database: Get ID (A) and Name (B)
         const dbMetadata = await sheets.spreadsheets.get({ spreadsheetId: databaseSpreadsheetId });
         const { title: dbSheetName } = getCompanyDatabaseSheet(dbMetadata.data.sheets);
@@ -129,10 +140,9 @@ export default async function handler(
         // Normalize ID for case-insensitive matching (ME-0001 vs me-0001)
         const normalizeId = (id: string) => id?.toString().trim().toUpperCase() || '';
 
-        // 2. Build Comprehensive Tracker Maps
-        // Track ALL occurrences of each company (not just the last one)
+        // 2. Build Tracker map by ID only.
+        // Company identity is keyed by ID; duplicate company names are allowed.
         const trackerEntriesById = new Map<string, Array<{ id: string; name: string; rowIndex: number }>>();
-        const trackerEntriesByName = new Map<string, Array<{ id: string; rowIndex: number }>>();
 
         trackerRows.forEach((row, index) => {
             const id = row[0]?.toString().trim();
@@ -145,14 +155,6 @@ export default async function handler(
                     trackerEntriesById.set(key, []);
                 }
                 trackerEntriesById.get(key)!.push({ id, name: name || '', rowIndex });
-            }
-
-            if (name) {
-                const normalizedName = name.toLowerCase().replace(/\s+/g, ' ').trim();
-                if (!trackerEntriesByName.has(normalizedName)) {
-                    trackerEntriesByName.set(normalizedName, []);
-                }
-                trackerEntriesByName.get(normalizedName)!.push({ id, rowIndex });
             }
         });
 
@@ -177,86 +179,33 @@ export default async function handler(
             if (processedDbIds.has(dbIdKey)) return;
             processedDbIds.add(dbIdKey);
 
-            const normalizedDbName = dbName.toLowerCase().replace(/\s+/g, ' ').trim();
-
-            // Look up both by ID and by name
+            // Look up by ID only. If the ID does not exist in Tracker, add a new default row.
+            // Do not fall back to company name, because duplicate names with different IDs are valid.
             let rowByID: { rowIndex: number; id: string; name: string } | null = null;
-            let rowByName: { rowIndex: number; id: string } | null = null;
 
             if (trackerEntriesById.has(dbIdKey)) {
                 const entries = trackerEntriesById.get(dbIdKey)!;
                 const entry = entries.find(e => !claimedRows.has(e.rowIndex)) || entries[0];
                 rowByID = { rowIndex: entry.rowIndex, id: entry.id, name: entry.name };
             }
-            if (trackerEntriesByName.has(normalizedDbName)) {
-                const entries = trackerEntriesByName.get(normalizedDbName)!;
-                const entry = entries.find(e => !claimedRows.has(e.rowIndex)) || entries[0];
-                rowByName = { rowIndex: entry.rowIndex, id: entry.id };
-            }
-
-            // Precedence: Name match wins when ID and name point to different rows (swap — status/remarks belong to the row with correct name).
-            // - Swap: use name match (that row has correct name, needs ID fix only)
-            // - Same row or ID-only: use ID match
-            // - Name-only: use name match
-            const isSwap =
-                rowByID &&
-                rowByName &&
-                rowByID.rowIndex !== rowByName.rowIndex &&
-                rowByID.name.toLowerCase().trim() !== dbName.toLowerCase().trim();
 
             let primaryRow: { rowIndex: number; currentId: string; currentName: string } | null = null;
 
-            if (isSwap) {
-                primaryRow = { rowIndex: rowByName!.rowIndex, currentId: rowByName!.id, currentName: dbName };
-                claimedRows.add(primaryRow.rowIndex);
-                claimedRows.add(rowByID!.rowIndex);
-                trackerEntriesById.get(dbIdKey)!.forEach(e => claimedRows.add(e.rowIndex));
-            } else if (rowByID) {
+            if (rowByID) {
                 primaryRow = { rowIndex: rowByID.rowIndex, currentId: rowByID.id, currentName: rowByID.name };
                 trackerEntriesById.get(dbIdKey)!.forEach(e => claimedRows.add(e.rowIndex));
-            } else if (rowByName) {
-                primaryRow = { rowIndex: rowByName.rowIndex, currentId: rowByName.id, currentName: dbName };
             }
 
             if (primaryRow) {
                 claimedRows.add(primaryRow.rowIndex);
 
-                // Only update name when safe. When ID matched but no row has this company name in tracker,
-                // don't auto-update — the status/remarks on that row may belong to a different company.
-                if (!isSwap && primaryRow.currentName.trim() !== dbName) {
-                    if (rowByName) {
-                        nameMismatches.push({
-                            rowIndex: primaryRow.rowIndex,
-                            oldName: primaryRow.currentName,
-                            newName: dbName,
-                            id: dbId
-                        });
-                    } else {
-                        idNameMismatches.push({
-                            rowIndex: primaryRow.rowIndex,
-                            trackerName: primaryRow.currentName,
-                            dbName,
-                            id: dbId
-                        });
-                    }
-                }
-
-                if (primaryRow.currentId !== dbId) {
-                    idMismatches.push({
+                // When the ID matches, it is safe to align the tracker company name to the Database.
+                if (primaryRow.currentName.trim() !== dbName) {
+                    nameMismatches.push({
                         rowIndex: primaryRow.rowIndex,
-                        oldId: primaryRow.currentId,
-                        newId: dbId,
-                        name: dbName
-                    });
-                }
-
-                // Mark duplicates to remove (only when not a swap; swap case doesn't create duplicates)
-                if (!isSwap && trackerEntriesByName.has(normalizedDbName)) {
-                    trackerEntriesByName.get(normalizedDbName)!.forEach(entry => {
-                        if (entry.rowIndex !== primaryRow!.rowIndex && !claimedRows.has(entry.rowIndex)) {
-                            duplicatesToRemove.push(entry.rowIndex);
-                            claimedRows.add(entry.rowIndex);
-                        }
+                        oldName: primaryRow.currentName,
+                        newName: dbName,
+                        id: dbId
                     });
                 }
             } else {
@@ -558,6 +507,59 @@ export default async function handler(
     }
 }
 
+/**
+ * Pre-flight validation: Ensure all required sheets exist and are readable in the Tracker spreadsheet.
+ * Tracker sheet always follows Database IDs. Email_Schedule, Thread_History, and Logs_DoNotEdit
+ * must exist for ID healing and audit trail during sync.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function validateTrackerSheets(sheets: any, trackerSpreadsheetId: string): Promise<{ valid: boolean; errors: string[] }> {
+    const errors: string[] = [];
+    try {
+        const metadata = await sheets.spreadsheets.get({ spreadsheetId: trackerSpreadsheetId });
+        const existingSheets = metadata.data.sheets || [];
+        const sheetTitles = existingSheets.map((s: { properties?: { title?: string } }) => s.properties?.title || '');
+
+        const mainSheetName = existingSheets[0]?.properties?.title;
+        const requiredSheets = [
+            { name: mainSheetName || 'Main Companies', key: 'main', range: `${mainSheetName}!A1:O1` },
+            { name: 'Email_Schedule', key: 'Email_Schedule', range: 'Email_Schedule!A1:J1' },
+            { name: 'Thread_History', key: 'Thread_History', range: 'Thread_History!A1:D1' },
+            { name: 'Logs_DoNotEdit', key: 'Logs_DoNotEdit', range: 'Logs_DoNotEdit!A1:E1' },
+        ];
+
+        for (const req of requiredSheets) {
+            if (!req.name) {
+                errors.push('Main companies sheet not found');
+                continue;
+            }
+            const found = sheetTitles.includes(req.name);
+            if (!found) {
+                errors.push(`Missing sheet: ${req.name}`);
+                continue;
+            }
+            try {
+                await sheets.spreadsheets.values.get({
+                    spreadsheetId: trackerSpreadsheetId,
+                    range: req.range,
+                });
+            } catch (readErr) {
+                errors.push(`Cannot read sheet "${req.name}": ${(readErr as Error).message}`);
+            }
+        }
+
+        return {
+            valid: errors.length === 0,
+            errors,
+        };
+    } catch (err) {
+        return {
+            valid: false,
+            errors: [`Failed to validate Tracker spreadsheet: ${(err as Error).message}`],
+        };
+    }
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function ensureRequiredSheets(sheets: any, spreadsheetId: string) {
     const metadata = await sheets.spreadsheets.get({ spreadsheetId });
@@ -575,6 +577,10 @@ async function ensureRequiredSheets(sheets: any, spreadsheetId: string) {
                 'Last Company Contact', 'Last Committee Contact', 'Follow Ups Completed',
                 'Sponsorship Tier', 'Days Attending', 'Remarks', 'Last Update'
             ]
+        },
+        {
+            title: 'Email_Schedule',
+            headers: ['Company ID', 'Company Name', 'PIC', 'Date', 'Time', 'Order', 'Created At', 'Created By', 'Note', 'Completed']
         },
         {
             title: 'Logs_DoNotEdit',

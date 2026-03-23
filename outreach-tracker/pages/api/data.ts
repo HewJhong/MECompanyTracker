@@ -104,11 +104,15 @@ export default async function handler(
         // Processing
         console.log(">>> [API DATA] Processing...");
         const trackerMap = new Map();
+        const normalizeId = (s: string) => (s || '').toString().trim();
         trackerRows.forEach((row) => {
-            if (!row[0]) return;
+            const rawId = row[0];
+            if (!rawId) return;
+            const id = normalizeId(rawId);
+            if (!id) return;
             const deleted = (row[15] || '').toString().trim().toUpperCase() === 'Y';
-            trackerMap.set(row[0], {
-                companyId: row[0],
+            trackerMap.set(id, {
+                companyId: id,
                 companyName: row[1],
                 contactStatus: row[2] || 'To Contact',
                 relationshipStatus: row[3] || '',
@@ -129,7 +133,9 @@ export default async function handler(
 
         const companyMap = new Map();
         dbRows.forEach((row, index) => {
-            const id = row[0];
+            const rawId = row[0];
+            if (!rawId) return;
+            const id = normalizeId(rawId);
             if (!id) return;
             if (!companyMap.has(id)) {
                 const t = trackerMap.get(id);

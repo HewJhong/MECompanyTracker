@@ -95,9 +95,7 @@ export default function CommitteePage() {
 
     // Transform data for CommitteeWorkspace component
     const transformedCompanies = myCompanies.map(company => {
-        const daysSinceUpdate = company.lastUpdated
-            ? (Date.now() - new Date(company.lastUpdated).getTime()) / (1000 * 60 * 60 * 24)
-            : 0;
+        const staleThresholdDays = 3;
 
         // Warning Logic: Company Replied > Committee Contact > 3 Days
         const replyNeeded = (() => {
@@ -112,14 +110,17 @@ export default function CommitteePage() {
             return (lastCompanyReplyDate > lastCommitteeContactDate) && (daysSinceReply > 3);
         })();
 
-        const scheduled = scheduleMap[company.id];
-        const showSchedule = !!(scheduled?.date && scheduled?.time);
+        const nextPendingSchedule = scheduleMap[company.id];
+        const hasPendingSchedule = !!(nextPendingSchedule?.date && nextPendingSchedule?.time);
 
-        // Don't show stale for "To Contact" with no schedule — they haven't been scheduled yet
         const contactStatus = company.contactStatus || 'To Contact';
-        const isStale = daysSinceUpdate > 7 && (
-            contactStatus !== 'To Contact' || showSchedule
-        );
+        const lastCommitteeContactAtMs = parseIsoLikeTimestamp(company.lastContact);
+        const daysSinceCommitteeContact = lastCommitteeContactAtMs === null
+            ? null
+            : (Date.now() - lastCommitteeContactAtMs) / (1000 * 60 * 60 * 24);
+        const isStale = contactStatus === 'To Contact'
+            ? (hasPendingSchedule && !!nextPendingSchedule?.isOverdue)
+            : (lastCommitteeContactAtMs === null || (daysSinceCommitteeContact !== null && daysSinceCommitteeContact > staleThresholdDays));
 
         return {
             id: company.id,
@@ -147,10 +148,10 @@ export default function CommitteePage() {
             isStale,
             replyNeeded,
             // Show schedule badge for next pending schedule (overdue will be red)
-            scheduledTime: showSchedule ? scheduled?.time : undefined,
-            scheduledDate: showSchedule ? scheduled?.date : undefined,
-            scheduledIsOverdue: showSchedule ? scheduled?.isOverdue : undefined,
-            scheduleNote: showSchedule ? scheduled?.note : undefined,
+            scheduledTime: hasPendingSchedule ? nextPendingSchedule?.time : undefined,
+            scheduledDate: hasPendingSchedule ? nextPendingSchedule?.date : undefined,
+            scheduledIsOverdue: hasPendingSchedule ? nextPendingSchedule?.isOverdue : undefined,
+            scheduleNote: hasPendingSchedule ? nextPendingSchedule?.note : undefined,
         };
     });
 

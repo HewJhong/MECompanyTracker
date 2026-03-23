@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react';
+import { Fragment, useState, useEffect } from 'react';
 import { useRouter } from 'next/router';
 import { signOut } from 'next-auth/react';
+import { Dialog, Transition } from '@headlessui/react';
 import Layout from '../components/Layout';
 import {
     Cog6ToothIcon,
@@ -14,6 +15,7 @@ import {
     AdjustmentsHorizontalIcon,
     ArchiveBoxIcon,
     ArrowPathIcon,
+    CircleStackIcon,
 } from '@heroicons/react/24/solid';
 import { useCurrentUser } from '../contexts/CurrentUserContext';
 import DuplicateMergeModal from '../components/DuplicateMergeModal';
@@ -23,12 +25,12 @@ function SettingsContent() {
     const router = useRouter();
     const { user, realUser } = useCurrentUser();
     const isSuperAdmin = realUser?.isSuperAdmin === true;
-    const [activeTab, setActiveTab] = useState<'profile' | 'notifications' | 'security' | 'appearance' | 'limits' | 'archived'>('profile');
+    const [activeTab, setActiveTab] = useState<'profile' | 'notifications' | 'security' | 'appearance' | 'limits' | 'archived' | 'data'>('profile');
 
     useEffect(() => {
         const tab = router.query.tab as string | undefined;
-        if (tab && ['profile', 'notifications', 'security', 'appearance', 'limits', 'archived'].includes(tab)) {
-            if (tab === 'archived' && realUser && !realUser.isSuperAdmin) {
+        if (tab && ['profile', 'notifications', 'security', 'appearance', 'limits', 'archived', 'data'].includes(tab)) {
+            if ((tab === 'archived' || tab === 'data') && realUser && !realUser.isSuperAdmin) {
                 setActiveTab('profile');
             } else {
                 setActiveTab(tab as typeof activeTab);
@@ -244,8 +246,9 @@ function SettingsContent() {
                 const target = preview ? setSyncPreviewData : setSyncResult;
                 target({
                     success: false,
-                    message: `Sync failed: ${data.message}`
+                    message: data.message || 'Sync failed'
                 } as any);
+                if (preview) setShowSyncPreview(true);
             }
         } catch (error) {
             const target = preview ? setSyncPreviewData : setSyncResult;
@@ -448,6 +451,47 @@ function SettingsContent() {
         }
     };
 
+    const syncPreviewDetails = syncPreviewData?.details;
+    const syncPreviewSections = syncPreviewDetails ? [
+        {
+            key: 'added',
+            title: 'Add To Tracker',
+            items: syncPreviewDetails.added || [],
+            render: (item: any) => `${item.id} - ${item.name}`,
+        },
+        {
+            key: 'missingInDatabase',
+            title: 'Add To Database',
+            items: syncPreviewDetails.missingInDatabase || [],
+            render: (item: any) => `${item.id || 'No ID'} - ${item.name}`,
+        },
+        {
+            key: 'nameCorrections',
+            title: 'Name Corrections',
+            items: syncPreviewDetails.nameCorrections || [],
+            render: (item: any) => `${item.id}: "${item.oldName}" -> "${item.newName}"`,
+        },
+        {
+            key: 'idChanges',
+            title: 'ID Changes',
+            items: syncPreviewDetails.idChanges || [],
+            render: (item: any) => `${item.oldId} -> ${item.newId} (${item.name})`,
+        },
+        {
+            key: 'idNameMismatches',
+            title: 'Manual Review Required',
+            items: syncPreviewDetails.idNameMismatches || [],
+            render: (item: any) => `${item.id} at row ${item.rowIndex}: Tracker "${item.trackerName}" vs DB "${item.dbName}"`,
+        },
+        {
+            key: 'duplicatesRemoved',
+            title: 'Duplicate Rows To Remove',
+            items: syncPreviewDetails.duplicatesRemoved || [],
+            render: (item: any) => `Row ${item.rowIndex}: ${item.id} - ${item.name}`,
+        },
+    ] : [];
+    const syncPreviewHasChanges = syncPreviewSections.some(section => section.items.length > 0);
+
     const handleSaveLimits = async () => {
         setSavingLimits(true);
         setLimitsResult(null);
@@ -484,9 +528,10 @@ function SettingsContent() {
         { id: 'security', label: 'Security', icon: ShieldCheckIcon },
         { id: 'appearance', label: 'Appearance', icon: PaintBrushIcon },
         { id: 'limits', label: 'Sponsorship Limits', icon: AdjustmentsHorizontalIcon },
-        { id: 'archived', label: 'Archived Companies', icon: ArchiveBoxIcon }
+        { id: 'archived', label: 'Archived Companies', icon: ArchiveBoxIcon },
+        { id: 'data', label: 'Data Management', icon: CircleStackIcon },
     ];
-    const tabs = realUser?.isSuperAdmin ? allTabs : allTabs.filter(t => t.id !== 'archived');
+    const tabs = realUser?.isSuperAdmin ? allTabs : allTabs.filter(t => t.id !== 'archived' && t.id !== 'data');
 
     return (
         <Layout title="Settings | Outreach Tracker">
@@ -884,8 +929,220 @@ function SettingsContent() {
                             </div>
                         )}
 
-                        {/* Save Button (Hide for Limits tab as it has its own save mechanism) */}
-                        {activeTab !== 'limits' && activeTab !== 'archived' && (
+                        {/* Data Management Tab (Superadmin only) */}
+                        {activeTab === 'data' && (
+                            <div className="p-6 space-y-8">
+                                <div>
+                                    <h2 className="text-xl font-semibold text-slate-900 mb-1">Data Management</h2>
+                                    <p className="text-sm text-slate-600">Sync Database, fix ID gaps, recover from audit logs, and merge duplicates. Tracker sheet always follows Database IDs.</p>
+                                </div>
+
+                                {/* Sync Database */}
+                                <div className="p-4 bg-slate-50 rounded-lg border border-slate-200 space-y-4">
+                                    <h3 className="text-sm font-semibold text-slate-900">Sync Database</h3>
+                                    <p className="text-xs text-slate-600">Align Tracker with Database. Validates all sheets (Email_Schedule, Thread_History, Logs_DoNotEdit) before syncing.</p>
+                                    <div className="flex flex-wrap gap-2">
+                                        <button
+                                            onClick={() => handleSyncDatabase(true)}
+                                            disabled={syncing}
+                                            className="inline-flex items-center gap-2 px-4 py-2 bg-slate-200 text-slate-800 rounded-lg text-sm font-medium hover:bg-slate-300 disabled:opacity-50"
+                                        >
+                                            {syncing ? <div className="animate-spin rounded-full h-4 w-4 border-2 border-slate-400 border-t-slate-600" /> : null}
+                                            {syncPreviewData ? 'Refresh Preview' : 'Preview Sync'}
+                                        </button>
+                                        {syncPreviewData?.success && !showSyncPreview && (
+                                            <button
+                                                onClick={() => setShowSyncPreview(true)}
+                                                className="inline-flex items-center gap-2 px-4 py-2 bg-blue-50 text-blue-700 rounded-lg text-sm font-medium hover:bg-blue-100"
+                                            >
+                                                View Preview
+                                            </button>
+                                        )}
+                                    </div>
+                                    {syncResult && (
+                                        <div className={`p-3 rounded text-sm ${syncResult.success ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+                                            {syncResult.message}
+                                        </div>
+                                    )}
+                                    {syncPreviewData?.success && !showSyncPreview && syncPreviewData.stats && (
+                                        <div className="p-3 bg-white rounded border border-slate-200 text-sm space-y-2">
+                                            <div className="font-medium text-slate-700">Latest Preview</div>
+                                            <p>
+                                                Add to tracker: {syncPreviewData.stats.added} • Add to database: {syncPreviewData.stats.addedToDatabase} • Updates: {syncPreviewData.stats.updated} • Duplicates removed: {syncPreviewData.stats.duplicatesRemoved}
+                                                {syncPreviewData.stats.idNameMismatchesCount > 0 && ` • ID/name mismatches: ${syncPreviewData.stats.idNameMismatchesCount}`}
+                                            </p>
+                                        </div>
+                                    )}
+                                    {syncPreviewData && !syncPreviewData.success && (
+                                        <div className="p-3 bg-red-50 rounded border border-red-200 text-sm text-red-700">
+                                            {syncPreviewData.message}
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* ID Gaps */}
+                                <div className="p-4 bg-slate-50 rounded-lg border border-slate-200 space-y-4">
+                                    <h3 className="text-sm font-semibold text-slate-900">ID Gaps</h3>
+                                    <p className="text-xs text-slate-600">Scan for gaps in company ID sequence and renumber to close them.</p>
+                                    <div className="flex flex-wrap gap-2">
+                                        <button
+                                            onClick={handleScanIdGaps}
+                                            disabled={gapScanning}
+                                            className="inline-flex items-center gap-2 px-4 py-2 bg-slate-200 text-slate-800 rounded-lg text-sm font-medium hover:bg-slate-300 disabled:opacity-50"
+                                        >
+                                            {gapScanning ? <div className="animate-spin rounded-full h-4 w-4 border-2 border-slate-400 border-t-slate-600" /> : null}
+                                            Scan Gaps
+                                        </button>
+                                        {gapResults && gapResults.count > 0 && (
+                                            <>
+                                                <button
+                                                    onClick={() => setShowRenumberPreview(true)}
+                                                    className="px-4 py-2 text-sm font-medium text-blue-700 bg-blue-50 rounded-lg hover:bg-blue-100"
+                                                >
+                                                    View Preview
+                                                </button>
+                                                <button
+                                                    onClick={() => setShowFixConfirm(true)}
+                                                    className="px-4 py-2 text-sm font-medium text-amber-700 bg-amber-50 rounded-lg hover:bg-amber-100"
+                                                >
+                                                    Fix Gaps
+                                                </button>
+                                            </>
+                                        )}
+                                    </div>
+                                    {fixResult && (
+                                        <div className={`p-3 rounded text-sm ${fixResult.success ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+                                            {fixResult.message}
+                                        </div>
+                                    )}
+                                    {gapResults && gapResults.count === 0 && !fixResult && (
+                                        <p className="text-sm text-slate-600">No ID gaps found.</p>
+                                    )}
+                                    {gapResults && gapResults.count > 0 && !showRenumberPreview && !fixResult && (
+                                        <p className="text-sm text-slate-600">{gapResults.count} gap(s) found: {gapResults.missingIds?.slice(0, 5).join(', ')}{gapResults.missingIds?.length > 5 ? '...' : ''}</p>
+                                    )}
+                                    {showRenumberPreview && gapResults?.proposedChanges && (
+                                        <div className="p-3 bg-white rounded border border-slate-200 text-sm max-h-48 overflow-y-auto">
+                                            <div className="font-medium mb-2">Proposed renumber changes:</div>
+                                            <ul className="space-y-1 text-slate-600">
+                                                {gapResults.proposedChanges.slice(0, 15).map((c: any, i: number) => (
+                                                    <li key={i}>{c.oldId} → {c.newId} ({c.name})</li>
+                                                ))}
+                                                {gapResults.proposedChanges.length > 15 && <li>... and {gapResults.proposedChanges.length - 15} more</li>}
+                                            </ul>
+                                            <button onClick={() => setShowRenumberPreview(false)} className="mt-2 text-xs text-blue-600 hover:underline">Close</button>
+                                        </div>
+                                    )}
+                                    {showFixConfirm && (
+                                        <div className="p-3 bg-amber-50 rounded border border-amber-200">
+                                            <p className="text-sm text-amber-800 mb-2">This will renumber companies. Continue?</p>
+                                            <div className="flex gap-2">
+                                                <button onClick={handleFixIdGaps} disabled={fixingGaps} className="px-3 py-1.5 bg-amber-600 text-white rounded text-sm font-medium hover:bg-amber-700 disabled:opacity-50">
+                                                    {fixingGaps ? 'Applying...' : 'Confirm'}
+                                                </button>
+                                                <button onClick={() => setShowFixConfirm(false)} className="px-3 py-1.5 bg-slate-200 text-slate-700 rounded text-sm font-medium hover:bg-slate-300">Cancel</button>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* Audit Recovery */}
+                                <div className="p-4 bg-slate-50 rounded-lg border border-slate-200 space-y-4">
+                                    <h3 className="text-sm font-semibold text-slate-900">Audit Recovery</h3>
+                                    <p className="text-xs text-slate-600">Recover company names from audit logs when ID/name mismatches exist.</p>
+                                    <div className="flex flex-wrap gap-2">
+                                        <button
+                                            onClick={handleAuditScan}
+                                            disabled={auditScanning}
+                                            className="inline-flex items-center gap-2 px-4 py-2 bg-slate-200 text-slate-800 rounded-lg text-sm font-medium hover:bg-slate-300 disabled:opacity-50"
+                                        >
+                                            {auditScanning ? <div className="animate-spin rounded-full h-4 w-4 border-2 border-slate-400 border-t-slate-600" /> : null}
+                                            Scan Audit
+                                        </button>
+                                    </div>
+                                    {auditResult && (
+                                        <div className={`p-3 rounded text-sm ${auditResult.success ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+                                            {auditResult.message}
+                                        </div>
+                                    )}
+                                    {auditWarning && (
+                                        <div className="p-3 rounded text-sm bg-amber-50 text-amber-800">{auditWarning}</div>
+                                    )}
+                                    {auditMismatches.length > 0 && (
+                                        <div className="space-y-2">
+                                            <div className="font-medium text-slate-700">Mismatches found:</div>
+                                            <ul className="divide-y divide-slate-200 border border-slate-200 rounded overflow-hidden bg-white">
+                                                {auditMismatches.map((m: any) => {
+                                                    const expectedName = m.expectedNamesFromLogs?.[0] || m.dbName || '';
+                                                    return (
+                                                        <li key={m.rowIndex} className="px-4 py-2 flex items-center justify-between gap-4">
+                                                            <span className="text-sm">Row {m.rowIndex}: ID {m.currentId || m.id} — Tracker: &quot;{m.currentName || m.trackerName}&quot; → Expected: &quot;{expectedName}&quot;</span>
+                                                            <button
+                                                                onClick={() => handleAuditApply([{ rowIndex: m.rowIndex, newName: expectedName }])}
+                                                                disabled={auditApplying}
+                                                                className="px-2 py-1 text-xs font-medium text-blue-700 bg-blue-50 rounded hover:bg-blue-100 disabled:opacity-50"
+                                                            >
+                                                                Apply
+                                                            </button>
+                                                        </li>
+                                                    );
+                                                })}
+                                            </ul>
+                                            <button
+                                                onClick={() => handleAuditApply(auditMismatches.map((m: any) => ({
+                                                    rowIndex: m.rowIndex,
+                                                    newName: m.expectedNamesFromLogs?.[0] || m.dbName || '',
+                                                })))}
+                                                disabled={auditApplying}
+                                                className="px-4 py-2 text-sm font-medium text-blue-600 bg-blue-100 rounded-lg hover:bg-blue-200 disabled:opacity-50"
+                                            >
+                                                {auditApplying ? 'Applying...' : 'Apply All'}
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* Duplicates */}
+                                <div className="p-4 bg-slate-50 rounded-lg border border-slate-200 space-y-4">
+                                    <h3 className="text-sm font-semibold text-slate-900">Duplicate Companies</h3>
+                                    <p className="text-xs text-slate-600">Scan for duplicate company names and merge them.</p>
+                                    <div className="flex flex-wrap gap-2">
+                                        <button
+                                            onClick={handleScanDuplicates}
+                                            disabled={scanning}
+                                            className="inline-flex items-center gap-2 px-4 py-2 bg-slate-200 text-slate-800 rounded-lg text-sm font-medium hover:bg-slate-300 disabled:opacity-50"
+                                        >
+                                            {scanning ? <div className="animate-spin rounded-full h-4 w-4 border-2 border-slate-400 border-t-slate-600" /> : null}
+                                            Scan Duplicates
+                                        </button>
+                                    </div>
+                                    {showScanResults && duplicates.length > 0 && (
+                                        <div className="space-y-2">
+                                            <div className="font-medium text-slate-700">{duplicates.length} duplicate group(s) found:</div>
+                                            <ul className="divide-y divide-slate-200 border border-slate-200 rounded overflow-hidden bg-white">
+                                                {duplicates.map((group: any, idx: number) => (
+                                                    <li key={idx} className="px-4 py-2 flex items-center justify-between">
+                                                        <span className="text-sm">{group.name} ({group.companies?.length || 0} rows)</span>
+                                                        <button
+                                                            onClick={() => setSelectedGroup(group)}
+                                                            className="px-2 py-1 text-xs font-medium text-blue-700 bg-blue-50 rounded hover:bg-blue-100"
+                                                        >
+                                                            Merge
+                                                        </button>
+                                                    </li>
+                                                ))}
+                                            </ul>
+                                        </div>
+                                    )}
+                                    {showScanResults && duplicates.length === 0 && !scanning && (
+                                        <p className="text-sm text-slate-600">No duplicates found.</p>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Save Button (Hide for Limits, Archived, Data tabs as they have their own actions) */}
+                        {activeTab !== 'limits' && activeTab !== 'archived' && activeTab !== 'data' && (
                             <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-3">
                                 {saved && (
                                     <div className="flex items-center gap-2 text-green-700">
@@ -912,6 +1169,119 @@ function SettingsContent() {
                     </div>
                 </div>
             </div>
+            <Transition appear show={showSyncPreview && !!syncPreviewData} as={Fragment}>
+                <Dialog as="div" className="relative z-50" onClose={() => setShowSyncPreview(false)}>
+                    <Transition.Child
+                        as={Fragment}
+                        enter="ease-out duration-300"
+                        enterFrom="opacity-0"
+                        enterTo="opacity-100"
+                        leave="ease-in duration-200"
+                        leaveFrom="opacity-100"
+                        leaveTo="opacity-0"
+                    >
+                        <div className="fixed inset-0 bg-black/30 backdrop-blur-[2px]" />
+                    </Transition.Child>
+
+                    <div className="fixed inset-0 overflow-y-auto">
+                        <div className="flex min-h-full items-center justify-center p-4">
+                            <Transition.Child
+                                as={Fragment}
+                                enter="ease-out duration-300"
+                                enterFrom="opacity-0 scale-95"
+                                enterTo="opacity-100 scale-100"
+                                leave="ease-in duration-200"
+                                leaveFrom="opacity-100 scale-100"
+                                leaveTo="opacity-0 scale-95"
+                            >
+                                <Dialog.Panel className="w-full max-w-4xl transform overflow-hidden rounded-2xl bg-white shadow-xl transition-all">
+                                    <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-5">
+                                        <div>
+                                            <Dialog.Title as="h3" className="text-lg font-semibold text-slate-900">
+                                                Sync Preview
+                                            </Dialog.Title>
+                                            <p className="mt-1 text-sm text-slate-600">
+                                                Review every change before applying database sync.
+                                            </p>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowSyncPreview(false)}
+                                            className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                                            aria-label="Close sync preview"
+                                        >
+                                            <XMarkIcon className="h-5 w-5" />
+                                        </button>
+                                    </div>
+
+                                    <div className="max-h-[70vh] overflow-y-auto px-6 py-5 space-y-6">
+                                        {syncPreviewData?.stats && (
+                                            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+                                                <div className="font-medium text-slate-900 mb-2">Summary</div>
+                                                <p>
+                                                    Add to tracker: {syncPreviewData.stats.added} • Add to database: {syncPreviewData.stats.addedToDatabase} • Updates: {syncPreviewData.stats.updated} • Duplicates removed: {syncPreviewData.stats.duplicatesRemoved}
+                                                    {syncPreviewData.stats.idNameMismatchesCount > 0 && ` • ID/name mismatches: ${syncPreviewData.stats.idNameMismatchesCount}`}
+                                                </p>
+                                            </div>
+                                        )}
+
+                                        {!syncPreviewData?.success && (
+                                            <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+                                                {syncPreviewData?.message || 'Sync preview failed.'}
+                                            </div>
+                                        )}
+
+                                        {syncPreviewData?.success && !syncPreviewHasChanges && (
+                                            <div className="rounded-xl border border-green-200 bg-green-50 p-4 text-sm text-green-700">
+                                                No changes detected. Tracker and Database are already aligned.
+                                            </div>
+                                        )}
+
+                                        {syncPreviewData?.success && syncPreviewSections.filter(section => section.items.length > 0).map(section => (
+                                            <div key={section.key} className="rounded-xl border border-slate-200 bg-white">
+                                                <div className="border-b border-slate-200 px-4 py-3">
+                                                    <h4 className="font-medium text-slate-900">{section.title}</h4>
+                                                    <p className="text-xs text-slate-500 mt-1">{section.items.length} change(s)</p>
+                                                </div>
+                                                <div className="max-h-64 overflow-y-auto px-4 py-3">
+                                                    <ul className="space-y-2 text-sm text-slate-700">
+                                                        {section.items.map((item: any, index: number) => (
+                                                            <li key={`${section.key}-${index}`} className="rounded-lg bg-slate-50 px-3 py-2 break-words">
+                                                                {section.render(item)}
+                                                            </li>
+                                                        ))}
+                                                    </ul>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+
+                                    <div className="flex items-center justify-end gap-3 border-t border-slate-200 px-6 py-4">
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowSyncPreview(false)}
+                                            className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                                        >
+                                            Close
+                                        </button>
+                                        {syncPreviewData?.success && (
+                                            <button
+                                                type="button"
+                                                onClick={() => handleSyncDatabase(false)}
+                                                disabled={syncing}
+                                                className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                                            >
+                                                {syncing ? <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent" /> : null}
+                                                Apply Sync
+                                            </button>
+                                        )}
+                                    </div>
+                                </Dialog.Panel>
+                            </Transition.Child>
+                        </div>
+                    </div>
+                </Dialog>
+            </Transition>
             {/* Modals */}
             <DuplicateMergeModal
                 isOpen={!!selectedGroup}
