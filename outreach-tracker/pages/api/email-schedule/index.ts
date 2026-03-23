@@ -79,6 +79,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             }
 
             const { slots } = await computeTimeSlotsWithExisting(date, startTime, companyIds.length);
+            if (slots.length !== companyIds.length) {
+                return res.status(400).json({
+                    error: 'Schedule capacity exceeded',
+                    code: 'SCHEDULE_CAPACITY_EXCEEDED',
+                    date,
+                    requestedEmails: companyIds.length,
+                    maxEmailsAssignableFromStart: slots.length,
+                    userMessage: `Cannot schedule ${companyIds.length} email${companyIds.length === 1 ? '' : 's'} on ${date} from ${startTime}. The day can only accommodate ${slots.length} more email${slots.length === 1 ? '' : 's'} from that start time.`,
+                });
+            }
 
             const now = new Date().toISOString();
             const entries: EmailScheduleEntry[] = companyIds.map((id, i) => ({

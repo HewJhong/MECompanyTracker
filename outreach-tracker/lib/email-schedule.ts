@@ -8,13 +8,50 @@ import {
     minutesToTime,
     isInBlockedPeriod,
     skipBlockedPeriods,
-    BlockedPeriod,
+    AllowedPeriod,
 } from './schedule-calculator';
 
 const SCHEDULE_SHEET = 'Email_Schedule';
 const SETTINGS_SHEET = 'Email_Schedule_Settings';
 const CACHE_KEY_SCHEDULE = 'email_schedule';
 const CACHE_KEY_SETTINGS = 'email_schedule_settings';
+
+function parsePositiveIntOrFallback(value: string | undefined, fallback: number): number {
+    const parsed = Number.parseInt(String(value ?? '').trim(), 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function isValidTimeString(value: string | undefined): value is string {
+    const str = String(value ?? '').trim();
+    if (!str) return false;
+    const m = /^(\d{1,2}):(\d{2})$/.exec(str);
+    if (!m) return false;
+    const h = Number.parseInt(m[1], 10);
+    const mm = Number.parseInt(m[2], 10);
+    return Number.isFinite(h) && Number.isFinite(mm) && h >= 0 && h <= 23 && mm >= 0 && mm <= 59;
+}
+
+function normalizeAllowedPeriods(value: string | undefined): AllowedPeriod[] {
+    if (!value) return [...DEFAULT_SCHEDULE_SETTINGS.allowedPeriods];
+    try {
+        const parsed = JSON.parse(value);
+        if (!Array.isArray(parsed)) return [...DEFAULT_SCHEDULE_SETTINGS.allowedPeriods];
+        const normalized = parsed
+            .map((p: unknown) => {
+                if (!p || typeof p !== 'object') return null;
+                const candidate = p as Record<string, unknown>;
+                const label = String(candidate.label ?? '').trim();
+                const start = String(candidate.start ?? '').trim();
+                const end = String(candidate.end ?? '').trim();
+                if (!label || !isValidTimeString(start) || !isValidTimeString(end)) return null;
+                return { label, start, end };
+            })
+            .filter((p): p is AllowedPeriod => p !== null);
+        return normalized.length > 0 ? normalized : [...DEFAULT_SCHEDULE_SETTINGS.allowedPeriods];
+    } catch {
+        return [...DEFAULT_SCHEDULE_SETTINGS.allowedPeriods];
+    }
+}
 
 export interface EmailScheduleEntry {
     companyId: string;
@@ -142,16 +179,20 @@ export async function getEmailScheduleSettings(): Promise<ScheduleSettings> {
         });
 
         const settings: ScheduleSettings = {
-            emailsPerBatch: settingsMap.emailsPerBatch
-                ? parseInt(settingsMap.emailsPerBatch, 10)
-                : DEFAULT_SCHEDULE_SETTINGS.emailsPerBatch,
-            batchIntervalMinutes: settingsMap.batchIntervalMinutes
-                ? parseInt(settingsMap.batchIntervalMinutes, 10)
-                : DEFAULT_SCHEDULE_SETTINGS.batchIntervalMinutes,
-            defaultStartTime: settingsMap.defaultStartTime || DEFAULT_SCHEDULE_SETTINGS.defaultStartTime,
-            blockedPeriods: settingsMap.blockedPeriods
-                ? JSON.parse(settingsMap.blockedPeriods)
-                : DEFAULT_SCHEDULE_SETTINGS.blockedPeriods,
+            emailsPerBatch: parsePositiveIntOrFallback(
+                settingsMap.emailsPerBatch,
+                DEFAULT_SCHEDULE_SETTINGS.emailsPerBatch,
+            ),
+            batchIntervalMinutes: parsePositiveIntOrFallback(
+                settingsMap.batchIntervalMinutes,
+                DEFAULT_SCHEDULE_SETTINGS.batchIntervalMinutes,
+            ),
+            defaultStartTime: isValidTimeString(settingsMap.defaultStartTime)
+                ? settingsMap.defaultStartTime.trim()
+                : DEFAULT_SCHEDULE_SETTINGS.defaultStartTime,
+            allowedPeriods: normalizeAllowedPeriods(
+                settingsMap.allowedPeriods || settingsMap.blockedPeriods, // legacy fallback
+            ),
         };
 
         cache.set(CACHE_KEY_SETTINGS, settings);
@@ -246,7 +287,7 @@ export async function saveEmailScheduleSettings(settings: ScheduleSettings): Pro
         ['emailsPerBatch', String(settings.emailsPerBatch)],
         ['batchIntervalMinutes', String(settings.batchIntervalMinutes)],
         ['defaultStartTime', settings.defaultStartTime],
-        ['blockedPeriods', JSON.stringify(settings.blockedPeriods)],
+        ['allowedPeriods', JSON.stringify(settings.allowedPeriods)],
     ];
 
     // Overwrite entire settings sheet (clear then write)
@@ -366,9 +407,9 @@ export async function computeTimeSlotsWithExisting(
     ]);
 
     const occupancy = getSlotOccupancy(existingEntries);
-    const { blockedPeriods, emailsPerBatch, batchIntervalMinutes } = settings;
+    const { allowedPeriods, emailsPerBatch, batchIntervalMinutes } = settings;
 
-    let currentSlotMinutes = skipBlockedPeriods(timeToMinutes(startTime), blockedPeriods);
+    let currentSlotMinutes = skipBlockedPeriods(timeToMinutes(startTime), allowedPeriods);
     const slots: string[] = [];
     const maxMinutes = 24 * 60;
 
@@ -381,7 +422,7 @@ export async function computeTimeSlotsWithExisting(
                 occupancy.set(slotTime, currentCount + 1);
                 break;
             }
-            currentSlotMinutes = skipBlockedPeriods(currentSlotMinutes + batchIntervalMinutes, blockedPeriods);
+            currentSlotMinutes = skipBlockedPeriods(currentSlotMinutes + batchIntervalMinutes, allowedPeriods);
         }
     }
 
@@ -391,7 +432,7 @@ export async function computeTimeSlotsWithExisting(
 
 /**
  * Given a start time and count, computes the time slot for each email
- * using the current settings (rate limits and blocked periods).
+ * using the current settings (rate limits and allowed periods).
  * Use computeTimeSlotsWithExisting when adding to a date that may have existing entries.
  */
 export async function computeTimeSlots(
@@ -402,7 +443,7 @@ export async function computeTimeSlots(
     const slots = calculateTimeSlots(
         startTime,
         count,
-        settings.blockedPeriods,
+        settings.allowedPeriods,
         settings.emailsPerBatch,
         settings.batchIntervalMinutes,
     );
@@ -412,7 +453,7 @@ export async function computeTimeSlots(
 
 /**
  * Returns the earliest slot on the given date that has room for at least one more
- * email (i.e. fewer than emailsPerBatch already scheduled). Respects blocked periods.
+ * email (i.e. fewer than emailsPerBatch already scheduled). Respects allowed periods.
  */
 export async function getNextAvailableStartTime(date: string): Promise<string> {
     const [settings, existingEntries] = await Promise.all([
@@ -421,9 +462,9 @@ export async function getNextAvailableStartTime(date: string): Promise<string> {
     ]);
 
     const occupancy = getSlotOccupancy(existingEntries);
-    const { blockedPeriods, emailsPerBatch, batchIntervalMinutes, defaultStartTime } = settings;
+    const { allowedPeriods, emailsPerBatch, batchIntervalMinutes, defaultStartTime } = settings;
 
-    let slotMinutes = skipBlockedPeriods(timeToMinutes(defaultStartTime), blockedPeriods);
+    let slotMinutes = skipBlockedPeriods(timeToMinutes(defaultStartTime), allowedPeriods);
     const maxMinutes = 24 * 60;
 
     while (slotMinutes < maxMinutes) {
@@ -431,14 +472,14 @@ export async function getNextAvailableStartTime(date: string): Promise<string> {
         if ((occupancy.get(slotTime) || 0) < emailsPerBatch) {
             return slotTime;
         }
-        slotMinutes = skipBlockedPeriods(slotMinutes + batchIntervalMinutes, blockedPeriods);
+        slotMinutes = skipBlockedPeriods(slotMinutes + batchIntervalMinutes, allowedPeriods);
     }
 
     return minutesToTime(slotMinutes);
 }
 
 /**
- * Validates a proposed schedule against existing entries and blocked periods.
+ * Validates a proposed schedule against existing entries and allowed periods.
  */
 export async function checkTimeConflicts(
     date: string,
@@ -453,7 +494,7 @@ export async function checkTimeConflicts(
     const proposedSlots = calculateTimeSlots(
         startTime,
         count,
-        settings.blockedPeriods,
+        settings.allowedPeriods,
         settings.emailsPerBatch,
         settings.batchIntervalMinutes,
     );
@@ -461,20 +502,13 @@ export async function checkTimeConflicts(
     const warnings: string[] = [];
     const conflictingEntries: EmailScheduleEntry[] = [];
 
-    // Check blocked period violations in proposed slots
+    // Check allowed period violations in proposed slots
     const proposedMinutesSet = new Set(proposedSlots.map(timeToMinutes));
 
     for (const slot of proposedSlots) {
         const slotMinutes = timeToMinutes(slot);
-        if (isInBlockedPeriod(slotMinutes, settings.blockedPeriods)) {
-            const period = settings.blockedPeriods.find(p => {
-                const s = timeToMinutes(p.start);
-                const e = timeToMinutes(p.end);
-                return slotMinutes >= s && slotMinutes < e;
-            });
-            if (period) {
-                warnings.push(`Slot at ${slot} falls within blocked period "${period.label}" (${period.start}–${period.end}).`);
-            }
+        if (isInBlockedPeriod(slotMinutes, settings.allowedPeriods)) {
+            warnings.push(`Slot at ${slot} falls outside configured allowed sending periods.`);
         }
     }
 
@@ -487,7 +521,7 @@ export async function checkTimeConflicts(
         }
     }
 
-    const hasBlockedPeriodConflict = warnings.some(w => w.includes('blocked period'));
+    const hasBlockedPeriodConflict = warnings.some(w => w.includes('outside allowed period'));
     const hasConflicts = conflictingEntries.length > 0;
 
     return {

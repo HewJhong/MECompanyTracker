@@ -30,8 +30,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             if (!settings.defaultStartTime || !/^\d{2}:\d{2}$/.test(settings.defaultStartTime)) {
                 return res.status(400).json({ error: 'defaultStartTime must be in HH:mm format' });
             }
-            if (!Array.isArray(settings.blockedPeriods)) {
-                return res.status(400).json({ error: 'blockedPeriods must be an array' });
+            if (!Array.isArray(settings.allowedPeriods)) {
+                return res.status(400).json({ error: 'allowedPeriods must be an array' });
             }
 
             await saveEmailScheduleSettings(settings);

@@ -72,6 +72,7 @@ export default function CompaniesPage() {
     const [scheduleSettings, setScheduleSettings] = useState<ScheduleSettings>(DEFAULT_SCHEDULE_SETTINGS);
     const [isFetchingSlot, setIsFetchingSlot] = useState(false);
     const [projectedSlots, setProjectedSlots] = useState<string[] | null>(null);
+    const [projectedCapacity, setProjectedCapacity] = useState<{ requested: number; available: number } | null>(null);
     const [scheduleMap, setScheduleMap] = useState<Record<string, { date: string; time: string; isOverdue: boolean }>>({});
     const [isSyncing, setIsSyncing] = useState(false);
     const [idNameMismatches, setIdNameMismatches] = useState<Array<{ id: string; trackerName: string; dbName: string }>>([]);
@@ -116,6 +117,7 @@ export default function CompaniesPage() {
     useEffect(() => {
         if (!scheduleDate || !scheduleStartTime || count === 0) {
             setProjectedSlots(null);
+            setProjectedCapacity(null);
             return;
         }
         let cancelled = false;
@@ -123,14 +125,21 @@ export default function CompaniesPage() {
         fetch(`/api/email-schedule/available-slots?${params}`)
             .then(res => res.ok ? res.json() : null)
             .then(json => {
-                if (!cancelled && json?.slots?.length === count) {
-                    setProjectedSlots(json.slots);
+                if (cancelled) return;
+                if (Array.isArray(json?.slots)) {
+                    const slots = json.slots as string[];
+                    setProjectedSlots(slots);
+                    setProjectedCapacity({ requested: count, available: slots.length });
                     if (json.settings) setScheduleSettings(json.settings);
-                } else {
-                    setProjectedSlots(null);
+                    return;
                 }
+                setProjectedSlots(null);
+                setProjectedCapacity(null);
             })
-            .catch(() => setProjectedSlots(null));
+            .catch(() => {
+                setProjectedSlots(null);
+                setProjectedCapacity(null);
+            });
         return () => { cancelled = true; };
     }, [scheduleDate, scheduleStartTime, count]);
 
@@ -142,14 +151,28 @@ export default function CompaniesPage() {
                 : calculateTimeSlots(
                     scheduleStartTime,
                     count,
-                    scheduleSettings.blockedPeriods,
+                    scheduleSettings.allowedPeriods,
                     scheduleSettings.emailsPerBatch,
                     scheduleSettings.batchIntervalMinutes,
                 );
         const endTime = getEndTime(slots);
-        const warnings = checkBlockedPeriodWarnings(slots, scheduleSettings.blockedPeriods);
+        const warnings = checkBlockedPeriodWarnings(slots, scheduleSettings.allowedPeriods);
         return { slots, endTime, warnings };
     })();
+    const hasScheduleCapacityLimit = Boolean(
+        projectedCapacity && projectedCapacity.available < projectedCapacity.requested
+    );
+    const visibleScheduleWarnings = hasScheduleCapacityLimit
+        ? (schedulePreview?.warnings || []).filter(
+            w => !w.message.toLowerCase().includes('outside configured allowed sending periods')
+        )
+        : (schedulePreview?.warnings || []);
+    const shouldBlockAssignForCapacity =
+        selectedAssignee !== '' &&
+        selectedAssignee !== '__UNASSIGN__' &&
+        Boolean(scheduleDate) &&
+        Boolean(scheduleStartTime) &&
+        hasScheduleCapacityLimit;
 
     const fetchData = async (forceRefresh = false) => {
         setLoading(true);
@@ -366,8 +389,8 @@ export default function CompaniesPage() {
             });
 
             if (!response.ok) {
-                const data = await response.json();
-                throw new Error(data.error || 'Server error');
+                const errData = await response.json().catch(() => ({}));
+                throw new Error(errData.userMessage || errData.error || 'Server error');
             }
 
             completeTask(taskId, 'Changes saved successfully to Google Sheets');
@@ -409,8 +432,10 @@ export default function CompaniesPage() {
             failTask(taskId, 'Failed to save to server');
             setShowSuccessModal(false); // Hide success if it's still open
             showError(
-                "Sync Error",
-                "The update appeared to succeed but failed to save to the server. Reloading data..."
+                "Assignment blocked",
+                error instanceof Error
+                    ? error.message
+                    : "The update appeared to succeed but failed to save to the server. Reloading data..."
             );
             fetchData(); // Force reload to revert to correct server state
         }
@@ -637,8 +662,8 @@ export default function CompaniesPage() {
 
                             <button
                                 onClick={() => handleBulkAssign(selectedAssignee)}
-                                disabled={!selectedAssignee}
-                                className={`px-4 py-2 rounded-lg font-bold transition-all transform active:scale-95 shrink-0 ${selectedAssignee
+                                disabled={!selectedAssignee || shouldBlockAssignForCapacity}
+                                className={`px-4 py-2 rounded-lg font-bold transition-all transform active:scale-95 shrink-0 ${selectedAssignee && !shouldBlockAssignForCapacity
                                     ? 'bg-white text-blue-600 hover:bg-blue-50 shadow-md'
                                     : 'bg-blue-800 text-blue-300 cursor-not-allowed'
                                     }`}
@@ -768,9 +793,19 @@ export default function CompaniesPage() {
                                 </div>
 
                                 {/* Warnings */}
-                                {schedulePreview && schedulePreview.warnings.length > 0 && (
+                                {hasScheduleCapacityLimit && projectedCapacity && (
+                                    <div className="flex items-start gap-2 px-3 py-2 bg-rose-500/20 border border-rose-400/40 rounded-lg text-xs text-rose-200 mt-1">
+                                        <svg className="w-4 h-4 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-7.938 4h15.876c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L2.34 16c-.77 1.333.192 3 1.732 3z" />
+                                        </svg>
+                                        <span>
+                                            Day capacity exceeded: this day can only accommodate <strong>{projectedCapacity.available}</strong> more {projectedCapacity.available === 1 ? 'email' : 'emails'} from {formatTime(scheduleStartTime)}, but you selected <strong>{projectedCapacity.requested}</strong>.
+                                        </span>
+                                    </div>
+                                )}
+                                {schedulePreview && visibleScheduleWarnings.length > 0 && (
                                     <div className="flex flex-col gap-1 mt-1">
-                                        {schedulePreview.warnings.map((w, i) => (
+                                        {visibleScheduleWarnings.map((w, i) => (
                                             <div key={i} className="flex items-start gap-2 px-3 py-2 bg-amber-500/20 border border-amber-400/40 rounded-lg text-xs text-amber-200">
                                                 <svg className="w-4 h-4 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
@@ -782,7 +817,7 @@ export default function CompaniesPage() {
                                 )}
 
                                 {/* Green confirmation when clean */}
-                                {scheduleDate && scheduleStartTime && schedulePreview && schedulePreview.warnings.length === 0 && (
+                                {scheduleDate && scheduleStartTime && schedulePreview && visibleScheduleWarnings.length === 0 && !hasScheduleCapacityLimit && (
                                     <div className="flex items-center gap-2 px-3 py-2 bg-green-500/20 border border-green-400/40 rounded-lg text-xs text-green-200">
                                         <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />

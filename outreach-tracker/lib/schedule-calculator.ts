@@ -1,13 +1,17 @@
-export interface BlockedPeriod {
+export interface AllowedPeriod {
     label: string;
     start: string; // HH:mm
     end: string;   // HH:mm
 }
 
+// Backward-compat alias for legacy code paths.
+export type BlockedPeriod = AllowedPeriod;
+
 export interface ScheduleSettings {
     emailsPerBatch: number;
     batchIntervalMinutes: number;
-    blockedPeriods: BlockedPeriod[];
+    allowedPeriods: AllowedPeriod[];
+    blockedPeriods?: BlockedPeriod[]; // legacy fallback
     defaultStartTime: string;
 }
 
@@ -20,9 +24,9 @@ export interface Warning {
 export const DEFAULT_SCHEDULE_SETTINGS: ScheduleSettings = {
     emailsPerBatch: 3,
     batchIntervalMinutes: 15,
-    blockedPeriods: [
-        { label: 'Lunch', start: '12:00', end: '13:00' },
-        { label: 'After Hours', start: '16:00', end: '23:59' },
+    allowedPeriods: [
+        { label: 'Morning', start: '08:00', end: '12:00' },
+        { label: 'Afternoon', start: '13:00', end: '16:00' },
     ],
     defaultStartTime: '08:00',
 };
@@ -39,30 +43,82 @@ export function minutesToTime(minutes: number): string {
     return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
 
-export function isInBlockedPeriod(minutes: number, blockedPeriods: BlockedPeriod[]): boolean {
-    return blockedPeriods.some(p => {
-        const start = timeToMinutes(p.start);
-        const end = timeToMinutes(p.end);
-        return minutes >= start && minutes < end;
-    });
+type MinuteInterval = { start: number; end: number }; // [start, end), end exclusive
+
+function normalizePeriodEnd(end: number): number {
+    // Allowed period end is inclusive in UX (e.g. 16:00 should allow 16:00 slot),
+    // so convert to exclusive upper bound by adding one minute.
+    if (!Number.isFinite(end)) return end;
+    return Math.min(24 * 60, end + 1);
 }
 
-export function skipBlockedPeriods(minutes: number, blockedPeriods: BlockedPeriod[]): number {
-    let current = minutes;
-    let changed = true;
-    // Iteratively advance past any blocked period — handles nested/adjacent blocks
-    while (changed) {
-        changed = false;
-        for (const period of blockedPeriods) {
-            const start = timeToMinutes(period.start);
-            const end = timeToMinutes(period.end);
-            if (current >= start && current < end) {
-                current = end;
-                changed = true;
-            }
+function buildIntervals(periods: AllowedPeriod[]): MinuteInterval[] {
+    const raw: MinuteInterval[] = [];
+    for (const period of periods) {
+        const start = timeToMinutes(period.start);
+        const end = normalizePeriodEnd(timeToMinutes(period.end));
+        if (!Number.isFinite(start) || !Number.isFinite(end)) continue;
+        if (start === end) continue;
+        if (start < end) {
+            raw.push({ start: Math.max(0, start), end: Math.min(24 * 60, end) });
+        } else {
+            // Overnight block, e.g. 22:00 -> 07:00
+            raw.push({ start: Math.max(0, start), end: 24 * 60 });
+            raw.push({ start: 0, end: Math.min(24 * 60, end) });
         }
     }
-    return current;
+    raw.sort((a, b) => a.start - b.start || a.end - b.end);
+    const merged: MinuteInterval[] = [];
+    for (const interval of raw) {
+        if (interval.start >= interval.end) continue;
+        const last = merged[merged.length - 1];
+        if (!last || interval.start > last.end) {
+            merged.push({ ...interval });
+        } else {
+            last.end = Math.max(last.end, interval.end);
+        }
+    }
+    return merged;
+}
+
+function getAllowedPeriods(settingsOrPeriods: ScheduleSettings | AllowedPeriod[]): AllowedPeriod[] {
+    if (Array.isArray(settingsOrPeriods)) return settingsOrPeriods;
+    if (Array.isArray(settingsOrPeriods.allowedPeriods) && settingsOrPeriods.allowedPeriods.length > 0) {
+        return settingsOrPeriods.allowedPeriods;
+    }
+    // Legacy safety path only.
+    if (Array.isArray(settingsOrPeriods.blockedPeriods) && settingsOrPeriods.blockedPeriods.length > 0) {
+        const blocked = buildIntervals(settingsOrPeriods.blockedPeriods);
+        const allowed: MinuteInterval[] = [];
+        let cursor = 0;
+        for (const b of blocked) {
+            if (cursor < b.start) allowed.push({ start: cursor, end: b.start });
+            cursor = Math.max(cursor, b.end);
+        }
+        if (cursor < 24 * 60) allowed.push({ start: cursor, end: 24 * 60 });
+        return allowed.map((i, idx) => ({
+            label: `Allowed ${idx + 1}`,
+            start: minutesToTime(i.start),
+            end: i.end >= 24 * 60 ? '23:59' : minutesToTime(i.end),
+        }));
+    }
+    return DEFAULT_SCHEDULE_SETTINGS.allowedPeriods;
+}
+
+export function isInBlockedPeriod(minutes: number, periodsOrSettings: BlockedPeriod[] | ScheduleSettings): boolean {
+    const allowedIntervals = buildIntervals(getAllowedPeriods(periodsOrSettings));
+    return !allowedIntervals.some(i => minutes >= i.start && minutes < i.end);
+}
+
+export function skipBlockedPeriods(minutes: number, periodsOrSettings: BlockedPeriod[] | ScheduleSettings): number {
+    const allowed = buildIntervals(getAllowedPeriods(periodsOrSettings));
+    if (allowed.length === 0) return 24 * 60;
+    const current = Math.max(0, minutes);
+    for (const interval of allowed) {
+        if (current < interval.start) return interval.start;
+        if (current >= interval.start && current < interval.end) return current;
+    }
+    return 24 * 60;
 }
 
 /**
@@ -76,13 +132,13 @@ export function skipBlockedPeriods(minutes: number, blockedPeriods: BlockedPerio
 export function calculateTimeSlots(
     startTime: string,
     count: number,
-    blockedPeriods: BlockedPeriod[],
+    allowedPeriods: AllowedPeriod[],
     emailsPerBatch = 3,
     batchIntervalMinutes = 15,
 ): string[] {
     if (count <= 0) return [];
 
-    const startMinutes = skipBlockedPeriods(timeToMinutes(startTime), blockedPeriods);
+    const startMinutes = skipBlockedPeriods(timeToMinutes(startTime), allowedPeriods);
 
     const slots: string[] = [];
     let currentBatchStartMinutes = startMinutes;
@@ -91,7 +147,7 @@ export function calculateTimeSlots(
     for (let i = 0; i < count; i++) {
         if (countInCurrentBatch >= emailsPerBatch) {
             const nextRaw = currentBatchStartMinutes + batchIntervalMinutes;
-            currentBatchStartMinutes = skipBlockedPeriods(nextRaw, blockedPeriods);
+            currentBatchStartMinutes = skipBlockedPeriods(nextRaw, allowedPeriods);
             countInCurrentBatch = 0;
         }
         slots.push(minutesToTime(currentBatchStartMinutes));
@@ -113,39 +169,33 @@ export function getEndTime(timeSlots: string[]): string | null {
  */
 export function checkBlockedPeriodWarnings(
     timeSlots: string[],
-    blockedPeriods: BlockedPeriod[],
+    allowedPeriods: AllowedPeriod[],
 ): Warning[] {
     const warnings: Warning[] = [];
-    const seenPeriods = new Set<string>();
+    const seen = new Set<string>();
+    const allowedIntervals = buildIntervals(allowedPeriods);
 
     for (const slot of timeSlots) {
         const slotMinutes = timeToMinutes(slot);
 
         if (slotMinutes >= 24 * 60) {
-            if (!seenPeriods.has('overflow')) {
+            if (!seen.has('overflow')) {
                 warnings.push({
                     type: 'blocked_period',
                     message: 'Some emails would be scheduled past midnight.',
                     time: slot,
                 });
-                seenPeriods.add('overflow');
+                seen.add('overflow');
             }
         }
-
-        for (const period of blockedPeriods) {
-            const key = period.label;
-            if (!seenPeriods.has(key)) {
-                const start = timeToMinutes(period.start);
-                const end = timeToMinutes(period.end);
-                if (slotMinutes >= start && slotMinutes < end) {
-                    warnings.push({
-                        type: 'blocked_period',
-                        message: `Some emails fall within the "${period.label}" blocked period (${period.start}–${period.end}).`,
-                        time: slot,
-                    });
-                    seenPeriods.add(key);
-                }
-            }
+        const inAllowed = allowedIntervals.some(i => slotMinutes >= i.start && slotMinutes < i.end);
+        if (!inAllowed && !seen.has('outside-allowed')) {
+            warnings.push({
+                type: 'blocked_period',
+                message: 'Some emails fall outside configured allowed sending periods.',
+                time: slot,
+            });
+            seen.add('outside-allowed');
         }
     }
 
@@ -165,6 +215,17 @@ export function normalizeTime(time: string): string {
     return minutesToTime(timeToMinutes(time));
 }
 
+function safeTimeToMinutes(time: string): number | null {
+    const str = String(time ?? '').trim();
+    const m = /^(\d{1,2}):(\d{2})$/.exec(str);
+    if (!m) return null;
+    const h = Number.parseInt(m[1], 10);
+    const mm = Number.parseInt(m[2], 10);
+    if (!Number.isFinite(h) || !Number.isFinite(mm)) return null;
+    if (h < 0 || h > 23 || mm < 0 || mm > 59) return null;
+    return h * 60 + mm;
+}
+
 export interface VisibleSlot {
     time: string;
     blocked: boolean;
@@ -179,12 +240,23 @@ export function getVisibleTimeSlots(
     settings: ScheduleSettings,
     entries?: { time: string }[],
 ): VisibleSlot[] {
-    const { defaultStartTime, batchIntervalMinutes, blockedPeriods } = settings;
-    const startMinutes = skipBlockedPeriods(timeToMinutes(defaultStartTime), blockedPeriods);
+    const allowedPeriods = getAllowedPeriods(settings);
+    const batchIntervalMinutes =
+        Number.isFinite(settings.batchIntervalMinutes) && settings.batchIntervalMinutes > 0
+            ? settings.batchIntervalMinutes
+            : DEFAULT_SCHEDULE_SETTINGS.batchIntervalMinutes;
+    const startMinutesRaw =
+        safeTimeToMinutes(settings.defaultStartTime) ?? timeToMinutes(DEFAULT_SCHEDULE_SETTINGS.defaultStartTime);
+    const startMinutes = skipBlockedPeriods(startMinutesRaw, allowedPeriods);
     let endMinutes = timeToMinutes('18:00');
     if (entries && entries.length > 0) {
-        const maxEntry = Math.max(...entries.map(e => timeToMinutes(normalizeTime(e.time))));
-        endMinutes = Math.min(24 * 60, skipBlockedPeriods(maxEntry + batchIntervalMinutes, blockedPeriods));
+        const validEntryMinutes = entries
+            .map(e => safeTimeToMinutes(e.time))
+            .filter((v): v is number => v !== null);
+        if (validEntryMinutes.length > 0) {
+            const maxEntry = Math.max(...validEntryMinutes);
+            endMinutes = Math.min(24 * 60, skipBlockedPeriods(maxEntry + batchIntervalMinutes, allowedPeriods));
+        }
     }
     const slots: VisibleSlot[] = [];
     let current = startMinutes;
@@ -193,7 +265,7 @@ export function getVisibleTimeSlots(
         const time = minutesToTime(current);
         slots.push({
             time,
-            blocked: isInBlockedPeriod(current, blockedPeriods),
+            blocked: isInBlockedPeriod(current, allowedPeriods),
         });
         current += batchIntervalMinutes;
     }
@@ -211,8 +283,9 @@ export function computeTimeSlotsWithOccupancy(
     count: number,
     settings: ScheduleSettings,
 ): string[] {
-    const { blockedPeriods, emailsPerBatch, batchIntervalMinutes } = settings;
-    let currentSlotMinutes = skipBlockedPeriods(timeToMinutes(startTime), blockedPeriods);
+    const { emailsPerBatch, batchIntervalMinutes } = settings;
+    const allowedPeriods = getAllowedPeriods(settings);
+    let currentSlotMinutes = skipBlockedPeriods(timeToMinutes(startTime), allowedPeriods);
     const slots: string[] = [];
     const maxMinutes = 24 * 60;
     for (let i = 0; i < count; i++) {
@@ -224,7 +297,7 @@ export function computeTimeSlotsWithOccupancy(
                 occupancy.set(slotTime, currentCount + 1);
                 break;
             }
-            currentSlotMinutes = skipBlockedPeriods(currentSlotMinutes + batchIntervalMinutes, blockedPeriods);
+            currentSlotMinutes = skipBlockedPeriods(currentSlotMinutes + batchIntervalMinutes, allowedPeriods);
         }
     }
     return slots;

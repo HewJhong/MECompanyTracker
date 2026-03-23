@@ -103,6 +103,24 @@ export default async function handler(
             return res.status(404).json({ error: 'No matching companies found' });
         }
 
+        // Strict schedule capacity validation BEFORE any writes.
+        // If scheduling is requested, reject the whole assignment when the selected day is full.
+        let precomputedScheduleSlots: string[] = [];
+        if (scheduleDate && scheduleStartTime && assignee !== '__UNASSIGN__' && successfulIds.length > 0) {
+            const { slots } = await computeTimeSlotsWithExisting(scheduleDate, scheduleStartTime, successfulIds.length);
+            if (slots.length !== successfulIds.length) {
+                return res.status(400).json({
+                    error: 'Schedule capacity exceeded',
+                    code: 'SCHEDULE_CAPACITY_EXCEEDED',
+                    date: scheduleDate,
+                    requestedEmails: successfulIds.length,
+                    maxEmailsAssignableFromStart: slots.length,
+                    userMessage: `Cannot assign with schedule: ${scheduleDate} can only accommodate ${slots.length} more email${slots.length === 1 ? '' : 's'} from ${scheduleStartTime}, but ${successfulIds.length} were selected.`,
+                });
+            }
+            precomputedScheduleSlots = slots;
+        }
+
         // Execute batch update
         await sheets.spreadsheets.values.batchUpdate({
             spreadsheetId,
@@ -119,7 +137,6 @@ export default async function handler(
         let scheduleEntries: EmailScheduleEntry[] = [];
         if (scheduleDate && scheduleStartTime && assignee !== '__UNASSIGN__' && successfulIds.length > 0) {
             try {
-                const { slots } = await computeTimeSlotsWithExisting(scheduleDate, scheduleStartTime, successfulIds.length);
                 const now = new Date().toISOString();
                 const actorName = formatActorLabel(ctx);
                 scheduleEntries = successfulIds.map((id, i) => ({
@@ -127,7 +144,7 @@ export default async function handler(
                     companyName: (companyNames as Record<string, string> | undefined)?.[id] || id,
                     pic: assignee,
                     date: scheduleDate,
-                    time: slots[i],
+                    time: precomputedScheduleSlots[i],
                     order: i,
                     createdAt: now,
                     createdBy: actorName,
@@ -154,7 +171,11 @@ export default async function handler(
                 }
             } catch (scheduleError) {
                 console.error('Failed to create email schedule entries:', scheduleError);
-                // Don't fail the whole request — schedule creation is additive
+                // Capacity is validated above; if this fails here, it's an internal write failure.
+                return res.status(500).json({
+                    error: 'Failed to save validated email schedule',
+                    details: scheduleError instanceof Error ? scheduleError.message : 'Unknown schedule write error',
+                });
             }
         }
 

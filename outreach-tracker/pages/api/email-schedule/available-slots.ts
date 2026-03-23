@@ -39,7 +39,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             settings: {
                 emailsPerBatch: settings.emailsPerBatch,
                 batchIntervalMinutes: settings.batchIntervalMinutes,
-                blockedPeriods: settings.blockedPeriods,
+                allowedPeriods: settings.allowedPeriods,
                 defaultStartTime: settings.defaultStartTime,
             },
         });
