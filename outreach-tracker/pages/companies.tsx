@@ -18,7 +18,7 @@ import {
 } from '../lib/schedule-calculator';
 
 const CONTACT_STATUSES = ['To Contact', 'Contacted', 'To Follow Up', 'No Reply'] as const;
-const RELATIONSHIP_STATUSES = ['Interested', 'Registered', 'Rejected'] as const;
+const RELATIONSHIP_STATUSES = ['Interested', 'Rejected'] as const;
 
 const STORAGE_KEY_SELECTION_RESTORE = 'companies_selection_restore';
 const STORAGE_KEY_SELECTION = 'companies_selection';
@@ -37,6 +37,7 @@ interface Company {
     history?: any[];
     discipline?: string;
     targetSponsorshipTier?: string;
+    sponsorshipTier?: string;
     lastCompanyActivity?: string;
 }
 
@@ -297,6 +298,7 @@ export default function CompaniesPage() {
         isFlagged: company.isFlagged,
         discipline: company.discipline || '',
         targetSponsorshipTier: company.targetSponsorshipTier || '',
+        sponsorshipTier: company.sponsorshipTier || '',
         scheduledDate: scheduleMap[company.id]?.date,
         scheduledTime: scheduleMap[company.id]?.time,
         scheduledIsOverdue: scheduleMap[company.id]?.isOverdue,

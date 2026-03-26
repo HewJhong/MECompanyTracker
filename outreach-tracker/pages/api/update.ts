@@ -62,10 +62,10 @@ export default async function handler(
             'lastCompanyContact': 'I',
             'lastContact': 'J',
             'followUpsCompleted': 'K',
-            'sponsorshipTier': 'L',
-            'daysAttending': 'M',
-            'remarks': 'N',
-            'lastUpdate': 'O'
+            'sponsorshipTier': 'M',
+            'daysAttending': 'N',
+            'remarks': 'O',
+            'lastUpdate': 'P'
         };
 
         trackerUpdates.push({
@@ -230,10 +230,10 @@ export default async function handler(
         // Sync daily stats after any updates
         await syncDailyStats(sheets, spreadsheetId2);
 
-        // Verify: Fetch the updated row (A–O) to confirm save; lastUpdate is column O
+        // Verify: Fetch the updated row (A–P) to confirm save; lastUpdate is column P
         const verifyRange = await sheets.spreadsheets.values.get({
             spreadsheetId: spreadsheetId2,
-            range: `${trackerSheetName}!A${trackerRowIndex}:O${trackerRowIndex}`,
+            range: `${trackerSheetName}!A${trackerRowIndex}:P${trackerRowIndex}`,
         });
         const updatedRow = verifyRange.data.values?.[0] || [];
         const verifiedData = {
@@ -241,9 +241,9 @@ export default async function handler(
             relationshipStatus: updatedRow[3],
             followUpsCompleted: parseInt(updatedRow[10]) || 0,
             lastContact: updatedRow[9],   // J: Last Committee Contact Date
-            lastUpdated: updatedRow[14],  // O: Last Update
-            remark: updatedRow[13],
-            daysAttending: updatedRow[12]
+            lastUpdated: updatedRow[15],  // P: Last Update
+            remark: updatedRow[14],       // O: Remarks
+            daysAttending: updatedRow[13] // N: Days Attending
         };
 
         res.status(200).json({

@@ -41,7 +41,7 @@ export default async function handler(
             'linkedin': 'K',
             'remark': 'M',
             'isActive': 'N',
-            'isEmailInvalid': 'P',
+            'isEmailInvalid': 'Q',
         };
 
         const valueUpdates: any[] = [];

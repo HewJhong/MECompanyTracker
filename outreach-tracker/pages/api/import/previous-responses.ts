@@ -185,7 +185,7 @@ export default async function handler(
             if (trackerSheetName) {
                 const trackerResponse = await sheets.spreadsheets.values.get({
                     spreadsheetId: trackerSpreadsheetId,
-                    range: `${trackerSheetName}!A2:O`,
+                    range: `${trackerSheetName}!A2:P`,
                 });
                 const trackerRows = (trackerResponse.data.values || []) as string[][];
                 const trackerUpdates: { range: string; values: string[][] }[] = [];

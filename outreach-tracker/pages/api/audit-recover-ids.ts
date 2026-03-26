@@ -287,7 +287,7 @@ export default async function handler(
         // Fetch full rows for update (we need to update column B only)
         const fullRes = await sheets.spreadsheets.values.get({
             spreadsheetId: trackerSpreadsheetId,
-            range: `${trackerSheetName}!A2:O`,
+            range: `${trackerSheetName}!A2:P`,
         });
         const fullRows = (fullRes.data.values || []) as string[][];
 
@@ -295,11 +295,11 @@ export default async function handler(
         for (const c of validCorrections) {
             const rowArr = fullRows[c.rowIndex - 2] || [];
             const updatedRow = [...rowArr];
-            while (updatedRow.length < 15) updatedRow.push('');
+            while (updatedRow.length < 16) updatedRow.push('');
             updatedRow[1] = c.newName; // Column B = Company Name
             updates.push({
-                range: `${trackerSheetName}!A${c.rowIndex}:O${c.rowIndex}`,
-                values: [updatedRow.slice(0, 15)],
+                range: `${trackerSheetName}!A${c.rowIndex}:P${c.rowIndex}`,
+                values: [updatedRow.slice(0, 16)],
             });
         }
 

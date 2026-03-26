@@ -133,7 +133,7 @@ export default async function handler(
 
         const trackerResponse = await sheets.spreadsheets.values.get({
             spreadsheetId: trackerSpreadsheetId,
-            range: `${trackerSheetName}!A2:O`,
+            range: `${trackerSheetName}!A2:P`,
         });
         const trackerRows = (trackerResponse.data.values || []) as string[][];
 
@@ -209,7 +209,7 @@ export default async function handler(
                     });
                 }
             } else {
-                // No existing row found - add new (15-column post-migration layout)
+                // No existing row found - add new (16-column layout)
                 missingInTracker.push([
                     dbId,             // A: Company ID
                     dbName,           // B: Company Name
@@ -222,10 +222,11 @@ export default async function handler(
                     '',               // I: Last Company Contact
                     '',               // J: Last Committee Contact
                     '0',              // K: Follow Ups Completed
-                    '',               // L: Sponsorship Tier
-                    '',               // M: Days Attending
-                    '',               // N: Remarks
-                    new Date().toISOString() // O: Last Update
+                    '',               // L: Target Sponsorship Tier
+                    '',               // M: Registered Sponsorship Tier
+                    '',               // N: Days Attending
+                    '',               // O: Remarks
+                    new Date().toISOString() // P: Last Update
                 ]);
             }
         });
@@ -278,7 +279,7 @@ export default async function handler(
                     () =>
                         sheets.spreadsheets.values.append({
                             spreadsheetId: trackerSpreadsheetId,
-                            range: `${trackerSheetName}!A:O`,
+                            range: `${trackerSheetName}!A:P`,
                             valueInputOption: 'USER_ENTERED',
                             requestBody: { values: missingInTracker }
                         }),
@@ -343,10 +344,10 @@ export default async function handler(
                 const row = trackerRows[item.rowIndex - 2] || [];
                 const fullRow = [...row];
                 fullRow[0] = item.newId;
-                while (fullRow.length < 15) fullRow.push('');
+                while (fullRow.length < 16) fullRow.push('');
                 return {
-                    range: `${trackerSheetName}!A${item.rowIndex}:O${item.rowIndex}`,
-                    values: [fullRow.slice(0, 15)]
+                    range: `${trackerSheetName}!A${item.rowIndex}:P${item.rowIndex}`,
+                    values: [fullRow.slice(0, 16)]
                 };
             });
 
@@ -522,7 +523,7 @@ async function validateTrackerSheets(sheets: any, trackerSpreadsheetId: string):
 
         const mainSheetName = existingSheets[0]?.properties?.title;
         const requiredSheets = [
-            { name: mainSheetName || 'Main Companies', key: 'main', range: `${mainSheetName}!A1:O1` },
+            { name: mainSheetName || 'Main Companies', key: 'main', range: `${mainSheetName}!A1:P1` },
             { name: 'Email_Schedule', key: 'Email_Schedule', range: 'Email_Schedule!A1:J1' },
             { name: 'Thread_History', key: 'Thread_History', range: 'Thread_History!A1:D1' },
             { name: 'Logs_DoNotEdit', key: 'Logs_DoNotEdit', range: 'Logs_DoNotEdit!A1:E1' },
@@ -575,7 +576,7 @@ async function ensureRequiredSheets(sheets: any, spreadsheetId: string) {
                 'Company ID', 'Company Name', 'Contact Status', 'Relationship Status',
                 'Channel', 'Urgency Score', 'Previous Response', 'Assigned PIC',
                 'Last Company Contact', 'Last Committee Contact', 'Follow Ups Completed',
-                'Sponsorship Tier', 'Days Attending', 'Remarks', 'Last Update'
+                'Target Sponsorship Tier', 'Registered Sponsorship Tier', 'Days Attending', 'Remarks', 'Last Update'
             ]
         },
         {
@@ -619,7 +620,7 @@ async function ensureRequiredSheets(sheets: any, spreadsheetId: string) {
             // Check headers
             const headerResponse = await sheets.spreadsheets.values.get({
                 spreadsheetId,
-                range: `${reqSheet.title}!A1:O1`,
+                range: `${reqSheet.title}!A1:P1`,
             });
             const actualHeaders = headerResponse.data.values?.[0] || [];
 

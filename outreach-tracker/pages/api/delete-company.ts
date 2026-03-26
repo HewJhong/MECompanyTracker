@@ -28,7 +28,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     try {
         const sheets = await getGoogleSheetsClient();
 
-        // Soft delete: Set Deleted (column P) = "Y" in Tracker and column P in Database.
+        // Soft delete: set Archived (column P) = "Y" in Database only.
         // Database rows are kept for easy restore.
         const trackerMeta = await sheets.spreadsheets.get({ spreadsheetId: trackerSpreadsheetId });
         const trackerSheet = trackerMeta.data.sheets?.[0];
@@ -46,18 +46,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         if (trackerRowIndex === -1) {
             return res.status(404).json({ message: 'Company not found in tracker' });
         }
-        // A:A includes header; index i = sheet row i+1
-        const trackerRowNum = trackerRowIndex + 1;
 
-        // Set column P (Deleted) to "Y" in Tracker
-        await sheets.spreadsheets.values.update({
-            spreadsheetId: trackerSpreadsheetId,
-            range: `${trackerSheetName}!P${trackerRowNum}`,
-            valueInputOption: 'USER_ENTERED',
-            requestBody: { values: [['Y']] },
-        });
-
-        // 2. Set column P (Deleted) to "Y" in Database for all rows with this companyId
+        // 2. Set column P (Archived) to "Y" in Database for all rows with this companyId
         if (databaseSpreadsheetId) {
             try {
                 const dbMeta = await sheets.spreadsheets.get({ spreadsheetId: databaseSpreadsheetId });

@@ -35,7 +35,7 @@ export default async function handler(
 
         const rowData = await sheets.spreadsheets.values.get({
             spreadsheetId,
-            range: `${sheetName}!A${rowNumber}:O${rowNumber}`,
+            range: `${sheetName}!A${rowNumber}:Q${rowNumber}`,
         });
 
         const values = rowData.data.values?.[0] || [];
@@ -85,13 +85,14 @@ export default async function handler(
                 },
             });
         } else {
-            // Last row for this company — clear contact fields (F:P) to preserve the company base row
+            // Last row for this company — clear contact fields (F:Q) to preserve the company base row.
+            // Keep P (Archived?) untouched.
             await sheets.spreadsheets.values.update({
                 spreadsheetId,
-                range: `${sheetName}!F${rowNumber}:P${rowNumber}`,
+                range: `${sheetName}!F${rowNumber}:Q${rowNumber}`,
                 valueInputOption: 'USER_ENTERED',
                 requestBody: {
-                    values: [['', '', '', '', '', '', '', '', 'FALSE', '', '']],
+                    values: [['', '', '', '', '', '', '', '', 'FALSE', '', '', '']],
                 },
             });
         }

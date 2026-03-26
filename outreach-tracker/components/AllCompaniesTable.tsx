@@ -1,4 +1,5 @@
-import React, { useState, useMemo, useRef, useEffect } from 'react';
+import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import {
     MagnifyingGlassIcon,
     ArrowsUpDownIcon,
@@ -106,6 +107,7 @@ const COLUMN_WIDTHS = {
     status: 260,
     discipline: 160,
     targetTier: 170,
+    registeredTier: 170,
     contact: 260,
     emails: 320,
     phones: 220,
@@ -115,13 +117,14 @@ const COLUMN_WIDTHS = {
     followUps: 120,
 } as const;
 
-type ColumnKey = 'id' | 'status' | 'discipline' | 'targetTier' | 'contact' | 'emails' | 'phones' | 'assignedTo' | 'scheduled' | 'lastUpdated' | 'followUps';
+type ColumnKey = 'id' | 'status' | 'discipline' | 'targetTier' | 'registeredTier' | 'contact' | 'emails' | 'phones' | 'assignedTo' | 'scheduled' | 'lastUpdated' | 'followUps';
 
 const COLUMN_LABELS: Record<ColumnKey, string> = {
     id: 'ID',
     status: 'Status',
     discipline: 'Discipline',
-    targetTier: 'Target Tier',
+    targetTier: 'Target Sponsorship',
+    registeredTier: 'Registered Sponsorship',
     contact: 'Contact Person',
     emails: 'Emails',
     phones: 'Phones',
@@ -136,6 +139,7 @@ const DEFAULT_VISIBLE_COLUMNS: Record<ColumnKey, boolean> = {
     status: true,
     discipline: true,
     targetTier: true,
+    registeredTier: true,
     contact: true,
     emails: false,
     phones: false,
@@ -166,6 +170,7 @@ interface Company {
     isFlagged: boolean;
     discipline?: string;
     targetSponsorshipTier?: string;
+    sponsorshipTier?: string;
     followUpsCompleted?: number;
     scheduledDate?: string;
     scheduledTime?: string;
@@ -190,7 +195,25 @@ interface FilterRowMultiSelectProps {
 
 function FilterRowMultiSelect({ options, selected, onChange, placeholder = 'All' }: FilterRowMultiSelectProps) {
     const [isOpen, setIsOpen] = useState(false);
+    const [menuStyle, setMenuStyle] = useState<React.CSSProperties>({});
     const containerRef = useRef<HTMLDivElement>(null);
+    const [mounted, setMounted] = useState(false);
+
+    useEffect(() => { setMounted(true); }, []);
+
+    const updateMenuPosition = useCallback(() => {
+        if (!containerRef.current || typeof window === 'undefined') return;
+        const rect = containerRef.current.getBoundingClientRect();
+        const menuWidth = 192; // w-48
+        const menuHeight = 260;
+        const spaceBelow = window.innerHeight - rect.bottom;
+        const top = spaceBelow >= menuHeight
+            ? rect.bottom + window.scrollY + 4
+            : rect.top + window.scrollY - menuHeight - 4;
+        // Clamp left so the menu doesn't go off-screen right edge
+        const left = Math.min(rect.left + window.scrollX, window.innerWidth + window.scrollX - menuWidth - 8);
+        setMenuStyle({ position: 'absolute', top, left, width: menuWidth, zIndex: 9999 });
+    }, []);
 
     useEffect(() => {
         const handleClickOutside = (event: MouseEvent) => {
@@ -198,9 +221,18 @@ function FilterRowMultiSelect({ options, selected, onChange, placeholder = 'All'
                 setIsOpen(false);
             }
         };
-        if (isOpen) document.addEventListener('mousedown', handleClickOutside);
-        return () => document.removeEventListener('mousedown', handleClickOutside);
-    }, [isOpen]);
+        if (isOpen) {
+            updateMenuPosition();
+            document.addEventListener('mousedown', handleClickOutside);
+            window.addEventListener('scroll', updateMenuPosition, true);
+            window.addEventListener('resize', updateMenuPosition);
+        }
+        return () => {
+            document.removeEventListener('mousedown', handleClickOutside);
+            window.removeEventListener('scroll', updateMenuPosition, true);
+            window.removeEventListener('resize', updateMenuPosition);
+        };
+    }, [isOpen, updateMenuPosition]);
 
     const toggleOption = (option: string) => {
         const newSelected = selected.includes(option)
@@ -215,6 +247,37 @@ function FilterRowMultiSelect({ options, selected, onChange, placeholder = 'All'
             ? selected[0]
             : `${selected.length} selected`;
 
+    const menu = isOpen && mounted ? createPortal(
+        <div style={menuStyle} className="bg-white border border-slate-200 rounded-lg shadow-xl max-h-60 overflow-y-auto p-1.5">
+            <div className="flex gap-2 px-2 py-1 mb-1 border-b border-slate-100 pb-1">
+                <button
+                    onClick={() => onChange(options)}
+                    className="text-[10px] text-blue-600 font-medium hover:underline"
+                >
+                    Select All
+                </button>
+                <button
+                    onClick={() => onChange([])}
+                    className="text-[10px] text-slate-500 font-medium hover:underline"
+                >
+                    Clear
+                </button>
+            </div>
+            {options.map(option => (
+                <label key={option} className="flex items-center gap-2 px-2 py-1.5 hover:bg-slate-50 rounded cursor-pointer">
+                    <input
+                        type="checkbox"
+                        checked={selected.includes(option)}
+                        onChange={() => toggleOption(option)}
+                        className="w-3.5 h-3.5 text-blue-600 border-slate-300 rounded focus:ring-blue-500"
+                    />
+                    <span className="text-xs text-slate-700">{option}</span>
+                </label>
+            ))}
+        </div>,
+        document.body
+    ) : null;
+
     return (
         <div className="relative w-full" ref={containerRef}>
             <button
@@ -224,36 +287,7 @@ function FilterRowMultiSelect({ options, selected, onChange, placeholder = 'All'
                 <span className="truncate block">{displayValue}</span>
                 <ChevronDownIcon className="w-3 h-3 text-slate-400 flex-shrink-0 ml-1" />
             </button>
-
-            {isOpen && (
-                <div className="absolute top-full left-0 mt-1 w-48 bg-white border border-slate-200 rounded-lg shadow-xl z-50 max-h-60 overflow-y-auto p-1.5">
-                    <div className="flex gap-2 px-2 py-1 mb-1 border-b border-slate-100 pb-1">
-                        <button
-                            onClick={() => onChange(options)}
-                            className="text-[10px] text-blue-600 font-medium hover:underline"
-                        >
-                            Select All
-                        </button>
-                        <button
-                            onClick={() => onChange([])}
-                            className="text-[10px] text-slate-500 font-medium hover:underline"
-                        >
-                            Clear
-                        </button>
-                    </div>
-                    {options.map(option => (
-                        <label key={option} className="flex items-center gap-2 px-2 py-1.5 hover:bg-slate-50 rounded cursor-pointer">
-                            <input
-                                type="checkbox"
-                                checked={selected.includes(option)}
-                                onChange={() => toggleOption(option)}
-                                className="w-3.5 h-3.5 text-blue-600 border-slate-300 rounded focus:ring-blue-500"
-                            />
-                            <span className="text-xs text-slate-700">{option}</span>
-                        </label>
-                    ))}
-                </div>
-            )}
+            {menu}
         </div>
     );
 }
@@ -327,8 +361,10 @@ function ColumnPicker({
     );
 }
 
-type SortField = 'id' | 'name' | 'contactStatus' | 'assignedTo' | 'scheduled' | 'lastUpdated' | 'followUpsCompleted' | 'targetSponsorshipTier';
+type SortField = 'id' | 'name' | 'contactStatus' | 'assignedTo' | 'scheduled' | 'lastUpdated' | 'followUpsCompleted' | 'targetSponsorshipTier' | 'sponsorshipTier';
 type SortDirection = 'asc' | 'desc';
+const DEFAULT_SORT_FIELD: SortField = 'id';
+const DEFAULT_SORT_DIRECTION: SortDirection = 'asc';
 
 export default function AllCompaniesTable({
     companies,
@@ -341,17 +377,17 @@ export default function AllCompaniesTable({
     const [sortField, setSortField] = useState<SortField>(() => {
         if (typeof window !== 'undefined') {
             const saved = sessionStorage.getItem('companies_sortField');
-            return saved ? (saved as SortField) : 'id';
+            return saved ? (saved as SortField) : DEFAULT_SORT_FIELD;
         }
-        return 'id';
+        return DEFAULT_SORT_FIELD;
     });
 
     const [sortDirection, setSortDirection] = useState<SortDirection>(() => {
         if (typeof window !== 'undefined') {
             const saved = sessionStorage.getItem('companies_sortDirection');
-            return saved ? (saved as SortDirection) : 'asc';
+            return saved ? (saved as SortDirection) : DEFAULT_SORT_DIRECTION;
         }
-        return 'asc';
+        return DEFAULT_SORT_DIRECTION;
     });
 
     const [debouncedSearch, setDebouncedSearch] = useState(() => {
@@ -368,6 +404,7 @@ export default function AllCompaniesTable({
         relationshipStatus: [] as string[],
         discipline: [] as string[],
         targetSponsorshipTier: [] as string[],
+        sponsorshipTier: [] as string[],
         assignedTo: [] as string[],
         scheduled: [] as string[],
         contact: '',
@@ -466,6 +503,10 @@ export default function AllCompaniesTable({
         Array.from(new Set(companies.map(c => c.assignedTo))).sort(),
         [companies]
     );
+    const registeredTiers = useMemo(() => {
+        const tiers = Array.from(new Set(companies.map(c => c.sponsorshipTier).filter(Boolean) as string[])).sort();
+        return [UNMARKED_TIER, ...tiers];
+    }, [companies]);
 
     // Precompute one normalised search string per company so the filter loop only does includes()
     const companySearchStrings = useMemo(() =>
@@ -476,6 +517,7 @@ export default function AllCompaniesTable({
             c.relationshipStatus,
             c.discipline || '',
             c.targetSponsorshipTier || '',
+            c.sponsorshipTier || '',
             c.contact,
             c.email,
             c.phone || '',
@@ -503,6 +545,10 @@ export default function AllCompaniesTable({
             const matchesTier = columnFilters.targetSponsorshipTier.length === 0 || columnFilters.targetSponsorshipTier.some((opt: string) =>
                 opt === UNMARKED_TIER ? !hasTier : (hasTier && company.targetSponsorshipTier === opt)
             );
+            const hasRegisteredTier = !!(company.sponsorshipTier && String(company.sponsorshipTier).trim());
+            const matchesRegisteredTier = columnFilters.sponsorshipTier.length === 0 || columnFilters.sponsorshipTier.some((opt: string) =>
+                opt === UNMARKED_TIER ? !hasRegisteredTier : (hasRegisteredTier && company.sponsorshipTier === opt)
+            );
             const matchesAssignee = columnFilters.assignedTo.length === 0 || columnFilters.assignedTo.includes(company.assignedTo);
             const matchesContact =
                 !columnFilters.contact.trim() ||
@@ -521,7 +567,7 @@ export default function AllCompaniesTable({
                 return false;
             });
 
-            return matchesId && matchesName && matchesContactStatus && matchesRelationshipStatus && matchesDiscipline && matchesTier && matchesAssignee && matchesContact && matchesEmails && matchesPhones && matchesScheduled;
+            return matchesId && matchesName && matchesContactStatus && matchesRelationshipStatus && matchesDiscipline && matchesTier && matchesRegisteredTier && matchesAssignee && matchesContact && matchesEmails && matchesPhones && matchesScheduled;
         });
 
         const getScheduledTimestamp = (c: Company) => {
@@ -633,20 +679,39 @@ export default function AllCompaniesTable({
 
     const hasColumnFilters = !!(columnFilters.id || columnFilters.name || columnFilters.contactStatus.length > 0 ||
         columnFilters.relationshipStatus.length > 0 || columnFilters.discipline.length > 0 ||
-        columnFilters.targetSponsorshipTier.length > 0 || columnFilters.assignedTo.length > 0 ||
+        columnFilters.targetSponsorshipTier.length > 0 || columnFilters.sponsorshipTier.length > 0 || columnFilters.assignedTo.length > 0 ||
         columnFilters.scheduled.length > 0 || columnFilters.contact || columnFilters.emails || columnFilters.phones);
-    const hasAnyFilter = !!debouncedSearch || hasColumnFilters;
+    const hasNonDefaultSort = sortField !== DEFAULT_SORT_FIELD || sortDirection !== DEFAULT_SORT_DIRECTION;
+    const hasAnyFilter = !!debouncedSearch || hasColumnFilters || hasNonDefaultSort;
 
     const clearAllFilters = () => {
         setDebouncedSearch('');
         if (typeof window !== 'undefined') sessionStorage.setItem(GLOBAL_SEARCH_STORAGE_KEY, '');
-        setColumnFilters({ id: '', name: '', contactStatus: [], relationshipStatus: [], discipline: [], targetSponsorshipTier: [], assignedTo: [], scheduled: [], contact: '', emails: '', phones: '' });
+        setColumnFilters({ id: '', name: '', contactStatus: [], relationshipStatus: [], discipline: [], targetSponsorshipTier: [], sponsorshipTier: [], assignedTo: [], scheduled: [], contact: '', emails: '', phones: '' });
+        setSortField(DEFAULT_SORT_FIELD);
+        setSortDirection(DEFAULT_SORT_DIRECTION);
     };
 
     // Dynamic column count for colSpan
     const visibleColCount = 2 + Object.values(visibleColumns).filter(Boolean).length; // 2 = select + name (always visible)
 
     const col = visibleColumns;
+    const shouldUseScrollableTableBody = filteredAndSortedCompanies.length > 8;
+    const tableMinWidth =
+        COLUMN_WIDTHS.select +
+        COLUMN_WIDTHS.name +
+        (col.id ? COLUMN_WIDTHS.id : 0) +
+        (col.status ? COLUMN_WIDTHS.status : 0) +
+        (col.discipline ? COLUMN_WIDTHS.discipline : 0) +
+        (col.targetTier ? COLUMN_WIDTHS.targetTier : 0) +
+        (col.registeredTier ? COLUMN_WIDTHS.registeredTier : 0) +
+        (col.contact ? COLUMN_WIDTHS.contact : 0) +
+        (col.emails ? COLUMN_WIDTHS.emails : 0) +
+        (col.phones ? COLUMN_WIDTHS.phones : 0) +
+        (col.assignedTo ? COLUMN_WIDTHS.assignedTo : 0) +
+        (col.scheduled ? COLUMN_WIDTHS.scheduled : 0) +
+        (col.lastUpdated ? COLUMN_WIDTHS.lastUpdated : 0) +
+        (col.followUps ? COLUMN_WIDTHS.followUps : 0);
 
     return (
         <div className="space-y-4">
@@ -682,7 +747,7 @@ export default function AllCompaniesTable({
                             Clear filters
                             {hasAnyFilter && (
                                 <span className="ml-0.5 px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700 text-[10px] font-semibold leading-none">
-                                    {(debouncedSearch ? 1 : 0) + (hasColumnFilters ? 1 : 0)}
+                                    {(debouncedSearch ? 1 : 0) + (hasColumnFilters ? 1 : 0) + (hasNonDefaultSort ? 1 : 0)}
                                 </span>
                             )}
                         </button>
@@ -700,12 +765,13 @@ export default function AllCompaniesTable({
             </div>
 
             {/* Table */}
-            <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-                <div
-                    className="overflow-y-auto max-h-[calc(100vh-320px)]"
-                    style={{ scrollbarGutter: 'stable' }}
-                >
-                    <table className="w-full text-left text-sm" style={{ tableLayout: 'fixed' }}>
+            <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-visible">
+                <div className="overflow-x-auto overflow-y-visible">
+                    <div
+                        className={shouldUseScrollableTableBody ? "overflow-y-auto max-h-[calc(100vh-320px)]" : "overflow-visible"}
+                        style={shouldUseScrollableTableBody ? { scrollbarGutter: 'stable' } : undefined}
+                    >
+                    <table className="w-full text-left text-sm" style={{ tableLayout: 'fixed', minWidth: tableMinWidth }}>
                         <thead className="bg-slate-50 border-b border-slate-200 sticky top-0 z-10">
                             <tr>
                                 {/* Select (always visible) — large hit area for touch/accessibility */}
@@ -750,7 +816,14 @@ export default function AllCompaniesTable({
                                 {col.targetTier && (
                                     <th className="px-6 py-3 text-xs font-medium text-slate-600 tracking-wider bg-slate-50 whitespace-nowrap" style={{ width: COLUMN_WIDTHS.targetTier }}>
                                         <button onClick={() => handleSort('targetSponsorshipTier')} className="flex items-center gap-2 hover:text-slate-900 transition-colors">
-                                            Target Tier <SortIcon field="targetSponsorshipTier" />
+                                            Target Sponsorship <SortIcon field="targetSponsorshipTier" />
+                                        </button>
+                                    </th>
+                                )}
+                                {col.registeredTier && (
+                                    <th className="px-6 py-3 text-xs font-medium text-slate-600 tracking-wider bg-slate-50 whitespace-nowrap" style={{ width: COLUMN_WIDTHS.registeredTier }}>
+                                        <button onClick={() => handleSort('sponsorshipTier')} className="flex items-center gap-2 hover:text-slate-900 transition-colors">
+                                            Registered Sponsorship <SortIcon field="sponsorshipTier" />
                                         </button>
                                     </th>
                                 )}
@@ -839,6 +912,11 @@ export default function AllCompaniesTable({
                                 {col.targetTier && (
                                     <th className="px-6 py-2 bg-white" style={{ width: COLUMN_WIDTHS.targetTier }}>
                                         <FilterRowMultiSelect options={targetTiers} selected={columnFilters.targetSponsorshipTier} onChange={s => setColumnFilters({ ...columnFilters, targetSponsorshipTier: s })} />
+                                    </th>
+                                )}
+                                {col.registeredTier && (
+                                    <th className="px-6 py-2 bg-white" style={{ width: COLUMN_WIDTHS.registeredTier }}>
+                                        <FilterRowMultiSelect options={registeredTiers} selected={columnFilters.sponsorshipTier} onChange={s => setColumnFilters({ ...columnFilters, sponsorshipTier: s })} />
                                     </th>
                                 )}
                                 {col.contact && (
@@ -982,6 +1060,11 @@ export default function AllCompaniesTable({
                                                 <span className="text-slate-700">{company.targetSponsorshipTier || 'N/A'}</span>
                                             </td>
                                         )}
+                                        {col.registeredTier && (
+                                            <td className="px-6 py-4" style={{ width: COLUMN_WIDTHS.registeredTier }}>
+                                                <span className="text-slate-700">{company.sponsorshipTier || 'N/A'}</span>
+                                            </td>
+                                        )}
                                         {col.contact && (
                                             <td className="px-6 py-4 text-slate-700 font-medium" style={{ width: COLUMN_WIDTHS.contact }}>
                                                 {company.contact || '—'}
@@ -1071,6 +1154,7 @@ export default function AllCompaniesTable({
                             )}
                         </tbody>
                     </table>
+                    </div>
                 </div>
             </div>
         </div>

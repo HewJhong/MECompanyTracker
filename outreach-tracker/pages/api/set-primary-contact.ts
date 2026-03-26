@@ -45,7 +45,7 @@ export default async function handler(
         if (method === 'email' && isMethodActive) {
             const invalidRes = await sheets.spreadsheets.values.get({
                 spreadsheetId,
-                range: `${sheetName}!P${rowNumber}`,
+                range: `${sheetName}!Q${rowNumber}`,
             });
             const invalidVal = (invalidRes.data.values?.[0]?.[0] || '').toString().trim().toUpperCase();
             if (invalidVal === 'TRUE') {

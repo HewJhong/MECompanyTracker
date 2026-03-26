@@ -33,10 +33,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             return res.status(500).json({ message: 'Tracker sheet not found' });
         }
 
-        // Fetch full rows to find company and verify it is soft-deleted
+        // Ensure company exists in tracker
         const trackerResponse = await sheets.spreadsheets.values.get({
             spreadsheetId: trackerSpreadsheetId,
-            range: `${trackerSheetName}!A2:P`,
+            range: `${trackerSheetName}!A2:O`,
         });
         const trackerRows = (trackerResponse.data.values || []) as string[][];
         const rowIndex = trackerRows.findIndex(
@@ -45,22 +45,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         if (rowIndex === -1) {
             return res.status(404).json({ message: 'Company not found in tracker' });
         }
-        const deleted = (trackerRows[rowIndex][15] || '').toString().trim().toUpperCase() === 'Y';
-        if (!deleted) {
-            return res.status(400).json({ message: 'Company is not deleted' });
-        }
-        // A2:P excludes header; index i = sheet row i+2
-        const trackerRowNum = rowIndex + 2;
 
-        // Clear column P (Deleted) in Tracker
-        await sheets.spreadsheets.values.update({
-            spreadsheetId: trackerSpreadsheetId,
-            range: `${trackerSheetName}!P${trackerRowNum}`,
-            valueInputOption: 'USER_ENTERED',
-            requestBody: { values: [['']] },
-        });
-
-        // Clear column P (Deleted) in Database for all rows with this companyId
+        // Clear column P (Archived) in Database for all rows with this companyId
         if (databaseSpreadsheetId) {
             try {
                 const dbMeta = await sheets.spreadsheets.get({ spreadsheetId: databaseSpreadsheetId });
@@ -76,6 +62,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                         dbRowNumbers.push(i + 1); // A:A includes header; index i = sheet row i+1
                     }
                 });
+                if (dbRowNumbers.length === 0) {
+                    return res.status(404).json({ message: 'Company not found in database' });
+                }
+                const dbArchivedRange = await sheets.spreadsheets.values.get({
+                    spreadsheetId: databaseSpreadsheetId,
+                    range: `${dbSheetName}!P${dbRowNumbers[0]}`,
+                });
+                const archivedVal = (dbArchivedRange.data.values?.[0]?.[0] || '').toString().trim().toUpperCase();
+                if (archivedVal !== 'Y') {
+                    return res.status(400).json({ message: 'Company is not archived' });
+                }
                 if (dbRowNumbers.length > 0) {
                     const data = dbRowNumbers.map(rowNum => ({
                         range: `${dbSheetName}!P${rowNum}`,

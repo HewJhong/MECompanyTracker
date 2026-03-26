@@ -1814,10 +1814,10 @@ export default function CompanyDetailPage() {
                                 </select>
                             </div>
 
-                            {/* Sponsorship Tier - Show when relationship status is Interested or Registered */}
+                            {/* Registered sponsorship tier - separate from target sponsorship tier */}
                             {(relationshipStatus === 'Interested' || relationshipStatus === 'Registered') && (
                                 <div>
-                                    <label htmlFor="sponsorshipTier" className="block text-sm font-medium text-slate-700 mb-2 font-semibold">Sponsorship Tier</label>
+                                    <label htmlFor="sponsorshipTier" className="block text-sm font-medium text-slate-700 mb-2 font-semibold">Registered Sponsorship Tier</label>
                                     <select
                                         id="sponsorshipTier"
                                         value={sponsorshipTier}

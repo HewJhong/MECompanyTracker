@@ -40,7 +40,7 @@ export default async function handler(
         console.log(">>> [API DATA] DB Rows...");
         const dbResponse = await sheets.spreadsheets.values.get({
             spreadsheetId: databaseSpreadsheetId,
-            range: `${dbSheetName}!A2:P`,
+            range: `${dbSheetName}!A2:Q`,
         });
         const dbRows = dbResponse.data.values || [];
 
@@ -110,7 +110,6 @@ export default async function handler(
             if (!rawId) return;
             const id = normalizeId(rawId);
             if (!id) return;
-            const deleted = (row[15] || '').toString().trim().toUpperCase() === 'Y';
             trackerMap.set(id, {
                 companyId: id,
                 companyName: row[1],
@@ -123,11 +122,10 @@ export default async function handler(
                 lastCompanyContact: row[8],
                 lastContact: row[9],
                 followUpsCompleted: parseInt(row[10]) || 0,
-                sponsorshipTier: row[11] || '',
-                daysAttending: row[12] || '',
-                remarks: row[13] || '',
-                lastUpdate: row[14],
-                deleted
+                sponsorshipTier: row[12] || '',
+                daysAttending: row[13] || '',
+                remarks: row[14] || '',
+                lastUpdate: row[15],
             });
         });
 
@@ -139,7 +137,6 @@ export default async function handler(
             if (!id) return;
             if (!companyMap.has(id)) {
                 const t = trackerMap.get(id);
-                const isDeleted = !!t?.deleted;
                 companyMap.set(id, {
                     id,
                     companyName: row[1] || t?.companyName || 'Unknown',
@@ -160,11 +157,13 @@ export default async function handler(
                     targetSponsorshipTier: row[3],
                     reference: row[10],
                     isFlagged: false,
-                    isDeleted,
+                    isDeleted: false,
                     contacts: []
                 });
             }
             const c = companyMap.get(id);
+            const isArchived = (row[15] || '').toString().trim().toUpperCase() === 'Y';
+            c.isDeleted = c.isDeleted || isArchived;
             const hasContactInfo = (row[5] && row[5].trim()) || (row[7] && row[7].trim()) || (row[8] && row[8].trim()) || (row[10] && row[10].trim());
             if (hasContactInfo) {
                 c.contacts.push({
@@ -179,7 +178,7 @@ export default async function handler(
                     remark: row[12],
                     isActive: row[13] === 'TRUE',
                     activeMethods: row[14] || '',
-                    isEmailInvalid: (row[15] || '').toString().trim().toUpperCase() === 'TRUE',
+                    isEmailInvalid: (row[16] || '').toString().trim().toUpperCase() === 'TRUE',
                 });
             }
         });
@@ -194,8 +193,7 @@ export default async function handler(
         trackerRows.forEach((row: any) => {
             const id = row[0]?.toString().trim();
             const name = (row[1] || '').toString().trim();
-            const deleted = (row[15] || '').toString().trim().toUpperCase() === 'Y';
-            if (id && !dbIds.has(id) && !deleted) {
+            if (id && !dbIds.has(id)) {
                 trackerOnlyCompanies.push({ id, name: name || id });
             }
         });
