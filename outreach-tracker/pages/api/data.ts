@@ -40,7 +40,7 @@ export default async function handler(
         console.log(">>> [API DATA] DB Rows...");
         const dbResponse = await sheets.spreadsheets.values.get({
             spreadsheetId: databaseSpreadsheetId,
-            range: `${dbSheetName}!A2:O`,
+            range: `${dbSheetName}!A2:P`,
         });
         const dbRows = dbResponse.data.values || [];
 
@@ -178,7 +178,8 @@ export default async function handler(
                     linkedin: row[10],
                     remark: row[12],
                     isActive: row[13] === 'TRUE',
-                    activeMethods: row[14] || ''
+                    activeMethods: row[14] || '',
+                    isEmailInvalid: (row[15] || '').toString().trim().toUpperCase() === 'TRUE',
                 });
             }
         });

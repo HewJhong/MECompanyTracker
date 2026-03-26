@@ -40,7 +40,8 @@ export default async function handler(
             'phone': 'I',
             'linkedin': 'K',
             'remark': 'M',
-            'isActive': 'N'
+            'isActive': 'N',
+            'isEmailInvalid': 'P',
         };
 
         const valueUpdates: any[] = [];
@@ -54,6 +55,22 @@ export default async function handler(
                 });
             }
         });
+
+        // If email is being marked invalid, force-clear it from activeMethods and isActive.
+        // This prevents accidentally selecting/sending to a known-bad address.
+        if (Object.prototype.hasOwnProperty.call(updates, 'isEmailInvalid') && updates.isEmailInvalid === true) {
+            const dbResponse = await sheets.spreadsheets.values.get({
+                spreadsheetId,
+                range: `${sheetName}!O${rowNumber}`,
+            });
+            const currentMethodsStr = dbResponse.data.values?.[0]?.[0] || '';
+            const currentMethods = currentMethodsStr ? currentMethodsStr.split(',').filter(Boolean) : [];
+            const newMethods = currentMethods.filter((m: string) => m !== 'email');
+            valueUpdates.push(
+                { range: `${sheetName}!O${rowNumber}`, values: [[newMethods.join(',')]] },
+                { range: `${sheetName}!N${rowNumber}`, values: [[newMethods.length > 0 ? 'TRUE' : 'FALSE']] },
+            );
+        }
 
         if (valueUpdates.length > 0) {
             await sheets.spreadsheets.values.batchUpdate({

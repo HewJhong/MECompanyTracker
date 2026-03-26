@@ -35,6 +35,7 @@ interface Contact {
     name: string;
     phone?: string;
     email?: string;
+    isEmailInvalid?: boolean;
     role?: string;
     linkedin?: string;
     remark?: string;
@@ -165,7 +166,7 @@ export default function CompanyDetailPage() {
     const [successMessage, setSuccessMessage] = useState('');
     const [showAddContact, setShowAddContact] = useState(false);
     const [editingContactId, setEditingContactId] = useState<string | null>(null);
-    const [newContact, setNewContact] = useState({ name: '', phone: '', email: '', role: '', linkedin: '', remark: '', isActive: false });
+    const [newContact, setNewContact] = useState({ name: '', phone: '', email: '', role: '', linkedin: '', remark: '', isActive: false, isEmailInvalid: false });
     const [committeeMembers, setCommitteeMembers] = useState<{ name: string, email: string, role: string }[]>([]);
 
     // Custom Modal States
@@ -1154,6 +1155,7 @@ export default function CompanyDetailPage() {
                     picName: updates.picName ?? c.picName,
                     role: updates.role ?? c.role,
                     email: updates.email ?? c.email,
+                    isEmailInvalid: updates.isEmailInvalid ?? c.isEmailInvalid,
                     phone: updates.phone ?? c.phone,
                     linkedin: updates.linkedin ?? c.linkedin,
                     remark: updates.remark ?? c.remark,
@@ -1244,10 +1246,11 @@ export default function CompanyDetailPage() {
                     phone: newContact.phone,
                     linkedin: newContact.linkedin,
                     remark: newContact.remark,
-                    isActive: newContact.isActive
+                    isActive: newContact.isActive,
+                    isEmailInvalid: newContact.isEmailInvalid,
                 });
                 setEditingContactId(null);
-                setNewContact({ name: '', phone: '', email: '', role: '', linkedin: '', remark: '', isActive: false });
+                setNewContact({ name: '', phone: '', email: '', role: '', linkedin: '', remark: '', isActive: false, isEmailInvalid: false });
                 setShowAddContact(false);
             } catch (error) {
                 // Errors handled in handleUpdateContact
@@ -1271,7 +1274,7 @@ export default function CompanyDetailPage() {
                 if (res.ok) {
                     fetchData(true);
                     completeTask(taskId, 'Contact added successfully');
-                    setNewContact({ name: '', phone: '', email: '', role: '', linkedin: '', remark: '', isActive: false });
+                    setNewContact({ name: '', phone: '', email: '', role: '', linkedin: '', remark: '', isActive: false, isEmailInvalid: false });
                     setShowAddContact(false);
                 } else {
                     throw new Error('Failed to add contact');
@@ -1301,7 +1304,8 @@ export default function CompanyDetailPage() {
             role: contact.role || '',
             linkedin: contact.linkedin || '',
             remark: contact.remark || '',
-            isActive: contact.isActive || false
+            isActive: contact.isActive || false,
+            isEmailInvalid: contact.isEmailInvalid || false,
         });
         setShowAddContact(true);
     };
@@ -1440,6 +1444,10 @@ export default function CompanyDetailPage() {
 
     const handleToggleContactMethod = async (targetContact: Contact, method: string, isMethodActive: boolean) => {
         if (!company || !targetContact.rowNumber) return;
+        if (method === 'email' && isMethodActive && targetContact.isEmailInvalid) {
+            showError('Invalid email', 'This contact’s email is marked invalid. Unmark it as invalid (or update the email) before setting email as an active method.');
+            return;
+        }
 
         const previousCompanyState = { ...company };
 
@@ -2243,7 +2251,7 @@ export default function CompanyDetailPage() {
                                         onClick={() => {
                                             setShowAddContact(!showAddContact);
                                             setEditingContactId(null);
-                                            setNewContact({ name: '', phone: '', email: '', role: '', linkedin: '', remark: '', isActive: false });
+                                            setNewContact({ name: '', phone: '', email: '', role: '', linkedin: '', remark: '', isActive: false, isEmailInvalid: false });
                                         }}
                                         className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded-lg"
                                     >
@@ -2283,6 +2291,15 @@ export default function CompanyDetailPage() {
                                             onChange={(e) => setNewContact({ ...newContact, email: e.target.value })}
                                             className="px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
                                         />
+                                        <label className="col-start-2 -mt-1 flex items-center justify-end gap-2 text-sm text-slate-700">
+                                            <input
+                                                type="checkbox"
+                                                checked={!!newContact.isEmailInvalid}
+                                                onChange={(e) => setNewContact({ ...newContact, isEmailInvalid: e.target.checked })}
+                                                className="h-4 w-4 rounded border-slate-300 text-red-600 focus:ring-red-500"
+                                            />
+                                            Mark email as invalid
+                                        </label>
                                     </div>
                                     <input
                                         type="text"
@@ -2401,7 +2418,7 @@ export default function CompanyDetailPage() {
                                                     )}
                                                     {contact.email && (
                                                         <div className="flex items-center gap-1.5 group/method">
-                                                            <div className={`text-sm flex items-center gap-1 ${contact.activeMethods?.includes('email') ? 'text-amber-700 font-medium' : 'text-slate-600'}`}>
+                                                            <div className={`text-sm flex items-center gap-1 ${contact.activeMethods?.includes('email') ? 'text-amber-700 font-medium' : 'text-slate-600'} ${contact.isEmailInvalid ? 'line-through opacity-75' : ''}`}>
                                                                 <EnvelopeIcon className="w-4 h-4 shrink-0" />
                                                                 <button
                                                                     type="button"
@@ -2412,16 +2429,22 @@ export default function CompanyDetailPage() {
                                                                     {contact.email}
                                                                 </button>
                                                                 {copiedContactField === `${contact.id}-email` && <span className="text-xs text-green-600 font-medium">Copied!</span>}
+                                                                {contact.isEmailInvalid && (
+                                                                    <span className="ml-1 inline-flex items-center text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-red-100 text-red-700">
+                                                                        Invalid
+                                                                    </span>
+                                                                )}
                                                             </div>
                                                             {canEdit && (
                                                                 <button
                                                                     type="button"
                                                                     onClick={() => handleToggleContactMethod(contact, 'email', !contact.activeMethods?.includes('email'))}
+                                                                    disabled={!!contact.isEmailInvalid}
                                                                     className={`p-1 rounded flex items-center justify-center transition-all ${contact.activeMethods?.includes('email')
                                                                         ? 'text-amber-600 bg-amber-100 hover:bg-amber-200 opacity-100'
                                                                         : 'text-slate-400 hover:text-amber-600 hover:bg-amber-50 opacity-0 group-hover/method:opacity-100'
                                                                         }`}
-                                                                    title={contact.activeMethods?.includes('email') ? "Remove email from active" : "Mark email as active method"}
+                                                                    title={contact.isEmailInvalid ? "Email is marked invalid" : (contact.activeMethods?.includes('email') ? "Remove email from active" : "Mark email as active method")}
                                                                 >
                                                                     <svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
                                                                         <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />

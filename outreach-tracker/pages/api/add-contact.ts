@@ -68,11 +68,12 @@ export default async function handler(
             contact.remark?.trim() || '',
             contact.isActive ? 'TRUE' : 'FALSE',
             '', // O: activeMethods (comma-separated)
+            contact.isEmailInvalid ? 'TRUE' : 'FALSE', // P: isEmailInvalid
         ];
 
         await sheets.spreadsheets.values.append({
             spreadsheetId: databaseSpreadsheetId,
-            range: `${sheetName}!A:O`,
+            range: `${sheetName}!A:P`,
             valueInputOption: 'USER_ENTERED',
             requestBody: { values: [newRow] }
         });

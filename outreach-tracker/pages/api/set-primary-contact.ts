@@ -41,6 +41,18 @@ export default async function handler(
         const currentMethodsStr = dbResponse.data.values?.[0]?.[0] || '';
         let currentMethods = currentMethodsStr ? currentMethodsStr.split(',') : [];
 
+        // Safeguard: do not allow an invalid email to be marked as an active method.
+        if (method === 'email' && isMethodActive) {
+            const invalidRes = await sheets.spreadsheets.values.get({
+                spreadsheetId,
+                range: `${sheetName}!P${rowNumber}`,
+            });
+            const invalidVal = (invalidRes.data.values?.[0]?.[0] || '').toString().trim().toUpperCase();
+            if (invalidVal === 'TRUE') {
+                return res.status(400).json({ message: 'Email is marked invalid for this contact' });
+            }
+        }
+
         if (isMethodActive) {
             if (!currentMethods.includes(method)) currentMethods.push(method);
         } else {
