@@ -2418,13 +2418,13 @@ export default function CompanyDetailPage() {
                                                     )}
                                                     {contact.email && (
                                                         <div className="flex items-center gap-1.5 group/method">
-                                                            <div className={`text-sm flex items-center gap-1 ${contact.activeMethods?.includes('email') ? 'text-amber-700 font-medium' : 'text-slate-600'} ${contact.isEmailInvalid ? 'line-through opacity-75' : ''}`}>
+                                                            <div className={`text-sm flex items-center gap-1 ${contact.activeMethods?.includes('email') ? 'text-amber-700 font-medium' : 'text-slate-600'}`}>
                                                                 <EnvelopeIcon className="w-4 h-4 shrink-0" />
                                                                 <button
                                                                     type="button"
                                                                     onClick={() => handleCopyContactField(contact.email!, `${contact.id}-email`)}
                                                                     title="Click to copy"
-                                                                    className="hover:bg-slate-100 rounded px-0.5 -mx-0.5 py-0.5 transition-colors cursor-pointer text-left"
+                                                                    className={`hover:bg-slate-100 rounded px-0.5 -mx-0.5 py-0.5 transition-colors cursor-pointer text-left ${contact.isEmailInvalid ? 'line-through opacity-75' : ''}`}
                                                                 >
                                                                     {contact.email}
                                                                 </button>

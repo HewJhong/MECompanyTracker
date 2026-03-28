@@ -197,6 +197,7 @@ function FilterRowMultiSelect({ options, selected, onChange, placeholder = 'All'
     const [isOpen, setIsOpen] = useState(false);
     const [menuStyle, setMenuStyle] = useState<React.CSSProperties>({});
     const containerRef = useRef<HTMLDivElement>(null);
+    const menuRef = useRef<HTMLDivElement>(null);
     const [mounted, setMounted] = useState(false);
 
     useEffect(() => { setMounted(true); }, []);
@@ -217,7 +218,11 @@ function FilterRowMultiSelect({ options, selected, onChange, placeholder = 'All'
 
     useEffect(() => {
         const handleClickOutside = (event: MouseEvent) => {
-            if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+            const target = event.target as Node;
+            // Menu is portaled to document.body, so it is not under containerRef in the DOM.
+            const insideTrigger = containerRef.current?.contains(target) ?? false;
+            const insideMenu = menuRef.current?.contains(target) ?? false;
+            if (!insideTrigger && !insideMenu) {
                 setIsOpen(false);
             }
         };
@@ -248,7 +253,7 @@ function FilterRowMultiSelect({ options, selected, onChange, placeholder = 'All'
             : `${selected.length} selected`;
 
     const menu = isOpen && mounted ? createPortal(
-        <div style={menuStyle} className="bg-white border border-slate-200 rounded-lg shadow-xl max-h-60 overflow-y-auto p-1.5">
+        <div ref={menuRef} style={menuStyle} className="bg-white border border-slate-200 rounded-lg shadow-xl max-h-60 overflow-y-auto p-1.5">
             <div className="flex gap-2 px-2 py-1 mb-1 border-b border-slate-100 pb-1">
                 <button
                     onClick={() => onChange(options)}
