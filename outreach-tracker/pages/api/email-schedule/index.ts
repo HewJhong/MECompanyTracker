@@ -19,6 +19,7 @@ async function appendThreadHistory(rows: string[][]) {
             spreadsheetId,
             range: 'Thread_History!A:D',
             valueInputOption: 'USER_ENTERED',
+            insertDataOption: 'INSERT_ROWS',
             requestBody: { values: rows },
         });
     } catch (err) {

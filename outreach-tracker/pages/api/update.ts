@@ -212,13 +212,38 @@ export default async function handler(
         const historyEntryText = remarkText || (trackerUpdates.length > 1 || dbUpdates.length > 0
             ? `[Update] ${Object.keys(updates).filter(k => updates[k] !== undefined && updates[k] !== '').join(', ')}`
             : '');
+        let historyLogged = false;
         if (historyEntryText) {
-            await sheets.spreadsheets.values.append({
-                spreadsheetId: spreadsheetId2,
-                range: `Thread_History!A:D`,
-                valueInputOption: 'USER_ENTERED',
-                requestBody: { values: [[actionDate || timestamp, companyId, formatActorLabel(ctx), historyEntryText]] }
-            });
+            try {
+                await sheets.spreadsheets.values.append({
+                    spreadsheetId: spreadsheetId2,
+                    range: `Thread_History!A:D`,
+                    valueInputOption: 'USER_ENTERED',
+                    insertDataOption: 'INSERT_ROWS',
+                    requestBody: { values: [[actionDate || timestamp, companyId, formatActorLabel(ctx), historyEntryText]] }
+                });
+                historyLogged = true;
+            } catch (historyErr) {
+                const err = historyErr as Error;
+                try {
+                    await sheets.spreadsheets.values.append({
+                        spreadsheetId: spreadsheetId2,
+                        range: 'Logs_DoNotEdit!A:E',
+                        valueInputOption: 'RAW',
+                        requestBody: {
+                            values: [[
+                                new Date().toISOString(),
+                                formatActorLabel(ctx),
+                                'THREAD_HISTORY_WRITE_FAILED',
+                                `Failed to append Thread_History for ${companyId}: ${err.message}`,
+                                JSON.stringify({ companyId, historyEntryText, updates }),
+                            ]],
+                        },
+                    });
+                } catch (logErr) {
+                    console.error('Could not log Thread_History write failure:', logErr);
+                }
+            }
         }
 
         cache.delete('sheet_data');
@@ -249,7 +274,8 @@ export default async function handler(
         res.status(200).json({
             success: true,
             updatedRows: dbRowIndices.length,
-            verifiedData
+            verifiedData,
+            historyLogged
         });
 
     } catch (error) {

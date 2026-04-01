@@ -111,6 +111,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 spreadsheetId,
                 range: 'Thread_History!A:D',
                 valueInputOption: 'USER_ENTERED',
+                insertDataOption: 'INSERT_ROWS',
                 requestBody: {
                     values: successfulIds.map(id => [
                         timestamp,
