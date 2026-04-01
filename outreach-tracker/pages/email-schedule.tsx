@@ -116,6 +116,8 @@ interface CompanyAssignment {
     pic: string;
     contactStatus?: string;
     relationshipStatus?: string;
+    followUpsCompleted?: number;
+    lastContact?: string;
 }
 
 type InvalidScheduleEntry = {
@@ -141,6 +143,31 @@ type PicAssignmentStats = {
     companiesWithTime: { companyId: string; companyName: string }[];
     companiesWithoutTime: { companyId: string; companyName: string }[];
 };
+
+type ManualRevertReminderCompany = {
+    companyId: string;
+    companyName: string;
+};
+
+function mapCompanyAssignments(companies: Array<{
+    id: string;
+    companyName?: string;
+    pic?: string;
+    contactStatus?: string;
+    relationshipStatus?: string;
+    followUpsCompleted?: number;
+    lastContact?: string;
+}>): CompanyAssignment[] {
+    return companies.map(c => ({
+        id: c.id,
+        companyName: c.companyName || c.id,
+        pic: (c.pic && String(c.pic).trim()) ? String(c.pic).trim() : 'Unassigned',
+        contactStatus: c.contactStatus || '',
+        relationshipStatus: c.relationshipStatus || '',
+        followUpsCompleted: Number.isFinite(c.followUpsCompleted) ? c.followUpsCompleted : 0,
+        lastContact: c.lastContact || '',
+    }));
+}
 
 function AssignmentBalanceChart({
     stats,
@@ -490,6 +517,7 @@ function EmailScheduleContent() {
     const { addTask, completeTask, failTask } = useBackgroundTasks();
     const { user, loading: userLoading } = useCurrentUser();
     const router = useRouter();
+    const currentUser = user?.name ?? user?.email ?? 'Committee Member';
 
     // Redirect unauthenticated users to home
     useEffect(() => {
@@ -521,6 +549,7 @@ function EmailScheduleContent() {
     const [bulkDeleteCount, setBulkDeleteCount] = useState<number | null>(null);
     const [showSettings, setShowSettings] = useState(false);
     const [showInvalidEntriesModal, setShowInvalidEntriesModal] = useState(false);
+    const [manualRevertReminderCompanies, setManualRevertReminderCompanies] = useState<ManualRevertReminderCompany[]>([]);
     const [settings, setSettings] = useState<ScheduleSettings>(DEFAULT_SCHEDULE_SETTINGS);
     const [viewMode, setViewMode] = useState<'full' | 'compact'>('compact');
     const [savingSettings, setSavingSettings] = useState(false);
@@ -546,13 +575,7 @@ function EmailScheduleContent() {
             if (dataRes.ok) {
                 const json = await dataRes.json();
                 const companies = json.companies || [];
-                setAllAssignments(companies.map((c: { id: string; companyName?: string; pic?: string; contactStatus?: string; relationshipStatus?: string }) => ({
-                    id: c.id,
-                    companyName: c.companyName || c.id,
-                    pic: (c.pic && String(c.pic).trim()) ? String(c.pic).trim() : 'Unassigned',
-                    contactStatus: c.contactStatus || '',
-                    relationshipStatus: c.relationshipStatus || '',
-                })));
+                setAllAssignments(mapCompanyAssignments(companies));
             }
         } catch (e) {
             console.error('Failed to fetch schedule', e);
@@ -915,6 +938,19 @@ function EmailScheduleContent() {
         [entries, selectedIds],
     );
 
+    const selectedScheduleCompletionMode = useMemo((): 'allPending' | 'allComplete' | 'mixed' | 'none' => {
+        if (selectedEntries.length === 0) return 'none';
+        let complete = 0;
+        let pending = 0;
+        for (const e of selectedEntries) {
+            if (e.completed === 'Y') complete++;
+            else pending++;
+        }
+        if (complete > 0 && pending > 0) return 'mixed';
+        if (complete > 0) return 'allComplete';
+        return 'allPending';
+    }, [selectedEntries]);
+
     const handleBulkMove = useCallback(async () => {
         setMoveError(null);
         if (selectedIds.size === 0) return;
@@ -1007,13 +1043,56 @@ function EmailScheduleContent() {
     const handleBulkMarkComplete = useCallback(async () => {
         if (selectedEntries.length === 0) return;
         const taskId = addTask('Marking as complete...');
-        const updated = selectedEntries.map(e => ({ ...e, completed: 'Y' }));
-        setEntries(prev => prev.map(e => {
-            const u = updated.find(u => u.companyId === e.companyId && u.date === e.date && u.time === e.time);
-            return u ? { ...e, completed: 'Y' } : e;
-        }));
-        setSelectedIds(new Set());
         try {
+            const dataRes = await fetch('/api/data?refresh=true');
+            if (!dataRes.ok) throw new Error('Failed to load latest company data');
+            const dataJson = await dataRes.json();
+            const latestAssignments = mapCompanyAssignments(dataJson.companies || []);
+            setAllAssignments(latestAssignments);
+
+            const latestResolveScheduleRow = buildScheduleRowResolver(latestAssignments);
+            const assignmentsById = new Map(latestAssignments.map(company => [company.id, company]));
+            const companiesToUpdate = new Map<string, CompanyAssignment>();
+
+            for (const entry of selectedEntries) {
+                const resolved = latestResolveScheduleRow(entry);
+                const assignment = assignmentsById.get(resolved.openId);
+                if (!assignment) {
+                    throw new Error(`Company not found for ${resolved.label}`);
+                }
+                if (!companiesToUpdate.has(resolved.openId)) {
+                    companiesToUpdate.set(resolved.openId, assignment);
+                }
+            }
+
+            const timestamp = new Date().toISOString();
+            for (const company of companiesToUpdate.values()) {
+                const isFirstOutreach = (company.contactStatus || 'To Contact') === 'To Contact';
+                const nextCount = isFirstOutreach ? 0 : (company.followUpsCompleted || 0) + 1;
+                const updates = isFirstOutreach
+                    ? { contactStatus: 'Contacted', followUpsCompleted: 0, lastContact: timestamp }
+                    : { followUpsCompleted: nextCount, lastContact: timestamp };
+                const remark = isFirstOutreach
+                    ? '[Outreach] Marked complete from Email Schedule'
+                    : `[Follow-up #${nextCount}] Marked complete from Email Schedule`;
+                const updateRes = await fetch('/api/update', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        companyId: company.id,
+                        user: currentUser,
+                        updates,
+                        remark,
+                        actionDate: timestamp,
+                    }),
+                });
+                if (!updateRes.ok) throw new Error(`Failed to update ${company.companyName || company.id}`);
+            }
+
+            const updated = selectedEntries.map(e => ({ ...e, completed: 'Y' }));
+            const updatedEntryIds = new Set(updated.map(entryId));
+            setEntries(prev => prev.map(e => updatedEntryIds.has(entryId(e)) ? { ...e, completed: 'Y' } : e));
+            setSelectedIds(new Set());
             const res = await fetch('/api/email-schedule', {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
@@ -1022,20 +1101,24 @@ function EmailScheduleContent() {
             if (!res.ok) throw new Error('Save failed');
             completeTask(taskId, 'Marked as complete');
             fetchEntries({ silent: true });
-        } catch {
-            failTask(taskId, 'Failed to update');
+        } catch (error) {
+            failTask(taskId, error instanceof Error ? error.message : 'Failed to update');
             fetchEntries({ silent: true });
         }
-    }, [selectedEntries, addTask, completeTask, failTask, fetchEntries]);
+    }, [selectedEntries, addTask, completeTask, failTask, fetchEntries, currentUser]);
 
     const handleBulkMarkPending = useCallback(async () => {
         if (selectedEntries.length === 0) return;
         const taskId = addTask('Marking as pending...');
         const updated = selectedEntries.map(e => ({ ...e, completed: '' }));
-        setEntries(prev => prev.map(e => {
-            const u = updated.find(u => u.companyId === e.companyId && u.date === e.date && u.time === e.time);
-            return u ? { ...e, completed: '' } : e;
-        }));
+        const updatedEntryIds = new Set(updated.map(entryId));
+        const reminderCompanies = Array.from(new Map(
+            selectedEntries.map(entry => {
+                const resolved = resolveScheduleRow(entry);
+                return [resolved.openId, { companyId: resolved.openId, companyName: resolved.label }];
+            }),
+        ).values());
+        setEntries(prev => prev.map(e => updatedEntryIds.has(entryId(e)) ? { ...e, completed: '' } : e));
         setSelectedIds(new Set());
         try {
             const res = await fetch('/api/email-schedule', {
@@ -1044,13 +1127,14 @@ function EmailScheduleContent() {
                 body: JSON.stringify({ entries: updated }),
             });
             if (!res.ok) throw new Error('Save failed');
+            setManualRevertReminderCompanies(reminderCompanies);
             completeTask(taskId, 'Marked as pending');
             fetchEntries({ silent: true });
         } catch {
             failTask(taskId, 'Failed to update');
             fetchEntries({ silent: true });
         }
-    }, [selectedEntries, addTask, completeTask, failTask, fetchEntries]);
+    }, [selectedEntries, addTask, completeTask, failTask, fetchEntries, resolveScheduleRow]);
 
     const handleBulkDelete = useCallback(async () => {
         if (selectedEntries.length === 0) return;
@@ -1484,25 +1568,36 @@ function EmailScheduleContent() {
                                     Move
                                 </button>
                             </div>
-                            <div className="flex items-end gap-2">
-                                <button
-                                    type="button"
-                                    onClick={handleBulkMarkComplete}
-                                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-green-600 hover:bg-green-500 text-sm font-medium"
-                                    title="Mark selected as complete (email sent)"
-                                >
-                                    <CheckCircleIcon className="w-4 h-4" />
-                                    Mark complete
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={handleBulkMarkPending}
-                                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-600 hover:bg-slate-500 text-sm font-medium"
-                                    title="Mark selected as pending"
-                                >
-                                    <CheckIcon className="w-4 h-4" />
-                                    Mark pending
-                                </button>
+                            <div className="flex flex-col items-stretch gap-1.5 sm:flex-row sm:items-end">
+                                <div className="flex items-end gap-2">
+                                    {selectedScheduleCompletionMode === 'allPending' && (
+                                        <button
+                                            type="button"
+                                            onClick={handleBulkMarkComplete}
+                                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-green-600 hover:bg-green-500 text-sm font-medium"
+                                            title="Mark selected as complete (email sent)"
+                                        >
+                                            <CheckCircleIcon className="w-4 h-4" />
+                                            Mark complete
+                                        </button>
+                                    )}
+                                    {selectedScheduleCompletionMode === 'allComplete' && (
+                                        <button
+                                            type="button"
+                                            onClick={handleBulkMarkPending}
+                                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-600 hover:bg-slate-500 text-sm font-medium"
+                                            title="Mark selected as pending (not sent)"
+                                        >
+                                            <CheckIcon className="w-4 h-4" />
+                                            Mark pending
+                                        </button>
+                                    )}
+                                </div>
+                                {selectedScheduleCompletionMode === 'mixed' && (
+                                    <p className="text-xs text-amber-200/90 max-w-sm">
+                                        Completion: choose only pending rows or only completed rows to mark complete or pending.
+                                    </p>
+                                )}
                             </div>
                             <button
                                 type="button"
@@ -1539,6 +1634,59 @@ function EmailScheduleContent() {
                 confirmText="Remove"
                 variant="danger"
             />
+            {manualRevertReminderCompanies.length > 0 && (
+                <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+                    <div
+                        className="absolute inset-0 bg-slate-900/50"
+                        onClick={() => setManualRevertReminderCompanies([])}
+                    />
+                    <div className="relative w-full max-w-2xl rounded-xl bg-white shadow-xl border border-slate-200 overflow-hidden">
+                        <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
+                            <div>
+                                <h3 className="text-base font-semibold text-slate-900">Schedule reset to pending</h3>
+                                <p className="text-xs text-slate-500 mt-0.5">
+                                    Update the company record manually if this outreach should no longer count as sent.
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setManualRevertReminderCompanies([])}
+                                className="px-2.5 py-1.5 rounded-md text-sm text-slate-600 hover:bg-slate-100"
+                            >
+                                Close
+                            </button>
+                        </div>
+                        <div className="px-5 py-4 space-y-4">
+                            <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                                The email schedule row is pending again, but contact status, follow-up count, and last contact are not changed automatically.
+                                If this was a mistake, open the affected company and adjust those fields manually.
+                            </div>
+                            <div className="space-y-2">
+                                {manualRevertReminderCompanies.map(company => (
+                                    <div key={company.companyId} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 px-3 py-2">
+                                        <div className="min-w-0">
+                                            <p className="text-sm font-medium text-slate-900 truncate">{company.companyName}</p>
+                                            <p className="text-xs text-slate-500">{company.companyId}</p>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={() => navigateToCompany(company.companyId)}
+                                            className="flex-shrink-0 px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700"
+                                        >
+                                            Open company
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
+                            <div className="text-xs text-slate-500 space-y-1">
+                                <p>Examples:</p>
+                                <p>If first outreach was marked by mistake, set Contacted back to To Contact.</p>
+                                <p>If a follow-up was marked by mistake, adjust follow-ups completed and last contact on the company page.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
             {showInvalidEntriesModal && (
                 <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
                     <div
