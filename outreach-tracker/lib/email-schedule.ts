@@ -105,6 +105,19 @@ function scheduleRowKeyFromValues(row: string[]): string | null {
     return `${String(row[0]).trim()}|${normalizeDate(String(row[3]).trim())}|${timeKey}|${order}`;
 }
 
+/**
+ * First row number in an A1 range (e.g. Email_Schedule!A2:J → 2).
+ * Used so row indices align with values.get responses (row i → sheet row startRow + i).
+ */
+function parseA1RangeStartRow(range: string | undefined | null): number {
+    if (!range || typeof range !== 'string') return 2;
+    const afterBang = range.includes('!') ? range.split('!').pop()! : range;
+    const cleaned = afterBang.replace(/^['"]|['"]$/g, '');
+    const m = /^([A-Za-z]+)(\d+)/.exec(cleaned);
+    if (m) return parseInt(m[2], 10);
+    return 2;
+}
+
 // ─── Reads ───────────────────────────────────────────────────────────────────
 
 export async function getEmailSchedule(date?: string): Promise<EmailScheduleEntry[]> {
@@ -214,21 +227,23 @@ export async function saveEmailScheduleEntries(
 
     // Read existing entries to determine which rows to update vs. append
     let existingRows: string[][] = [];
+    let dataStartRow = 2;
     try {
         const response = await sheets.spreadsheets.values.get({
             spreadsheetId,
             range: `${SCHEDULE_SHEET}!A2:J`,
         });
         existingRows = (response.data.values || []) as string[][];
+        dataStartRow = parseA1RangeStartRow(response.data.range);
     } catch {
-        // Sheet may not exist yet — append will create it
+        // Sheet may not exist yet — first write goes to row 2 (below header)
     }
 
-    // Map logical slot → sheet row (1-based, includes header offset)
+    // Map logical slot → sheet row (1-based). Row i of values[] → sheet row dataStartRow + i.
     const rowIndexMap = new Map<string, number>();
     existingRows.forEach((row, i) => {
         const key = scheduleRowKeyFromValues(row);
-        if (key) rowIndexMap.set(key, i + 2); // +2: 1-based + header row
+        if (key) rowIndexMap.set(key, dataStartRow + i);
     });
 
     const updates: { range: string; values: string[][] }[] = [];
@@ -257,6 +272,17 @@ export async function saveEmailScheduleEntries(
         }
     }
 
+    // New rows: write explicitly to A:J. Do NOT use spreadsheets.values.append — it finds a
+    // "logical table" in the range and starts at that table's first column. If the last
+    // detected table begins at column J (misaligned rows / Sheet Table), data lands in J–S.
+    if (appends.length > 0) {
+        let nextRow = dataStartRow + existingRows.length;
+        for (const rowValues of appends) {
+            updates.push({ range: `${SCHEDULE_SHEET}!A${nextRow}:J${nextRow}`, values: [rowValues] });
+            nextRow += 1;
+        }
+    }
+
     if (updates.length > 0) {
         await sheets.spreadsheets.values.batchUpdate({
             spreadsheetId,
@@ -264,15 +290,6 @@ export async function saveEmailScheduleEntries(
                 valueInputOption: 'RAW',
                 data: updates,
             },
-        });
-    }
-
-    if (appends.length > 0) {
-        await sheets.spreadsheets.values.append({
-            spreadsheetId,
-            range: `${SCHEDULE_SHEET}!A:J`,
-            valueInputOption: 'RAW',
-            requestBody: { values: appends },
         });
     }
 
@@ -321,13 +338,14 @@ export async function deleteEmailScheduleEntries(
     });
 
     const rows = (response.data.values || []) as string[][];
+    const dataStartRow = parseA1RangeStartRow(response.data.range);
     const idsToDelete = new Set(companyIds);
 
     // Find row indices to blank out (Google Sheets doesn't support row deletion via Values API)
     const clearRequests: string[] = [];
     rows.forEach((row, i) => {
         if (row[0] && idsToDelete.has(row[0]) && row[3] === date) {
-            clearRequests.push(`${SCHEDULE_SHEET}!A${i + 2}:J${i + 2}`);
+            clearRequests.push(`${SCHEDULE_SHEET}!A${dataStartRow + i}:J${dataStartRow + i}`);
         }
     });
 
@@ -360,13 +378,14 @@ export async function deleteEmailScheduleEntriesForCompanies(
     });
 
     const rows = (response.data.values || []) as string[][];
+    const dataStartRow = parseA1RangeStartRow(response.data.range);
     const idsToDelete = new Set(companyIds.map(id => String(id).trim()));
 
     const clearRequests: string[] = [];
     rows.forEach((row, i) => {
         const companyId = row[0] ? String(row[0]).trim() : '';
         if (companyId && idsToDelete.has(companyId)) {
-            clearRequests.push(`${SCHEDULE_SHEET}!A${i + 2}:J${i + 2}`);
+            clearRequests.push(`${SCHEDULE_SHEET}!A${dataStartRow + i}:J${dataStartRow + i}`);
         }
     });
 
