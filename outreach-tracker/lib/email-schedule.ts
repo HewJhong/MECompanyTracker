@@ -118,6 +118,61 @@ function parseA1RangeStartRow(range: string | undefined | null): number {
     return 2;
 }
 
+/** Extra rows to add when growing the sheet (reduces repeat expand calls). */
+const SCHEDULE_SHEET_ROW_GROW_BUFFER = 500;
+
+function maxDataRowFromValueUpdateRanges(ranges: { range: string }[]): number {
+    let max = 0;
+    for (const { range } of ranges) {
+        const m = /![Aa](\d+)/.exec(range);
+        if (m) max = Math.max(max, parseInt(m[1], 10));
+    }
+    return max;
+}
+
+/**
+ * Google Sheets tabs have a fixed grid; writes past the last row return 400 "exceeds grid limits".
+ * Grow the Email_Schedule sheet with appendDimension before writing values.
+ */
+async function ensureEmailScheduleSheetRowCapacity(
+    sheets: Awaited<ReturnType<typeof getGoogleSheetsClient>>,
+    spreadsheetId: string,
+    requiredBottomRow: number,
+): Promise<void> {
+    if (requiredBottomRow < 1) return;
+
+    const meta = await sheets.spreadsheets.get({
+        spreadsheetId,
+        fields: 'sheets(properties(sheetId,title,gridProperties))',
+    });
+    const sheet = meta.data.sheets?.find(
+        s => (s.properties?.title || '').trim() === SCHEDULE_SHEET,
+    );
+    const sheetId = sheet?.properties?.sheetId;
+    const rowCount = sheet?.properties?.gridProperties?.rowCount ?? 0;
+    if (sheetId === undefined || sheetId === null) {
+        throw new Error(`Sheet "${SCHEDULE_SHEET}" not found in spreadsheet`);
+    }
+
+    const targetRows = requiredBottomRow + SCHEDULE_SHEET_ROW_GROW_BUFFER;
+    if (targetRows <= rowCount) return;
+
+    await sheets.spreadsheets.batchUpdate({
+        spreadsheetId,
+        requestBody: {
+            requests: [
+                {
+                    appendDimension: {
+                        sheetId,
+                        dimension: 'ROWS',
+                        length: targetRows - rowCount,
+                    },
+                },
+            ],
+        },
+    });
+}
+
 // ─── Reads ───────────────────────────────────────────────────────────────────
 
 export async function getEmailSchedule(date?: string): Promise<EmailScheduleEntry[]> {
@@ -284,6 +339,10 @@ export async function saveEmailScheduleEntries(
     }
 
     if (updates.length > 0) {
+        const maxRow = maxDataRowFromValueUpdateRanges(updates);
+        if (maxRow > 0) {
+            await ensureEmailScheduleSheetRowCapacity(sheets, spreadsheetId, maxRow);
+        }
         await sheets.spreadsheets.values.batchUpdate({
             spreadsheetId,
             requestBody: {

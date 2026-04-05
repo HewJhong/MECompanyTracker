@@ -29,6 +29,15 @@ import { disciplineToDisplay, disciplineToDatabase, disciplineOptions } from '..
 import { priorityToDisplay, priorityToDatabase, priorityOptions } from '../../lib/priority-mapping';
 import { formatTime } from '../../lib/schedule-calculator';
 
+async function getEmailScheduleApiErrorMessage(res: Response): Promise<string> {
+    try {
+        const data = (await res.json()) as { userMessage?: string; error?: string; details?: string };
+        return data.userMessage || data.error || data.details || `Request failed (${res.status})`;
+    } catch {
+        return `Request failed (${res.status})`;
+    }
+}
+
 interface Contact {
     id: string;
     rowNumber?: number;
@@ -124,7 +133,7 @@ const STORAGE_KEY_SELECTION_RESTORE = 'companies_selection_restore';
 export default function CompanyDetailPage() {
     const router = useRouter();
     const { id, from } = router.query;
-    const { user } = useCurrentUser();
+    const { user, isImpersonating } = useCurrentUser();
     const currentUser = user?.name ?? 'Committee Member';
     const canEdit = user?.canEditCompanies === true;
 
@@ -293,8 +302,9 @@ export default function CompanyDetailPage() {
             if (!res.ok) return;
             const json = await res.json();
             const allEntries = (json.entries || []) as { companyId: string; date: string; time: string; note?: string; completed?: string; order?: number; pic?: string; companyName?: string }[];
+            const cid = String(company.id ?? '').trim();
             const companyEntries = allEntries
-                .filter(e => e.companyId === company.id)
+                .filter(e => String(e.companyId ?? '').trim() === cid)
                 .sort((a, b) => a.date.localeCompare(b.date));
             setScheduleEntries(companyEntries);
             // Keep scheduledDate/Time pointing at most recent entry for backward-compat
@@ -355,7 +365,7 @@ export default function CompanyDetailPage() {
         try {
             // saveEmailScheduleEntries uses companyId|date as key: same-date updates overwrite,
             // new dates (follow-ups) always add a new row — full scheduling history is preserved.
-            await fetch('/api/email-schedule', {
+            const schedRes = await fetch('/api/email-schedule', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -367,6 +377,12 @@ export default function CompanyDetailPage() {
                     note: outreachScheduleNote.trim() || undefined,
                 }),
             });
+            if (!schedRes.ok) {
+                const msg = await getEmailScheduleApiErrorMessage(schedRes);
+                showError('Could not set schedule', msg);
+                failTask(taskId, 'Failed to set schedule');
+                return;
+            }
             setScheduledDate(outreachScheduleDate);
             setScheduledTime(outreachScheduleTime);
 
@@ -409,7 +425,7 @@ export default function CompanyDetailPage() {
 
             setOutreachScheduleNote('');
             completeTask(taskId, 'Outreach schedule set');
-            fetchScheduleForCompany();
+            await fetchScheduleForCompany();
         } catch (err) {
             console.error('Set schedule failed', err);
             failTask(taskId, 'Failed to set schedule');
@@ -424,15 +440,28 @@ export default function CompanyDetailPage() {
         const taskId = addTask('Clearing outreach schedule...');
         try {
             const schedRes = await fetch('/api/email-schedule');
+            if (!schedRes.ok) {
+                const msg = await getEmailScheduleApiErrorMessage(schedRes);
+                showError('Could not load schedule', msg);
+                failTask(taskId, 'Failed to clear schedule');
+                return;
+            }
             const schedJson = await schedRes.json();
+            const cid = String(company.id ?? '').trim();
             const entries = (schedJson.entries || []) as { companyId: string; date: string }[];
-            const datesToClear = [...new Set(entries.filter((e: { companyId: string }) => e.companyId === company.id).map((e: { date: string }) => e.date))];
+            const datesToClear = [...new Set(entries.filter((e: { companyId: string }) => String(e.companyId ?? '').trim() === cid).map((e: { date: string }) => e.date))];
             for (const date of datesToClear) {
-                await fetch('/api/email-schedule', {
+                const delRes = await fetch('/api/email-schedule', {
                     method: 'DELETE',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ companyIds: [company.id], date }),
                 });
+                if (!delRes.ok) {
+                    const msg = await getEmailScheduleApiErrorMessage(delRes);
+                    showError('Could not clear schedule', msg);
+                    failTask(taskId, 'Failed to clear schedule');
+                    return;
+                }
             }
             setScheduledDate('');
             setScheduledTime('');
@@ -441,35 +470,41 @@ export default function CompanyDetailPage() {
             setOutreachScheduleTime('');
             setOutreachScheduleNote('');
             completeTask(taskId, 'Schedule cleared');
-            fetchScheduleForCompany();
+            await fetchScheduleForCompany();
         } catch (err) {
             console.error('Clear schedule failed', err);
             failTask(taskId, 'Failed to clear schedule');
         } finally {
             setIsSettingSchedule(false);
         }
-    }, [company, user?.isAdmin, addTask, completeTask, failTask, fetchScheduleForCompany]);
+    }, [company, user?.isAdmin, addTask, completeTask, failTask, fetchScheduleForCompany, showError]);
 
     const handleDeleteScheduleEntry = useCallback(async (entry: { date: string; time: string; note?: string }) => {
         if (!company || !user?.isAdmin) return;
         setIsSettingSchedule(true);
         const taskId = addTask('Removing schedule entry...');
         try {
-            await fetch('/api/email-schedule', {
+            const delRes = await fetch('/api/email-schedule', {
                 method: 'DELETE',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ companyIds: [company.id], date: entry.date }),
             });
+            if (!delRes.ok) {
+                const msg = await getEmailScheduleApiErrorMessage(delRes);
+                showError('Could not remove schedule entry', msg);
+                failTask(taskId, 'Failed to remove entry');
+                return;
+            }
             setEditingScheduleEntryIndex(null);
             completeTask(taskId, 'Schedule entry removed');
-            fetchScheduleForCompany();
+            await fetchScheduleForCompany();
         } catch (err) {
             console.error('Delete schedule entry failed', err);
             failTask(taskId, 'Failed to remove entry');
         } finally {
             setIsSettingSchedule(false);
         }
-    }, [company, user?.isAdmin, addTask, completeTask, failTask, fetchScheduleForCompany]);
+    }, [company, user?.isAdmin, addTask, completeTask, failTask, fetchScheduleForCompany, showError]);
 
     const handleStartEditScheduleEntry = useCallback((entry: { date: string; time: string; note?: string }, index: number) => {
         setEditingScheduleEntryIndex(index);
@@ -490,7 +525,7 @@ export default function CompanyDetailPage() {
         setIsSettingSchedule(true);
         const taskId = addTask('Marking schedule as complete...');
         try {
-            await fetch('/api/email-schedule', {
+            const putRes = await fetch('/api/email-schedule', {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -506,22 +541,28 @@ export default function CompanyDetailPage() {
                     }],
                 }),
             });
+            if (!putRes.ok) {
+                const msg = await getEmailScheduleApiErrorMessage(putRes);
+                showError('Could not update schedule', msg);
+                failTask(taskId, 'Failed to mark complete');
+                return;
+            }
             completeTask(taskId, 'Schedule marked complete');
-            fetchScheduleForCompany();
+            await fetchScheduleForCompany();
         } catch (err) {
             console.error('Mark complete failed', err);
             failTask(taskId, 'Failed to mark complete');
         } finally {
             setIsSettingSchedule(false);
         }
-    }, [company, user?.isAdmin, assignedTo, addTask, completeTask, failTask, fetchScheduleForCompany]);
+    }, [company, user?.isAdmin, assignedTo, addTask, completeTask, failTask, fetchScheduleForCompany, showError]);
 
     const handleUnmarkScheduleEntryComplete = useCallback(async (entry: { companyId: string; date: string; time: string; note?: string; completed?: string; order?: number; pic?: string; companyName?: string }) => {
         if (!company || !user?.isAdmin || entry.completed !== 'Y') return;
         setIsSettingSchedule(true);
         const taskId = addTask('Cancelling completion...');
         try {
-            await fetch('/api/email-schedule', {
+            const putRes = await fetch('/api/email-schedule', {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -537,15 +578,21 @@ export default function CompanyDetailPage() {
                     }],
                 }),
             });
+            if (!putRes.ok) {
+                const msg = await getEmailScheduleApiErrorMessage(putRes);
+                showError('Could not update schedule', msg);
+                failTask(taskId, 'Failed to cancel completion');
+                return;
+            }
             completeTask(taskId, 'Completion cancelled');
-            fetchScheduleForCompany();
+            await fetchScheduleForCompany();
         } catch (err) {
             console.error('Cancel completion failed', err);
             failTask(taskId, 'Failed to cancel completion');
         } finally {
             setIsSettingSchedule(false);
         }
-    }, [company, user?.isAdmin, assignedTo, addTask, completeTask, failTask, fetchScheduleForCompany]);
+    }, [company, user?.isAdmin, assignedTo, addTask, completeTask, failTask, fetchScheduleForCompany, showError]);
 
     const handleSaveScheduleEntryEdit = useCallback(async () => {
         if (!company || !user?.isAdmin || editingScheduleEntryIndex === null) return;
@@ -561,7 +608,7 @@ export default function CompanyDetailPage() {
         try {
             const pic = assignedTo?.trim() || '';
             if (newDate === entry.date) {
-                await fetch('/api/email-schedule', {
+                const putRes = await fetch('/api/email-schedule', {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -571,18 +618,31 @@ export default function CompanyDetailPage() {
                             pic,
                             date: newDate,
                             time: newTime,
+                            order: entry.order ?? 0,
                             note: newNote,
                             completed: entry.completed,
                         }],
                     }),
                 });
+                if (!putRes.ok) {
+                    const msg = await getEmailScheduleApiErrorMessage(putRes);
+                    showError('Could not update schedule entry', msg);
+                    failTask(taskId, 'Failed to update entry');
+                    return;
+                }
             } else {
-                await fetch('/api/email-schedule', {
+                const delRes = await fetch('/api/email-schedule', {
                     method: 'DELETE',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ companyIds: [company.id], date: entry.date }),
                 });
-                await fetch('/api/email-schedule', {
+                if (!delRes.ok) {
+                    const msg = await getEmailScheduleApiErrorMessage(delRes);
+                    showError('Could not update schedule entry', msg);
+                    failTask(taskId, 'Failed to update entry');
+                    return;
+                }
+                const postRes = await fetch('/api/email-schedule', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -594,20 +654,26 @@ export default function CompanyDetailPage() {
                         note: newNote,
                     }),
                 });
+                if (!postRes.ok) {
+                    const msg = await getEmailScheduleApiErrorMessage(postRes);
+                    showError('Could not update schedule entry', msg);
+                    failTask(taskId, 'Failed to update entry');
+                    return;
+                }
             }
             setEditingScheduleEntryIndex(null);
             setEditScheduleDate('');
             setEditScheduleTime('');
             setEditScheduleNote('');
             completeTask(taskId, 'Schedule entry updated');
-            fetchScheduleForCompany();
+            await fetchScheduleForCompany();
         } catch (err) {
             console.error('Update schedule entry failed', err);
             failTask(taskId, 'Failed to update entry');
         } finally {
             setIsSettingSchedule(false);
         }
-    }, [company, user?.isAdmin, scheduleEntries, editingScheduleEntryIndex, editScheduleDate, editScheduleTime, editScheduleNote, assignedTo, addTask, completeTask, failTask, fetchScheduleForCompany]);
+    }, [company, user?.isAdmin, scheduleEntries, editingScheduleEntryIndex, editScheduleDate, editScheduleTime, editScheduleNote, assignedTo, addTask, completeTask, failTask, fetchScheduleForCompany, showError]);
 
     // Mark the most recent incomplete schedule entry as completed after outreach is logged
     const markScheduleEntryCompleted = useCallback(async () => {
@@ -618,22 +684,28 @@ export default function CompanyDetailPage() {
         const toMark = incompleteEntries[0];
         if (!toMark) return;
         try {
-            await fetch('/api/email-schedule', {
+            const putRes = await fetch('/api/email-schedule', {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     entries: [{
                         companyId: toMark.companyId,
-                        companyName: company.companyName || company.name || toMark.companyId,
-                        pic: assignedTo || '',
+                        companyName: toMark.companyName || company.companyName || company.name || String(toMark.companyId),
+                        pic: toMark.pic || assignedTo || '',
                         date: toMark.date,
                         time: toMark.time,
+                        order: toMark.order ?? 0,
                         note: toMark.note,
                         completed: 'Y',
                     }],
                 }),
             });
-            fetchScheduleForCompany();
+            if (!putRes.ok) {
+                const msg = await getEmailScheduleApiErrorMessage(putRes);
+                console.error('Failed to mark schedule entry as completed:', msg);
+                return;
+            }
+            await fetchScheduleForCompany();
         } catch (err) {
             console.error('Failed to mark schedule entry as completed', err);
         }
@@ -2037,6 +2109,11 @@ export default function CompanyDetailPage() {
                                         <CalendarDaysIcon className="w-5 h-5 text-indigo-600" aria-hidden />
                                         <label className="block text-sm font-medium text-slate-700">Outreach schedule</label>
                                     </div>
+                                    {isImpersonating && (
+                                        <p className="mb-3 text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                                            View-only while impersonating. Stop impersonation in the header to add or change the email schedule.
+                                        </p>
+                                    )}
 
                                     {/* All existing schedule entries */}
                                     {scheduleEntries.length > 0 && (
@@ -2058,7 +2135,8 @@ export default function CompanyDetailPage() {
                                                                     value={editScheduleDate}
                                                                     min={new Date().toISOString().slice(0, 10)}
                                                                     onChange={e => setEditScheduleDate(e.target.value)}
-                                                                    className="px-2 py-1 border border-slate-300 rounded text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                                                                    disabled={isImpersonating}
+                                                                    className="px-2 py-1 border border-slate-300 rounded text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 disabled:bg-slate-50 disabled:cursor-not-allowed"
                                                                 />
                                                             </div>
                                                             <div className="flex flex-col gap-0.5">
@@ -2067,7 +2145,8 @@ export default function CompanyDetailPage() {
                                                                     type="time"
                                                                     value={editScheduleTime}
                                                                     onChange={e => setEditScheduleTime(e.target.value)}
-                                                                    className="px-2 py-1 border border-slate-300 rounded text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                                                                    disabled={isImpersonating}
+                                                                    className="px-2 py-1 border border-slate-300 rounded text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 disabled:bg-slate-50 disabled:cursor-not-allowed"
                                                                 />
                                                             </div>
                                                             <div className="flex flex-col gap-0.5 flex-1 min-w-[140px]">
@@ -2077,14 +2156,15 @@ export default function CompanyDetailPage() {
                                                                     value={editScheduleNote}
                                                                     onChange={e => setEditScheduleNote(e.target.value)}
                                                                     placeholder="Optional"
-                                                                    className="px-2 py-1 border border-slate-300 rounded text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                                                                    disabled={isImpersonating}
+                                                                    className="px-2 py-1 border border-slate-300 rounded text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 disabled:bg-slate-50 disabled:cursor-not-allowed"
                                                                 />
                                                             </div>
                                                             <div className="flex items-center gap-1">
                                                                 <button
                                                                     type="button"
                                                                     onClick={handleSaveScheduleEntryEdit}
-                                                                    disabled={isSettingSchedule || !editScheduleDate.trim() || !editScheduleTime.trim()}
+                                                                    disabled={isImpersonating || isSettingSchedule || !editScheduleDate.trim() || !editScheduleTime.trim()}
                                                                     className="px-2 py-1 bg-indigo-600 text-white text-xs font-medium rounded hover:bg-indigo-700 disabled:opacity-50"
                                                                 >
                                                                     Save
@@ -2092,7 +2172,7 @@ export default function CompanyDetailPage() {
                                                                 <button
                                                                     type="button"
                                                                     onClick={handleCancelEditScheduleEntry}
-                                                                    disabled={isSettingSchedule}
+                                                                    disabled={isImpersonating || isSettingSchedule}
                                                                     className="px-2 py-1 text-slate-600 hover:text-slate-800 text-xs font-medium rounded border border-slate-300 hover:bg-slate-50 disabled:opacity-50"
                                                                 >
                                                                     Cancel
@@ -2114,7 +2194,7 @@ export default function CompanyDetailPage() {
                                                                     <button
                                                                         type="button"
                                                                         onClick={() => handleMarkScheduleEntryComplete(entry)}
-                                                                        disabled={isSettingSchedule}
+                                                                        disabled={isImpersonating || isSettingSchedule}
                                                                         className="p-1 text-slate-500 hover:text-green-600 rounded hover:bg-green-50 disabled:opacity-50"
                                                                         title="Mark email as sent"
                                                                     >
@@ -2124,7 +2204,7 @@ export default function CompanyDetailPage() {
                                                                     <button
                                                                         type="button"
                                                                         onClick={() => handleUnmarkScheduleEntryComplete(entry)}
-                                                                        disabled={isSettingSchedule}
+                                                                        disabled={isImpersonating || isSettingSchedule}
                                                                         className="p-1 text-slate-500 hover:text-amber-600 rounded hover:bg-amber-50 disabled:opacity-50"
                                                                         title="Cancel completion"
                                                                     >
@@ -2134,7 +2214,7 @@ export default function CompanyDetailPage() {
                                                                 <button
                                                                     type="button"
                                                                     onClick={() => handleStartEditScheduleEntry(entry, idx)}
-                                                                    disabled={isSettingSchedule || !canEdit}
+                                                                    disabled={isImpersonating || isSettingSchedule || !canEdit}
                                                                     className="p-1 text-slate-500 hover:text-indigo-600 rounded hover:bg-indigo-50 disabled:opacity-50 disabled:cursor-not-allowed"
                                                                     title={canEdit ? 'Edit' : isCompleted ? 'Completed entries cannot be edited' : 'Past schedule cannot be edited'}
                                                                 >
@@ -2143,7 +2223,7 @@ export default function CompanyDetailPage() {
                                                                 <button
                                                                     type="button"
                                                                     onClick={() => { setScheduleEntryToDelete(entry); setShowConfirmDeleteScheduleEntryModal(true); }}
-                                                                    disabled={isSettingSchedule}
+                                                                    disabled={isImpersonating || isSettingSchedule}
                                                                     className="p-1 text-slate-500 hover:text-red-600 rounded hover:bg-red-50 disabled:opacity-50"
                                                                     title="Delete"
                                                                 >
@@ -2158,7 +2238,7 @@ export default function CompanyDetailPage() {
                                             <button
                                                 type="button"
                                                 onClick={handleClearOutreachSchedule}
-                                                disabled={isSettingSchedule}
+                                                disabled={isImpersonating || isSettingSchedule}
                                                 className="mt-1 text-xs font-medium text-red-600 hover:text-red-700 disabled:opacity-50"
                                             >
                                                 Clear all schedules
@@ -2175,7 +2255,8 @@ export default function CompanyDetailPage() {
                                                 value={outreachScheduleDate}
                                                 min={new Date().toISOString().slice(0, 10)}
                                                 onChange={e => setOutreachScheduleDate(e.target.value)}
-                                                className="px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                                                disabled={isImpersonating}
+                                                className="px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 disabled:bg-slate-50 disabled:cursor-not-allowed"
                                             />
                                         </div>
                                         {outreachScheduleDate && (
@@ -2188,7 +2269,8 @@ export default function CompanyDetailPage() {
                                                     type="time"
                                                     value={outreachScheduleTime}
                                                     onChange={e => setOutreachScheduleTime(e.target.value)}
-                                                    className="px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                                                    disabled={isImpersonating}
+                                                    className="px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 disabled:bg-slate-50 disabled:cursor-not-allowed"
                                                 />
                                             </div>
                                         )}
@@ -2196,7 +2278,7 @@ export default function CompanyDetailPage() {
                                             <button
                                                 type="button"
                                                 onClick={handleSetOutreachSchedule}
-                                                disabled={isSettingSchedule || !outreachScheduleDate || !outreachScheduleTime || !assignedTo?.trim() || assignedTo === 'Unassigned'}
+                                                disabled={isImpersonating || isSettingSchedule || !outreachScheduleDate || !outreachScheduleTime || !assignedTo?.trim() || assignedTo === 'Unassigned'}
                                                 className="px-3 py-1.5 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
                                             >
                                                 {isSettingSchedule ? 'Setting…' : 'Set schedule'}
@@ -2211,7 +2293,8 @@ export default function CompanyDetailPage() {
                                                 value={outreachScheduleNote}
                                                 onChange={e => setOutreachScheduleNote(e.target.value)}
                                                 placeholder="e.g. Payment reminder, event update…"
-                                                className="mt-0.5 w-full px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                                                disabled={isImpersonating}
+                                                className="mt-0.5 w-full px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 disabled:bg-slate-50 disabled:cursor-not-allowed"
                                             />
                                         </div>
                                     )}
