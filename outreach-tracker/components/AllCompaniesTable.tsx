@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useMemo, useRef, useEffect, useCallback, useTransition, useDeferredValue } from 'react';
 import { createPortal } from 'react-dom';
 import {
     MagnifyingGlassIcon,
@@ -43,15 +43,17 @@ function GlobalSearchInput({
 }) {
     const [localValue, setLocalValue] = useState(() => {
         if (typeof window !== 'undefined') {
-            return sessionStorage.getItem(GLOBAL_SEARCH_STORAGE_KEY) || '';
+            return (sessionStorage.getItem(GLOBAL_SEARCH_STORAGE_KEY) || '').trim();
         }
         return '';
     });
 
     const apply = (value: string) => {
-        onApply(value);
+        const trimmedValue = value.trim();
+        onApply(trimmedValue);
+        setLocalValue(trimmedValue);
         if (typeof window !== 'undefined') {
-            sessionStorage.setItem(GLOBAL_SEARCH_STORAGE_KEY, value);
+            sessionStorage.setItem(GLOBAL_SEARCH_STORAGE_KEY, trimmedValue);
         }
     };
 
@@ -97,6 +99,48 @@ function GlobalSearchInput({
                 </button>
             ) : null}
         </div>
+    );
+}
+
+function DebouncedFilterInput({
+    appliedValue,
+    onApply,
+    placeholder = 'Filter…',
+    className,
+    delayMs = 120,
+}: {
+    appliedValue: string;
+    onApply: (value: string) => void;
+    placeholder?: string;
+    className?: string;
+    delayMs?: number;
+}) {
+    const [localValue, setLocalValue] = useState(appliedValue);
+
+    useEffect(() => {
+        if (appliedValue !== localValue) {
+            setLocalValue(appliedValue);
+        }
+    }, [appliedValue]);
+
+    useEffect(() => {
+        const timer = window.setTimeout(() => {
+            if (localValue !== appliedValue) {
+                onApply(localValue);
+            }
+        }, delayMs);
+
+        return () => window.clearTimeout(timer);
+    }, [localValue, appliedValue, onApply, delayMs]);
+
+    return (
+        <input
+            type="text"
+            value={localValue}
+            onChange={e => setLocalValue(e.target.value)}
+            placeholder={placeholder}
+            className={className}
+        />
     );
 }
 
@@ -379,6 +423,7 @@ export default function AllCompaniesTable({
     lastSelectedIndex,
     onLastSelectedIndexChange = () => { }
 }: AllCompaniesTableProps) {
+    const [isFilterUpdatePending, startFilterUpdateTransition] = useTransition();
     const [sortField, setSortField] = useState<SortField>(() => {
         if (typeof window !== 'undefined') {
             const saved = sessionStorage.getItem('companies_sortField');
@@ -397,10 +442,11 @@ export default function AllCompaniesTable({
 
     const [debouncedSearch, setDebouncedSearch] = useState(() => {
         if (typeof window !== 'undefined') {
-            return sessionStorage.getItem(GLOBAL_SEARCH_STORAGE_KEY) || '';
+            return (sessionStorage.getItem(GLOBAL_SEARCH_STORAGE_KEY) || '').trim();
         }
         return '';
     });
+    const deferredSearch = useDeferredValue(debouncedSearch);
 
     const defaultColumnFilters = {
         id: '',
@@ -428,6 +474,16 @@ export default function AllCompaniesTable({
         }
         return defaultColumnFilters;
     });
+
+    const effectiveColumnFilters = useMemo(() => ({
+        ...columnFilters,
+        id: columnFilters.id.trim(),
+        name: columnFilters.name.trim(),
+        contact: columnFilters.contact.trim(),
+        emails: columnFilters.emails.trim(),
+        phones: columnFilters.phones.trim(),
+    }), [columnFilters]);
+    const deferredEffectiveColumnFilters = useDeferredValue(effectiveColumnFilters);
 
     const [copiedCell, setCopiedCell] = useState<{ companyId: string; field: 'emails' | 'phones' } | null>(null);
 
@@ -534,37 +590,43 @@ export default function AllCompaniesTable({
     );
 
     const filteredAndSortedCompanies = useMemo(() => {
-        const searchNorm = normalise(debouncedSearch.trim());
+        const searchNorm = normalise(deferredSearch.trim());
+
+        const idFilterNorm = normalise(deferredEffectiveColumnFilters.id);
+        const nameFilterNorm = normalise(deferredEffectiveColumnFilters.name);
+        const contactFilterNorm = normalise(deferredEffectiveColumnFilters.contact);
+        const emailsFilterNorm = normalise(deferredEffectiveColumnFilters.emails);
+        const phonesFilterNorm = normalise(deferredEffectiveColumnFilters.phones);
 
         let result = companies.filter((company, i) => {
             if (searchNorm && !companySearchStrings[i].includes(searchNorm)) return false;
 
             // Per-column text filters: accent-insensitive (same as global search)
-            const matchesId = !columnFilters.id.trim() || normalise(company.id).includes(normalise(columnFilters.id));
-            const matchesName = !columnFilters.name.trim() || normalise(company.name).includes(normalise(columnFilters.name));
-            const matchesContactStatus = columnFilters.contactStatus.length === 0 || columnFilters.contactStatus.includes(company.contactStatus);
-            const matchesRelationshipStatus = columnFilters.relationshipStatus.length === 0 || columnFilters.relationshipStatus.includes(company.relationshipStatus);
+            const matchesId = !idFilterNorm || normalise(company.id).includes(idFilterNorm);
+            const matchesName = !nameFilterNorm || normalise(company.name).includes(nameFilterNorm);
+            const matchesContactStatus = deferredEffectiveColumnFilters.contactStatus.length === 0 || deferredEffectiveColumnFilters.contactStatus.includes(company.contactStatus);
+            const matchesRelationshipStatus = deferredEffectiveColumnFilters.relationshipStatus.length === 0 || deferredEffectiveColumnFilters.relationshipStatus.includes(company.relationshipStatus);
             const companyDisciplines = company.discipline ? company.discipline.split(',').map((d: string) => d.trim()).filter(Boolean) : [];
-            const matchesDiscipline = columnFilters.discipline.length === 0 || columnFilters.discipline.some((d: string) => companyDisciplines.includes(d));
+            const matchesDiscipline = deferredEffectiveColumnFilters.discipline.length === 0 || deferredEffectiveColumnFilters.discipline.some((d: string) => companyDisciplines.includes(d));
             const hasTier = !!(company.targetSponsorshipTier && String(company.targetSponsorshipTier).trim());
-            const matchesTier = columnFilters.targetSponsorshipTier.length === 0 || columnFilters.targetSponsorshipTier.some((opt: string) =>
+            const matchesTier = deferredEffectiveColumnFilters.targetSponsorshipTier.length === 0 || deferredEffectiveColumnFilters.targetSponsorshipTier.some((opt: string) =>
                 opt === UNMARKED_TIER ? !hasTier : (hasTier && company.targetSponsorshipTier === opt)
             );
             const hasRegisteredTier = !!(company.sponsorshipTier && String(company.sponsorshipTier).trim());
-            const matchesRegisteredTier = columnFilters.sponsorshipTier.length === 0 || columnFilters.sponsorshipTier.some((opt: string) =>
+            const matchesRegisteredTier = deferredEffectiveColumnFilters.sponsorshipTier.length === 0 || deferredEffectiveColumnFilters.sponsorshipTier.some((opt: string) =>
                 opt === UNMARKED_TIER ? !hasRegisteredTier : (hasRegisteredTier && company.sponsorshipTier === opt)
             );
-            const matchesAssignee = columnFilters.assignedTo.length === 0 || columnFilters.assignedTo.includes(company.assignedTo);
+            const matchesAssignee = deferredEffectiveColumnFilters.assignedTo.length === 0 || deferredEffectiveColumnFilters.assignedTo.includes(company.assignedTo);
             const matchesContact =
-                !columnFilters.contact.trim() ||
-                normalise(company.contact).includes(normalise(columnFilters.contact)) ||
-                normalise(company.email).includes(normalise(columnFilters.contact));
-            const matchesEmails = !columnFilters.emails.trim() || normalise(company.email).includes(normalise(columnFilters.emails));
-            const matchesPhones = !columnFilters.phones.trim() || normalise(company.phone || '').includes(normalise(columnFilters.phones));
+                !contactFilterNorm ||
+                normalise(company.contact).includes(contactFilterNorm) ||
+                normalise(company.email).includes(contactFilterNorm);
+            const matchesEmails = !emailsFilterNorm || normalise(company.email).includes(emailsFilterNorm);
+            const matchesPhones = !phonesFilterNorm || normalise(company.phone || '').includes(phonesFilterNorm);
 
             // Schedule filter: All | Has upcoming | Overdue (email not sent) | No schedule
             const hasSchedule = !!(company.scheduledDate && company.scheduledTime);
-            const scheduleOpts = columnFilters.scheduled;
+            const scheduleOpts = deferredEffectiveColumnFilters.scheduled;
             const matchesScheduled = scheduleOpts.length === 0 || scheduleOpts.some((opt: string) => {
                 if (opt === 'Has upcoming schedule') return hasSchedule && !company.scheduledIsOverdue;
                 if (opt === 'Overdue (email not sent)') return company.scheduledIsOverdue;
@@ -601,7 +663,7 @@ export default function AllCompaniesTable({
         });
 
         return result;
-    }, [companies, companySearchStrings, debouncedSearch, columnFilters, sortField, sortDirection]);
+    }, [companies, companySearchStrings, deferredSearch, deferredEffectiveColumnFilters, sortField, sortDirection]);
 
     const handleSort = (field: SortField) => {
         if (sortField === field) {
@@ -668,11 +730,26 @@ export default function AllCompaniesTable({
     const handleSelectAll = () => onSelectionChange(new Set(filteredAndSortedCompanies.map(c => c.id)));
     const handleClearSelection = () => { onSelectionChange(new Set()); onLastSelectedIndexChange(null); };
 
+    const lastUpdatedFormatter = useMemo(
+        () => new Intl.DateTimeFormat('en-US', {
+            month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true
+        }),
+        []
+    );
+
+    const scheduleDateFormatter = useMemo(
+        () => new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }),
+        []
+    );
+
     const formatDate = (dateString: string) => {
         if (!dateString) return '';
-        return new Date(dateString).toLocaleString('en-US', {
-            month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true
-        });
+        return lastUpdatedFormatter.format(new Date(dateString));
+    };
+
+    const formatScheduledDate = (dateString: string) => {
+        if (!dateString) return '';
+        return scheduleDateFormatter.format(new Date(`${dateString}T00:00:00`));
     };
 
     const SortIcon = ({ field }: { field: SortField }) => {
@@ -682,19 +759,21 @@ export default function AllCompaniesTable({
             : <ChevronDownIcon className="w-4 h-4 text-blue-600" />;
     };
 
-    const hasColumnFilters = !!(columnFilters.id || columnFilters.name || columnFilters.contactStatus.length > 0 ||
-        columnFilters.relationshipStatus.length > 0 || columnFilters.discipline.length > 0 ||
-        columnFilters.targetSponsorshipTier.length > 0 || columnFilters.sponsorshipTier.length > 0 || columnFilters.assignedTo.length > 0 ||
-        columnFilters.scheduled.length > 0 || columnFilters.contact || columnFilters.emails || columnFilters.phones);
+    const hasColumnFilters = !!(effectiveColumnFilters.id || effectiveColumnFilters.name || effectiveColumnFilters.contactStatus.length > 0 ||
+        effectiveColumnFilters.relationshipStatus.length > 0 || effectiveColumnFilters.discipline.length > 0 ||
+        effectiveColumnFilters.targetSponsorshipTier.length > 0 || effectiveColumnFilters.sponsorshipTier.length > 0 || effectiveColumnFilters.assignedTo.length > 0 ||
+        effectiveColumnFilters.scheduled.length > 0 || effectiveColumnFilters.contact || effectiveColumnFilters.emails || effectiveColumnFilters.phones);
     const hasNonDefaultSort = sortField !== DEFAULT_SORT_FIELD || sortDirection !== DEFAULT_SORT_DIRECTION;
     const hasAnyFilter = !!debouncedSearch || hasColumnFilters || hasNonDefaultSort;
 
     const clearAllFilters = () => {
-        setDebouncedSearch('');
         if (typeof window !== 'undefined') sessionStorage.setItem(GLOBAL_SEARCH_STORAGE_KEY, '');
-        setColumnFilters({ id: '', name: '', contactStatus: [], relationshipStatus: [], discipline: [], targetSponsorshipTier: [], sponsorshipTier: [], assignedTo: [], scheduled: [], contact: '', emails: '', phones: '' });
-        setSortField(DEFAULT_SORT_FIELD);
-        setSortDirection(DEFAULT_SORT_DIRECTION);
+        startFilterUpdateTransition(() => {
+            setDebouncedSearch('');
+            setColumnFilters({ id: '', name: '', contactStatus: [], relationshipStatus: [], discipline: [], targetSponsorshipTier: [], sponsorshipTier: [], assignedTo: [], scheduled: [], contact: '', emails: '', phones: '' });
+            setSortField(DEFAULT_SORT_FIELD);
+            setSortDirection(DEFAULT_SORT_DIRECTION);
+        });
     };
 
     // Dynamic column count for colSpan
@@ -742,14 +821,14 @@ export default function AllCompaniesTable({
                     <div className="flex items-center gap-2">
                         <button
                             onClick={clearAllFilters}
-                            disabled={!hasAnyFilter}
+                            disabled={!hasAnyFilter || isFilterUpdatePending}
                             className={`flex items-center gap-1.5 px-3 py-2 rounded-lg border text-sm font-medium transition-colors ${hasAnyFilter
                                 ? 'bg-white border-slate-200 text-slate-600 hover:bg-red-50 hover:border-red-200 hover:text-red-600'
                                 : 'bg-slate-50 border-slate-100 text-slate-300 cursor-not-allowed'
                             }`}
                         >
                             <XMarkIcon className="w-4 h-4" />
-                            Clear filters
+                            {isFilterUpdatePending ? 'Clearing...' : 'Clear filters'}
                             {hasAnyFilter && (
                                 <span className="ml-0.5 px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700 text-[10px] font-semibold leading-none">
                                     {(debouncedSearch ? 1 : 0) + (hasColumnFilters ? 1 : 0) + (hasNonDefaultSort ? 1 : 0)}
@@ -882,10 +961,9 @@ export default function AllCompaniesTable({
                                 <th className="px-4 py-2 bg-white" style={{ width: COLUMN_WIDTHS.select }} />
                                 {col.id && (
                                     <th className="px-6 py-2 bg-white" style={{ width: COLUMN_WIDTHS.id }}>
-                                        <input
-                                            type="text"
-                                            value={columnFilters.id}
-                                            onChange={e => setColumnFilters({ ...columnFilters, id: e.target.value })}
+                                        <DebouncedFilterInput
+                                            appliedValue={columnFilters.id}
+                                            onApply={value => setColumnFilters(prev => ({ ...prev, id: value }))}
                                             placeholder="Filter…"
                                             className="w-full px-2 py-1 text-xs border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
                                         />
@@ -893,10 +971,9 @@ export default function AllCompaniesTable({
                                 )}
                                 {/* Name filter (always visible) */}
                                 <th className="px-6 py-2 bg-white" style={{ width: COLUMN_WIDTHS.name }}>
-                                    <input
-                                        type="text"
-                                        value={columnFilters.name}
-                                        onChange={e => setColumnFilters({ ...columnFilters, name: e.target.value })}
+                                    <DebouncedFilterInput
+                                        appliedValue={columnFilters.name}
+                                        onApply={value => setColumnFilters(prev => ({ ...prev, name: value }))}
                                         placeholder="Filter…"
                                         className="w-full px-2 py-1 text-xs border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
                                     />
@@ -926,10 +1003,9 @@ export default function AllCompaniesTable({
                                 )}
                                 {col.contact && (
                                     <th className="px-6 py-2 bg-white" style={{ width: COLUMN_WIDTHS.contact }}>
-                                        <input
-                                            type="text"
-                                            value={columnFilters.contact}
-                                            onChange={e => setColumnFilters({ ...columnFilters, contact: e.target.value })}
+                                        <DebouncedFilterInput
+                                            appliedValue={columnFilters.contact}
+                                            onApply={value => setColumnFilters(prev => ({ ...prev, contact: value }))}
                                             placeholder="Filter…"
                                             className="w-full px-2 py-1 text-xs border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
                                         />
@@ -937,10 +1013,9 @@ export default function AllCompaniesTable({
                                 )}
                                 {col.emails && (
                                     <th className="px-6 py-2 bg-white" style={{ width: COLUMN_WIDTHS.emails }}>
-                                        <input
-                                            type="text"
-                                            value={columnFilters.emails}
-                                            onChange={e => setColumnFilters({ ...columnFilters, emails: e.target.value })}
+                                        <DebouncedFilterInput
+                                            appliedValue={columnFilters.emails}
+                                            onApply={value => setColumnFilters(prev => ({ ...prev, emails: value }))}
                                             placeholder="Filter…"
                                             className="w-full px-2 py-1 text-xs border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
                                         />
@@ -948,10 +1023,9 @@ export default function AllCompaniesTable({
                                 )}
                                 {col.phones && (
                                     <th className="px-6 py-2 bg-white" style={{ width: COLUMN_WIDTHS.phones }}>
-                                        <input
-                                            type="text"
-                                            value={columnFilters.phones}
-                                            onChange={e => setColumnFilters({ ...columnFilters, phones: e.target.value })}
+                                        <DebouncedFilterInput
+                                            appliedValue={columnFilters.phones}
+                                            onApply={value => setColumnFilters(prev => ({ ...prev, phones: value }))}
                                             placeholder="Filter…"
                                             className="w-full px-2 py-1 text-xs border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
                                         />
@@ -1135,7 +1209,7 @@ export default function AllCompaniesTable({
                                             <td className="px-6 py-4 text-xs whitespace-nowrap" style={{ width: COLUMN_WIDTHS.scheduled }}>
                                                 {company.scheduledDate && company.scheduledTime ? (
                                                     <span className={company.scheduledIsOverdue ? 'text-red-700 font-semibold' : 'text-slate-600'}>
-                                                        {new Date(company.scheduledDate + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}, {formatTime(company.scheduledTime)}
+                                                        {formatScheduledDate(company.scheduledDate)}, {formatTime(company.scheduledTime)}
                                                     </span>
                                                 ) : (
                                                     <span className="text-slate-300">—</span>
