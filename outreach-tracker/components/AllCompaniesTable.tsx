@@ -462,12 +462,12 @@ export default function AllCompaniesTable({
         emails: '',
         phones: ''
     };
-    const [columnFilters, setColumnFilters] = useState(() => {
+    const [columnFilters, setColumnFilters] = useState<typeof defaultColumnFilters>(() => {
         if (typeof window !== 'undefined') {
             const saved = sessionStorage.getItem('companies_columnFilters');
             if (saved) {
                 try {
-                    const parsed = JSON.parse(saved);
+                    const parsed = JSON.parse(saved) as Partial<typeof defaultColumnFilters>;
                     return { ...defaultColumnFilters, ...parsed };
                 } catch { /* ignore */ }
             }
