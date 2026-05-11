@@ -3,6 +3,13 @@ import { getGoogleSheetsClient } from '../../lib/google-sheets';
 import { getCompanyDatabaseSheet } from '../../lib/spreadsheet-utils';
 import { getCommitteeMembers, CommitteeMember } from '../../lib/committee-members';
 import { cache } from '../../lib/cache';
+import { withSheetsRetry, isRetryableSheetsError } from '../../lib/sheets-retry';
+
+const SHEET_DATA_CACHE_KEY = 'sheet_data';
+/** Read-heavy route: more attempts + longer gaps help with per-minute Sheets read quotas (429). */
+const DATA_READ_MAX_ATTEMPTS = 7;
+const DATA_READ_RETRY_BASE_MS = 2000;
+const dataReadRetryOpts = { baseDelayMs: DATA_READ_RETRY_BASE_MS } as const;
 
 export default async function handler(
     req: NextApiRequest,
@@ -12,19 +19,18 @@ export default async function handler(
         return res.status(405).json({ message: 'Method not allowed' });
     }
 
+    const { refresh } = req.query;
+    const cachedPayload = cache.get(SHEET_DATA_CACHE_KEY);
+
     const startTime = Date.now();
     console.log(">>> [API DATA] Request started");
 
     try {
         // 1. Check Cache
-        const { refresh } = req.query;
-        const CACHE_KEY = 'sheet_data';
-        const cachedData = cache.get(CACHE_KEY);
-
-        if (cachedData && refresh !== 'true') {
+        if (cachedPayload && refresh !== 'true') {
             console.log(">>> [API DATA] Serving from cache");
             res.setHeader('X-Cache', 'HIT');
-            return res.status(200).json(cachedData);
+            return res.status(200).json(cachedPayload);
         }
 
         console.log(">>> [API DATA] Fetching from Sheets...");
@@ -34,37 +40,65 @@ export default async function handler(
 
         // DB Fetch
         console.log(">>> [API DATA] DB Metadata...");
-        const dbMetadata = await sheets.spreadsheets.get({ spreadsheetId: databaseSpreadsheetId });
+        const dbMetadata = await withSheetsRetry(
+            () => sheets.spreadsheets.get({ spreadsheetId: databaseSpreadsheetId }),
+            DATA_READ_MAX_ATTEMPTS,
+            'api/data:dbMetadata',
+            dataReadRetryOpts,
+        );
         const { title: dbSheetName } = getCompanyDatabaseSheet(dbMetadata.data.sheets);
 
         console.log(">>> [API DATA] DB Rows...");
-        const dbResponse = await sheets.spreadsheets.values.get({
-            spreadsheetId: databaseSpreadsheetId,
-            range: `${dbSheetName}!A2:Q`,
-        });
+        const dbResponse = await withSheetsRetry(
+            () =>
+                sheets.spreadsheets.values.get({
+                    spreadsheetId: databaseSpreadsheetId,
+                    range: `${dbSheetName}!A2:Q`,
+                }),
+            DATA_READ_MAX_ATTEMPTS,
+            'api/data:dbRows',
+            dataReadRetryOpts,
+        );
         const dbRows = dbResponse.data.values || [];
 
         // Tracker Fetch
         console.log(">>> [API DATA] Tracker Metadata...");
-        const trackerMetadata = await sheets.spreadsheets.get({ spreadsheetId: trackerSpreadsheetId });
+        const trackerMetadata = await withSheetsRetry(
+            () => sheets.spreadsheets.get({ spreadsheetId: trackerSpreadsheetId }),
+            DATA_READ_MAX_ATTEMPTS,
+            'api/data:trackerMetadata',
+            dataReadRetryOpts,
+        );
         const trackerSheetName = trackerMetadata.data.sheets?.[0].properties?.title;
         if (!trackerSheetName) throw new Error('Tracker Sheet not found');
 
         console.log(">>> [API DATA] Tracker Rows...");
-        const trackerResponse = await sheets.spreadsheets.values.get({
-            spreadsheetId: trackerSpreadsheetId,
-            range: `${trackerSheetName}!A2:P`,
-        });
+        const trackerResponse = await withSheetsRetry(
+            () =>
+                sheets.spreadsheets.values.get({
+                    spreadsheetId: trackerSpreadsheetId,
+                    range: `${trackerSheetName}!A2:P`,
+                }),
+            DATA_READ_MAX_ATTEMPTS,
+            'api/data:trackerRows',
+            dataReadRetryOpts,
+        );
         const trackerRows = trackerResponse.data.values || [];
 
         // History Fetch
         console.log(">>> [API DATA] History...");
         let historyData: any[] = [];
         try {
-            const historyResponse = await sheets.spreadsheets.values.get({
-                spreadsheetId: trackerSpreadsheetId,
-                range: `Thread_History!A2:D`,
-            });
+            const historyResponse = await withSheetsRetry(
+                () =>
+                    sheets.spreadsheets.values.get({
+                        spreadsheetId: trackerSpreadsheetId,
+                        range: `Thread_History!A2:D`,
+                    }),
+                DATA_READ_MAX_ATTEMPTS,
+                'api/data:history',
+                dataReadRetryOpts,
+            );
             historyData = (historyResponse.data.values || []).map((row, index) => ({
                 id: `history-${index}`,
                 timestamp: row[0],
@@ -81,11 +115,17 @@ export default async function handler(
         console.log(">>> [API DATA] Daily Stats...");
         let dailyStats: any[] = [];
         try {
-            const statsResponse = await sheets.spreadsheets.values.get({
-                spreadsheetId: trackerSpreadsheetId,
-                // Daily_Stats columns: Date, Total, To Contact, Contacted, To Follow Up, Interested, Registered, No Reply, Rejected
-                range: `Daily_Stats!A2:I`,
-            });
+            const statsResponse = await withSheetsRetry(
+                () =>
+                    sheets.spreadsheets.values.get({
+                        spreadsheetId: trackerSpreadsheetId,
+                        // Daily_Stats columns: Date, Total, To Contact, Contacted, To Follow Up, Interested, Registered, No Reply, Rejected
+                        range: `Daily_Stats!A2:I`,
+                    }),
+                DATA_READ_MAX_ATTEMPTS,
+                'api/data:dailyStats',
+                dataReadRetryOpts,
+            );
             dailyStats = (statsResponse.data.values || []).map(row => ({
                 date: row[0],
                 total: parseInt(row[1], 10) || 0,
@@ -253,7 +293,7 @@ export default async function handler(
             idNameMismatches: idNameMismatches.length > 0 ? idNameMismatches : undefined,
             trackerOnlyCompanies: trackerOnlyCompanies.length > 0 ? trackerOnlyCompanies : undefined,
         };
-        cache.set(CACHE_KEY, responseData);
+        cache.set(SHEET_DATA_CACHE_KEY, responseData);
 
         console.log(`>>> [API DATA] Done in ${Date.now() - startTime}ms`);
         res.setHeader('X-Cache', 'MISS');
@@ -261,6 +301,18 @@ export default async function handler(
 
     } catch (error) {
         console.error('API Error:', error);
-        return res.status(500).json({ message: (error as any).message || 'Internal Server Error' });
+        const stale = cache.get(SHEET_DATA_CACHE_KEY);
+        if (stale && isRetryableSheetsError(error)) {
+            console.warn('>>> [API DATA] Serving stale cache after Sheets quota/transient error');
+            res.setHeader('X-Cache', 'STALE');
+            res.setHeader('X-Sheets-Quota-Fallback', '1');
+            return res.status(200).json(stale);
+        }
+        const message = error instanceof Error ? error.message : 'Internal Server Error';
+        const status = isRetryableSheetsError(error) ? 503 : 500;
+        return res.status(status).json({
+            message,
+            ...(isRetryableSheetsError(error) ? { code: 'SHEETS_QUOTA_OR_UNAVAILABLE' as const } : {}),
+        });
     }
 }

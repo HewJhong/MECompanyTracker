@@ -1,5 +1,6 @@
 import { getGoogleSheetsClient } from './google-sheets';
 import { cache, deleteCacheKeysAndPrefix } from './cache';
+import { withSheetsRetry } from './sheets-retry';
 import {
     calculateTimeSlots,
     ScheduleSettings,
@@ -184,10 +185,12 @@ export async function getEmailSchedule(date?: string): Promise<EmailScheduleEntr
         const sheets = await getGoogleSheetsClient();
         const spreadsheetId = getSpreadsheetId();
 
-        const response = await sheets.spreadsheets.values.get({
-            spreadsheetId,
-            range: `${SCHEDULE_SHEET}!A2:J`,
-        });
+        const response = await withSheetsRetry(
+            () => sheets.spreadsheets.values.get({ spreadsheetId, range: `${SCHEDULE_SHEET}!A2:J` }),
+            5,
+            'email-schedule:getEmailSchedule',
+            { baseDelayMs: 1500 },
+        );
 
         const rows = response.data.values || [];
         let entries: EmailScheduleEntry[] = rows
@@ -284,10 +287,15 @@ export async function saveEmailScheduleEntries(
     let existingRows: string[][] = [];
     let dataStartRow = 2;
     try {
-        const response = await sheets.spreadsheets.values.get({
-            spreadsheetId,
-            range: `${SCHEDULE_SHEET}!A2:J`,
-        });
+        const response = await withSheetsRetry(
+            () =>
+                sheets.spreadsheets.values.get({
+                    spreadsheetId,
+                    range: `${SCHEDULE_SHEET}!A2:J`,
+                }),
+            4,
+            'email-schedule:saveEntries:values.get',
+        );
         existingRows = (response.data.values || []) as string[][];
         dataStartRow = parseA1RangeStartRow(response.data.range);
     } catch {
@@ -343,13 +351,18 @@ export async function saveEmailScheduleEntries(
         if (maxRow > 0) {
             await ensureEmailScheduleSheetRowCapacity(sheets, spreadsheetId, maxRow);
         }
-        await sheets.spreadsheets.values.batchUpdate({
-            spreadsheetId,
-            requestBody: {
-                valueInputOption: 'RAW',
-                data: updates,
-            },
-        });
+        await withSheetsRetry(
+            () =>
+                sheets.spreadsheets.values.batchUpdate({
+                    spreadsheetId,
+                    requestBody: {
+                        valueInputOption: 'RAW',
+                        data: updates,
+                    },
+                }),
+            4,
+            'email-schedule:saveEntries:values.batchUpdate',
+        );
     }
 
     invalidateScheduleCache();
@@ -391,27 +404,43 @@ export async function deleteEmailScheduleEntries(
     const sheets = await getGoogleSheetsClient();
     const spreadsheetId = getSpreadsheetId();
 
-    const response = await sheets.spreadsheets.values.get({
-        spreadsheetId,
-        range: `${SCHEDULE_SHEET}!A2:J`,
-    });
+    const response = await withSheetsRetry(
+        () =>
+            sheets.spreadsheets.values.get({
+                spreadsheetId,
+                range: `${SCHEDULE_SHEET}!A2:J`,
+            }),
+        4,
+        'email-schedule:deleteByDate:values.get',
+    );
 
     const rows = (response.data.values || []) as string[][];
     const dataStartRow = parseA1RangeStartRow(response.data.range);
     const idsToDelete = new Set(companyIds);
+    const normDate = normalizeDate(date);
 
     // Find row indices to blank out (Google Sheets doesn't support row deletion via Values API)
     const clearRequests: string[] = [];
     rows.forEach((row, i) => {
-        if (row[0] && idsToDelete.has(row[0]) && row[3] === date) {
+        if (row[0] && idsToDelete.has(row[0]) && normalizeDate(String(row[3] ?? '')) === normDate) {
             clearRequests.push(`${SCHEDULE_SHEET}!A${dataStartRow + i}:J${dataStartRow + i}`);
         }
     });
 
     if (clearRequests.length > 0) {
-        await sheets.spreadsheets.values.batchClear({
-            spreadsheetId,
-            requestBody: { ranges: clearRequests },
+        await withSheetsRetry(
+            () =>
+                sheets.spreadsheets.values.batchClear({
+                    spreadsheetId,
+                    requestBody: { ranges: clearRequests },
+                }),
+            4,
+            'email-schedule:deleteByDate:values.batchClear',
+        );
+        console.log('[email-schedule:deleteByDate] cleared_rows', {
+            rowRanges: clearRequests.length,
+            normDate,
+            companyIdCount: companyIds.length,
         });
     }
 
@@ -431,10 +460,15 @@ export async function deleteEmailScheduleEntriesForCompanies(
     const sheets = await getGoogleSheetsClient();
     const spreadsheetId = getSpreadsheetId();
 
-    const response = await sheets.spreadsheets.values.get({
-        spreadsheetId,
-        range: `${SCHEDULE_SHEET}!A2:J`,
-    });
+    const response = await withSheetsRetry(
+        () =>
+            sheets.spreadsheets.values.get({
+                spreadsheetId,
+                range: `${SCHEDULE_SHEET}!A2:J`,
+            }),
+        4,
+        'email-schedule:deleteForCompanies:values.get',
+    );
 
     const rows = (response.data.values || []) as string[][];
     const dataStartRow = parseA1RangeStartRow(response.data.range);
@@ -449,10 +483,15 @@ export async function deleteEmailScheduleEntriesForCompanies(
     });
 
     if (clearRequests.length > 0) {
-        await sheets.spreadsheets.values.batchClear({
-            spreadsheetId,
-            requestBody: { ranges: clearRequests },
-        });
+        await withSheetsRetry(
+            () =>
+                sheets.spreadsheets.values.batchClear({
+                    spreadsheetId,
+                    requestBody: { ranges: clearRequests },
+                }),
+            4,
+            'email-schedule:deleteForCompanies:values.batchClear',
+        );
     }
 
     invalidateScheduleCache();

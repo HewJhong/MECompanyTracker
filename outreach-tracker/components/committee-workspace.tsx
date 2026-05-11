@@ -11,6 +11,7 @@ import {
     ChatBubbleOvalLeftEllipsisIcon,
     ChatBubbleLeftRightIcon,
     CalendarDaysIcon,
+    InformationCircleIcon,
 } from '@heroicons/react/24/outline';
 import { useBackgroundTasks } from '../contexts/BackgroundTasksContext';
 
@@ -39,9 +40,47 @@ interface CommitteeWorkspaceProps {
     memberName: string;
     onCompanyClick?: (companyId: string) => void;
     onRefresh?: () => void;
+    /** When false (e.g. superadmin impersonating), /api/update returns 403 — bulk actions must stay disabled. */
+    canEditCompanies?: boolean;
+    isImpersonating?: boolean;
+    onStopImpersonation?: () => Promise<boolean>;
 }
 
 const TOOLTIP_DELAY_MS = 300;
+/** Keep low to stay under Google Sheets per-minute read quota (each /api/update does many reads). */
+const BULK_UPDATE_CONCURRENCY = 2;
+const BULK_LOG_OUTREACH_MAX_ATTEMPTS = 4;
+
+async function postCommitteeBulkLogOutreach(body: Record<string, unknown>): Promise<Response> {
+    for (let attempt = 1; attempt <= BULK_LOG_OUTREACH_MAX_ATTEMPTS; attempt++) {
+        let res: Response;
+        try {
+            res = await fetch('/api/committee-bulk-log-outreach', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+        } catch (netErr) {
+            if (attempt === BULK_LOG_OUTREACH_MAX_ATTEMPTS) {
+                throw netErr instanceof Error ? netErr : new Error(String(netErr));
+            }
+            await new Promise(r => setTimeout(r, 800 * attempt));
+            continue;
+        }
+        if (res.ok) return res;
+        const errPayload = (await res.json().catch(() => null)) as { message?: string; errors?: string[] } | null;
+        const msg = errPayload?.message || res.statusText;
+        if (res.status === 400 || res.status === 403) {
+            const detail = errPayload?.errors?.length ? ` ${errPayload.errors.join('; ')}` : '';
+            throw new Error(msg + detail);
+        }
+        if (attempt === BULK_LOG_OUTREACH_MAX_ATTEMPTS) {
+            throw new Error(msg);
+        }
+        await new Promise(r => setTimeout(r, 800 * attempt));
+    }
+    throw new Error('Bulk log outreach failed');
+}
 
 function getCompanySelectionKey(company: Company): string {
     // Row-level identity to avoid cross-select when same ID appears in multiple cards
@@ -99,8 +138,11 @@ export default function CommitteeWorkspace({
     memberName,
     onCompanyClick,
     onRefresh,
+    canEditCompanies = true,
+    isImpersonating = false,
+    onStopImpersonation,
 }: CommitteeWorkspaceProps) {
-    const { addTask, completeTask, failTask } = useBackgroundTasks();
+    const { addTask, updateTaskProgress, completeTask, failTask, makeTaskRetryable } = useBackgroundTasks();
     const [searchTerm, setSearchTerm] = useState('');
     const [showOnlyStale, setShowOnlyStale] = useState(false);
     const [showReplyNeeded, setShowReplyNeeded] = useState(false);
@@ -118,6 +160,7 @@ export default function CommitteeWorkspace({
     const [bulkUpdating, setBulkUpdating] = useState(false);
     const [bulkRemark, setBulkRemark] = useState('');
     const [bulkActionDate, setBulkActionDate] = useState(getNowDatetimeLocal);
+    const [stoppingImpersonation, setStoppingImpersonation] = useState(false);
     const [kanbanView, setKanbanView] = useState<'contact' | 'relationship'>('contact');
 
     const handleNameMouseEnter = useCallback((companyName: string) => {
@@ -253,33 +296,82 @@ export default function CommitteeWorkspace({
     const outreachCount = useMemo(() => selectedCompanies.filter(c => c.contactStatus === 'To Contact').length, [selectedCompanies]);
     const followUpCount = useMemo(() => selectedCompanies.filter(isFollowUpEligible).length, [selectedCompanies, isFollowUpEligible]);
 
+    const executeBulkUpdates = useCallback(async (
+        toProcess: Company[],
+        buildPayload: (company: Company) => Record<string, unknown>,
+        onProgress?: (completed: number, total: number) => void,
+    ) => {
+        const failures: string[] = [];
+        const quotaFailedCompanies: Company[] = [];
+        let successCount = 0;
+        const total = toProcess.length;
+
+        for (let i = 0; i < toProcess.length; i += BULK_UPDATE_CONCURRENCY) {
+            const batch = toProcess.slice(i, i + BULK_UPDATE_CONCURRENCY);
+            const settled = await Promise.allSettled(
+                batch.map(async (company) => {
+                    const res = await fetch('/api/update', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(buildPayload(company)),
+                    });
+
+                    if (!res.ok) {
+                        const body = await res.json().catch(() => null);
+                        const isQuota = res.status === 429 || res.status === 503 || body?.quota === true;
+                        const err = new Error(`${company.id} (${res.status})${body?.message ? ': ' + body.message : ''}`);
+                        (err as Error & { isQuota?: boolean; company?: Company }).isQuota = isQuota;
+                        (err as Error & { isQuota?: boolean; company?: Company }).company = company;
+                        throw err;
+                    }
+                })
+            );
+
+            settled.forEach((result, batchIdx) => {
+                const company = batch[batchIdx];
+                if (result.status === 'fulfilled') {
+                    successCount += 1;
+                } else {
+                    const err = result.reason as Error & { isQuota?: boolean; company?: Company };
+                    if (err.isQuota && company) {
+                        quotaFailedCompanies.push(company);
+                    } else {
+                        failures.push(err.message ?? 'Unknown update failure');
+                    }
+                }
+            });
+            const processed = Math.min(i + batch.length, total);
+            onProgress?.(processed, total);
+        }
+
+        return { successCount, failures, quotaFailedCompanies };
+    }, []);
+
     const markAsFirstOutreach = useCallback(async () => {
-        if (outreachCount === 0 || !memberName || bulkUpdating) return;
+        if (!canEditCompanies || outreachCount === 0 || !memberName || bulkUpdating) return;
         const toProcess = selectedCompanies.filter(c => c.contactStatus === 'To Contact');
         setBulkUpdating(true);
         const taskId = addTask('Logging first outreach...');
         const timestamp = getBulkTimestamp();
-        const remarkText = bulkRemark.trim() ? `[Outreach] ${bulkRemark.trim()}` : 'Bulk: Sent first outreach';
         try {
-            for (const c of toProcess) {
-                const res = await fetch('/api/update', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        companyId: c.id,
-                        user: memberName,
-                        updates: { contactStatus: 'Contacted', followUpsCompleted: 0, lastContact: timestamp },
-                        remark: remarkText,
-                        actionDate: timestamp,
-                    }),
-                });
-                if (!res.ok) throw new Error(`Update failed for ${c.id}`);
+            const n = toProcess.length;
+            if (n > 0) {
+                updateTaskProgress(taskId, 0, { current: 0, total: n });
             }
+            updateTaskProgress(taskId, 20, { current: 0, total: n });
+            await postCommitteeBulkLogOutreach({
+                companyIds: toProcess.map(c => c.id),
+                user: memberName,
+                remark: bulkRemark.trim(),
+                actionDate: timestamp,
+            });
+            updateTaskProgress(taskId, 75, { current: n, total: n });
             setSelectedKeys(new Set());
             setLastSelectedKey(null);
             setBulkRemark('');
             setBulkActionDate(getNowDatetimeLocal());
             onRefresh?.();
+            updateTaskProgress(taskId, 100, { current: n, total: n });
             completeTask(taskId, 'First outreach logged');
         } catch (err) {
             console.error('Bulk update failed', err);
@@ -287,114 +379,202 @@ export default function CommitteeWorkspace({
         } finally {
             setBulkUpdating(false);
         }
-    }, [selectedCompanies, outreachCount, memberName, bulkUpdating, bulkRemark, getBulkTimestamp, onRefresh, addTask, completeTask, failTask]);
+    }, [canEditCompanies, selectedCompanies, outreachCount, memberName, bulkUpdating, bulkRemark, getBulkTimestamp, onRefresh, addTask, updateTaskProgress, completeTask, failTask]);
+
+    /**
+     * Shared post-run logic for executeBulkUpdates callers.
+     * - successCount > 0 → refresh UI
+     * - quotaFailedCompanies > 0 → make task retryable (auto-retry after 30s)
+     * - other failures → failTask
+     */
+    const finishBulkRun = useCallback((
+        taskId: string,
+        successLabel: string,
+        successCount: number,
+        totalAttempted: number,
+        failures: string[],
+        quotaFailedCompanies: Company[],
+        onSuccessCleanup: () => void,
+        buildRetryPayload: (company: Company) => Record<string, unknown>,
+    ) => {
+        if (successCount > 0) {
+            onSuccessCleanup();
+            onRefresh?.();
+        }
+
+        if (quotaFailedCompanies.length > 0) {
+            const qn = quotaFailedCompanies.length;
+            const okCount = successCount;
+            const errorLabel = okCount > 0
+                ? `${okCount}/${totalAttempted} saved — ${qn} hit Sheets quota`
+                : `${qn} companies hit Sheets quota`;
+
+            makeTaskRetryable(taskId, errorLabel, () => {
+                // Retry creates a fresh task for just the quota-failed companies
+                const retryTaskId = addTask(`Retrying ${qn} ${qn === 1 ? 'company' : 'companies'}...`);
+                updateTaskProgress(retryTaskId, 0, { current: 0, total: qn });
+                executeBulkUpdates(
+                    quotaFailedCompanies,
+                    buildRetryPayload,
+                    (done, total) => updateTaskProgress(
+                        retryTaskId,
+                        total === 0 ? 100 : Math.round((done / total) * 100),
+                        total > 0 ? { current: done, total } : undefined,
+                    ),
+                ).then(({ successCount: rs, failures: rf, quotaFailedCompanies: rq }) => {
+                    if (rs > 0) onRefresh?.();
+                    if (rq.length > 0) {
+                        const rqn = rq.length;
+                        makeTaskRetryable(
+                            retryTaskId,
+                            `${rs > 0 ? rs + ' saved, ' : ''}${rqn} still hitting quota`,
+                            () => {
+                                // Allow another manual retry without auto-countdown
+                                finishBulkRun(retryTaskId, successLabel, rs, qn, rf, rq, () => { }, buildRetryPayload);
+                            },
+                        );
+                    } else if (rf.length > 0) {
+                        failTask(retryTaskId, `${rs} succeeded, ${rf.length} failed`);
+                    } else {
+                        completeTask(retryTaskId, successLabel);
+                    }
+                }).catch(err => {
+                    failTask(retryTaskId, err instanceof Error ? err.message : 'Retry failed');
+                });
+            }, 30 /* auto-retry in 30s */);
+        } else if (failures.length > 0) {
+            failTask(taskId, `${successCount} succeeded, ${failures.length} failed`);
+        } else {
+            completeTask(taskId, successLabel);
+        }
+    }, [onRefresh, makeTaskRetryable, addTask, updateTaskProgress, executeBulkUpdates, completeTask, failTask]);
 
     const markAsFollowUp = useCallback(async () => {
-        if (followUpCount === 0 || !memberName || bulkUpdating) return;
+        if (!canEditCompanies || followUpCount === 0 || !memberName || bulkUpdating) return;
         const toProcess = selectedCompanies.filter(isFollowUpEligible);
         setBulkUpdating(true);
         const taskId = addTask('Logging follow up...');
         const timestamp = getBulkTimestamp();
+        const followUpTotal = toProcess.length;
         try {
-            for (const c of toProcess) {
-                const nextCount = (c.followUpsCompleted ?? 0) + 1;
-                const remarkText = bulkRemark.trim() ? `[Follow-up #${nextCount}] ${bulkRemark.trim()}` : `Bulk: Sent follow up (${nextCount})`;
-                const res = await fetch('/api/update', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        companyId: c.id,
-                        user: memberName,
-                        updates: { followUpsCompleted: nextCount, lastContact: timestamp },
-                        remark: remarkText,
-                        actionDate: timestamp,
-                    }),
-                });
-                if (!res.ok) throw new Error(`Update failed for ${c.id}`);
+            if (followUpTotal > 0) {
+                updateTaskProgress(taskId, 0, { current: 0, total: followUpTotal });
             }
-            setSelectedKeys(new Set());
-            setLastSelectedKey(null);
-            setBulkRemark('');
-            setBulkActionDate(getNowDatetimeLocal());
-            onRefresh?.();
-            completeTask(taskId, 'Follow up logged');
+            const buildPayload = (company: Company) => {
+                const nextCount = (company.followUpsCompleted ?? 0) + 1;
+                const remarkText = bulkRemark.trim() ? `[Follow-up #${nextCount}] ${bulkRemark.trim()}` : `Bulk: Sent follow up (${nextCount})`;
+                return {
+                    companyId: company.id,
+                    user: memberName,
+                    updates: { followUpsCompleted: nextCount, lastContact: timestamp },
+                    remark: remarkText,
+                    actionDate: timestamp,
+                };
+            };
+            const { successCount, failures, quotaFailedCompanies } = await executeBulkUpdates(
+                toProcess,
+                buildPayload,
+                (done, total) => updateTaskProgress(
+                    taskId,
+                    total === 0 ? 100 : Math.round((done / total) * 100),
+                    total > 0 ? { current: done, total } : undefined,
+                ),
+            );
+            finishBulkRun(taskId, 'Follow up logged', successCount, followUpTotal, failures, quotaFailedCompanies, () => {
+                setSelectedKeys(new Set());
+                setLastSelectedKey(null);
+                setBulkRemark('');
+                setBulkActionDate(getNowDatetimeLocal());
+            }, buildPayload);
         } catch (err) {
             console.error('Bulk update failed', err);
             failTask(taskId, err instanceof Error ? err.message : 'Update failed');
         } finally {
             setBulkUpdating(false);
         }
-    }, [selectedCompanies, followUpCount, memberName, bulkUpdating, bulkRemark, getBulkTimestamp, isFollowUpEligible, onRefresh, addTask, completeTask, failTask]);
+    }, [canEditCompanies, selectedCompanies, followUpCount, memberName, bulkUpdating, bulkRemark, getBulkTimestamp, isFollowUpEligible, addTask, updateTaskProgress, executeBulkUpdates, finishBulkRun, failTask]);
 
     const markAsCompanyReply = useCallback(async () => {
-        if (selectedCompanies.length === 0 || !memberName || bulkUpdating) return;
+        if (!canEditCompanies || selectedCompanies.length === 0 || !memberName || bulkUpdating) return;
         setBulkUpdating(true);
         const taskId = addTask('Logging company response...');
         const timestamp = getBulkTimestamp();
         const remarkText = bulkRemark.trim() ? `[Company Reply] ${bulkRemark.trim()}` : '[Company Reply] Received';
+        const replyTotal = selectedCompanies.length;
         try {
-            for (const c of selectedCompanies) {
-                const res = await fetch('/api/update', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        companyId: c.id,
-                        user: memberName,
-                        updates: { contactStatus: 'To Follow Up', relationshipStatus: 'Interested' },
-                        remark: remarkText,
-                        actionDate: timestamp,
-                    }),
-                });
-                if (!res.ok) throw new Error(`Update failed for ${c.id}`);
+            if (replyTotal > 0) {
+                updateTaskProgress(taskId, 0, { current: 0, total: replyTotal });
             }
-            setSelectedKeys(new Set());
-            setLastSelectedKey(null);
-            setBulkRemark('');
-            setBulkActionDate(getNowDatetimeLocal());
-            onRefresh?.();
-            completeTask(taskId, 'Company response logged');
+            const buildPayload = (company: Company) => ({
+                companyId: company.id,
+                user: memberName,
+                updates: { contactStatus: 'To Follow Up', relationshipStatus: 'Interested' },
+                remark: remarkText,
+                actionDate: timestamp,
+            });
+            const { successCount, failures, quotaFailedCompanies } = await executeBulkUpdates(
+                selectedCompanies,
+                buildPayload,
+                (done, total) => updateTaskProgress(
+                    taskId,
+                    total === 0 ? 100 : Math.round((done / total) * 100),
+                    total > 0 ? { current: done, total } : undefined,
+                ),
+            );
+            finishBulkRun(taskId, 'Company response logged', successCount, replyTotal, failures, quotaFailedCompanies, () => {
+                setSelectedKeys(new Set());
+                setLastSelectedKey(null);
+                setBulkRemark('');
+                setBulkActionDate(getNowDatetimeLocal());
+            }, buildPayload);
         } catch (err) {
             console.error('Bulk update failed', err);
             failTask(taskId, err instanceof Error ? err.message : 'Update failed');
         } finally {
             setBulkUpdating(false);
         }
-    }, [selectedCompanies, memberName, bulkUpdating, bulkRemark, getBulkTimestamp, onRefresh, addTask, completeTask, failTask]);
+    }, [canEditCompanies, selectedCompanies, memberName, bulkUpdating, bulkRemark, getBulkTimestamp, addTask, updateTaskProgress, executeBulkUpdates, finishBulkRun, failTask]);
 
     const markAsOurReply = useCallback(async () => {
-        if (selectedCompanies.length === 0 || !memberName || bulkUpdating) return;
+        if (!canEditCompanies || selectedCompanies.length === 0 || !memberName || bulkUpdating) return;
         setBulkUpdating(true);
         const taskId = addTask('Logging our reply...');
         const timestamp = getBulkTimestamp();
         const remarkText = bulkRemark.trim() ? `[Our Reply] ${bulkRemark.trim()}` : '[Our Reply] Sent';
+        const ourReplyTotal = selectedCompanies.length;
         try {
-            for (const c of selectedCompanies) {
-                const res = await fetch('/api/update', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        companyId: c.id,
-                        user: memberName,
-                        updates: { lastContact: timestamp },
-                        remark: remarkText,
-                        actionDate: timestamp,
-                    }),
-                });
-                if (!res.ok) throw new Error(`Update failed for ${c.id}`);
+            if (ourReplyTotal > 0) {
+                updateTaskProgress(taskId, 0, { current: 0, total: ourReplyTotal });
             }
-            setSelectedKeys(new Set());
-            setLastSelectedKey(null);
-            setBulkRemark('');
-            setBulkActionDate(getNowDatetimeLocal());
-            onRefresh?.();
-            completeTask(taskId, 'Our reply logged');
+            const buildPayload = (company: Company) => ({
+                companyId: company.id,
+                user: memberName,
+                updates: { lastContact: timestamp },
+                remark: remarkText,
+                actionDate: timestamp,
+            });
+            const { successCount, failures, quotaFailedCompanies } = await executeBulkUpdates(
+                selectedCompanies,
+                buildPayload,
+                (done, total) => updateTaskProgress(
+                    taskId,
+                    total === 0 ? 100 : Math.round((done / total) * 100),
+                    total > 0 ? { current: done, total } : undefined,
+                ),
+            );
+            finishBulkRun(taskId, 'Our reply logged', successCount, ourReplyTotal, failures, quotaFailedCompanies, () => {
+                setSelectedKeys(new Set());
+                setLastSelectedKey(null);
+                setBulkRemark('');
+                setBulkActionDate(getNowDatetimeLocal());
+            }, buildPayload);
         } catch (err) {
             console.error('Bulk update failed', err);
             failTask(taskId, err instanceof Error ? err.message : 'Update failed');
         } finally {
             setBulkUpdating(false);
         }
-    }, [selectedCompanies, memberName, bulkUpdating, bulkRemark, getBulkTimestamp, onRefresh, addTask, completeTask, failTask]);
+    }, [canEditCompanies, selectedCompanies, memberName, bulkUpdating, bulkRemark, getBulkTimestamp, addTask, updateTaskProgress, executeBulkUpdates, finishBulkRun, failTask]);
 
     const formatDate = (dateString: string) => {
         const date = new Date(dateString);
@@ -420,6 +600,37 @@ export default function CommitteeWorkspace({
 
     return (
         <div className="space-y-6">
+            {!canEditCompanies && (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 flex gap-3 items-start">
+                    <InformationCircleIcon className="w-5 h-5 text-amber-700 flex-shrink-0 mt-0.5" aria-hidden />
+                    <div className="min-w-0 flex-1">
+                        <p className="text-sm font-semibold text-amber-900">View-only mode</p>
+                        <p className="text-sm text-amber-900/90 mt-1">
+                            {isImpersonating
+                                ? 'You are viewing this workspace as another member. Bulk logging and other updates are disabled until you stop impersonation (the server returns 403 for safety).'
+                                : 'You do not have permission to modify company data from this account.'}
+                        </p>
+                        {isImpersonating && onStopImpersonation && (
+                            <button
+                                type="button"
+                                onClick={async () => {
+                                    setStoppingImpersonation(true);
+                                    try {
+                                        await onStopImpersonation();
+                                    } finally {
+                                        setStoppingImpersonation(false);
+                                    }
+                                }}
+                                disabled={stoppingImpersonation}
+                                className="mt-3 inline-flex items-center px-3 py-1.5 rounded-lg text-sm font-medium bg-amber-900 text-white hover:bg-amber-800 disabled:opacity-60"
+                            >
+                                {stoppingImpersonation ? 'Stopping…' : 'Stop impersonation'}
+                            </button>
+                        )}
+                    </div>
+                </div>
+            )}
+
             {/* Header */}
             <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -706,6 +917,14 @@ export default function CommitteeWorkspace({
                         <p className="text-sm font-medium">
                             {selectedKeys.size} {selectedKeys.size === 1 ? 'company' : 'companies'} selected · ESC to clear
                         </p>
+                        {!canEditCompanies ? (
+                            <p className="text-sm text-slate-300">
+                                {isImpersonating
+                                    ? 'Bulk actions are disabled while impersonating. Stop impersonation to log outreach or replies.'
+                                    : 'You do not have permission to run bulk actions from this account.'}
+                            </p>
+                        ) : (
+                            <>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                             <div>
                                 <label className="block text-xs font-medium text-slate-300 mb-1">Remark (optional)</label>
@@ -774,6 +993,8 @@ export default function CommitteeWorkspace({
                                 Log our reply
                             </button>
                         </div>
+                            </>
+                        )}
                     </div>
                 </div>
             )}

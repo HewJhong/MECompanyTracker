@@ -8,40 +8,75 @@ import {
     EmailScheduleEntry,
 } from '../../../lib/email-schedule';
 import { formatActorLabel, requireEffectiveAdmin } from '../../../lib/authz';
+import { withSheetsRetry } from '../../../lib/sheets-retry';
 
-async function appendThreadHistory(rows: string[][]) {
+async function appendThreadHistory(rows: string[][], retryLabel: string): Promise<void> {
     if (rows.length === 0) return;
-    try {
-        const spreadsheetId = process.env.SPREADSHEET_ID_2;
-        if (!spreadsheetId) return;
-        const sheets = await getGoogleSheetsClient();
-        await sheets.spreadsheets.values.append({
-            spreadsheetId,
-            range: 'Thread_History!A:D',
-            valueInputOption: 'USER_ENTERED',
-            insertDataOption: 'INSERT_ROWS',
-            requestBody: { values: rows },
-        });
-    } catch (err) {
-        console.error('Failed to write email schedule action to Thread_History:', err);
-    }
+    const spreadsheetId = process.env.SPREADSHEET_ID_2;
+    if (!spreadsheetId) return;
+    const sheets = await getGoogleSheetsClient();
+    await withSheetsRetry(
+        () =>
+            sheets.spreadsheets.values.append({
+                spreadsheetId,
+                range: 'Thread_History!A:D',
+                valueInputOption: 'USER_ENTERED',
+                insertDataOption: 'INSERT_ROWS',
+                requestBody: { values: rows },
+            }),
+        4,
+        retryLabel,
+    );
 }
 
-async function appendLogsDoNotEdit(actorName: string, action: string, details: string, data: string) {
+async function appendLogsDoNotEdit(
+    actorName: string,
+    action: string,
+    details: string,
+    data: string,
+    retryLabel: string,
+): Promise<void> {
+    const spreadsheetId = process.env.SPREADSHEET_ID_2;
+    if (!spreadsheetId) return;
+    const sheets = await getGoogleSheetsClient();
+    await withSheetsRetry(
+        () =>
+            sheets.spreadsheets.values.append({
+                spreadsheetId,
+                range: 'Logs_DoNotEdit!A:E',
+                valueInputOption: 'RAW',
+                requestBody: {
+                    values: [[new Date().toISOString(), actorName, action, details, data]],
+                },
+            }),
+        4,
+        retryLabel,
+    );
+}
+
+async function appendThreadHistoryWithFallback(rows: string[][], actorName: string, retryLabel: string): Promise<void> {
     try {
-        const spreadsheetId = process.env.SPREADSHEET_ID_2;
-        if (!spreadsheetId) return;
-        const sheets = await getGoogleSheetsClient();
-        await sheets.spreadsheets.values.append({
-            spreadsheetId,
-            range: 'Logs_DoNotEdit!A:E',
-            valueInputOption: 'RAW',
-            requestBody: {
-                values: [[new Date().toISOString(), actorName, action, details, data]],
-            },
+        await appendThreadHistory(rows, `${retryLabel}:Thread_History`);
+        console.log('[email-schedule] Thread_History_append_ok', { retryLabel, rowCount: rows.length });
+    } catch (historyErr) {
+        const errMsg = historyErr instanceof Error ? historyErr.message : String(historyErr);
+        console.error('[email-schedule] Thread_History_append_failed_after_retries', {
+            retryLabel,
+            rowCount: rows.length,
+            message: errMsg,
         });
-    } catch (err) {
-        console.error('Failed to write email schedule action to Logs_DoNotEdit:', err);
+        try {
+            await appendLogsDoNotEdit(
+                actorName,
+                'THREAD_HISTORY_WRITE_FAILED',
+                `Failed to append Thread_History: ${errMsg}`,
+                JSON.stringify(rows),
+                `${retryLabel}:THREAD_HISTORY_WRITE_FAILED`,
+            );
+            console.log('[email-schedule] Thread_History_failure_logged_to_Logs_DoNotEdit', { retryLabel });
+        } catch (logErr) {
+            console.error('[email-schedule] could_not_log_Thread_History_failure', { retryLabel, error: logErr });
+        }
     }
 }
 
@@ -107,8 +142,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             await saveEmailScheduleEntries(entries);
 
             // Log to Thread_History: one row per company
-            await appendThreadHistory(
-                entries.map(e => [now, e.companyId, actorName, `Email schedule set for ${e.date} at ${e.time} (assigned to ${pic})`])
+            await appendThreadHistoryWithFallback(
+                entries.map(e => [now, e.companyId, actorName, `Email schedule set for ${e.date} at ${e.time} (assigned to ${pic})`]),
+                actorName,
+                'email-schedule:POST',
             );
 
             // Log to Logs_DoNotEdit for full audit trail
@@ -118,7 +155,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 'SCHEDULE_CREATE',
                 `Created email schedule for ${entries.length} companies on ${date} (assigned to ${pic})`,
                 dataCol,
+                'email-schedule:POST:Logs_DoNotEdit',
             );
+
+            console.log('[email-schedule] POST_complete', {
+                path: 'schedule_create',
+                entryCount: entries.length,
+                date,
+                pic,
+                threadRows: entries.length,
+            });
 
             return res.status(200).json({ success: true, entries });
         }
@@ -137,18 +183,40 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             }
 
             const now = new Date().toISOString();
-            const toSave: EmailScheduleEntry[] = entries.map((e, i) => ({
-                companyId: e.companyId,
-                companyName: e.companyName || e.companyId,
-                pic: e.pic,
-                date: e.date,
-                time: e.time,
-                order: e.order ?? i,
-                createdAt: now,
-                createdBy: actorName,
-                note: e.note?.trim() || undefined,
-                completed: e.completed || undefined,
-            }));
+
+            // Preserve original createdAt / createdBy from the sheet so completion toggles
+            // and reschedules do not erase who originally scheduled each entry.
+            const affectedDates = [...new Set(entries.map(e => e.date))];
+            const existingByKey = new Map<string, EmailScheduleEntry>();
+            for (const d of affectedDates) {
+                const existing = await getEmailSchedule(d);
+                for (const ex of existing) {
+                    const key = `${ex.companyId}|${ex.date}|${ex.time}|${ex.order ?? 0}`;
+                    existingByKey.set(key, ex);
+                }
+            }
+
+            const toSave: EmailScheduleEntry[] = entries.map((e, i) => {
+                const key = `${e.companyId}|${e.date}|${e.time}|${e.order ?? i}`;
+                const orig = existingByKey.get(key);
+                return {
+                    companyId: e.companyId,
+                    companyName: e.companyName || e.companyId,
+                    pic: e.pic,
+                    date: e.date,
+                    time: e.time,
+                    order: e.order ?? i,
+                    createdAt: orig?.createdAt || now,
+                    createdBy: orig?.createdBy || actorName,
+                    note: e.note?.trim() || undefined,
+                    completed: e.completed || undefined,
+                };
+            });
+
+            const preservedCreatedMetaCount = toSave.filter((e, i) => {
+                const key = `${e.companyId}|${e.date}|${e.time}|${e.order ?? i}`;
+                return Boolean(existingByKey.get(key)?.createdAt);
+            }).length;
 
             await saveEmailScheduleEntries(toSave);
 
@@ -164,7 +232,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                         : `Email schedule updated to ${e.date} at ${e.time} (assigned to ${e.pic})`;
                 return [nowPut, e.companyId, actorName, remark];
             });
-            await appendThreadHistory(threadRows);
+            await appendThreadHistoryWithFallback(threadRows, actorName, 'email-schedule:PUT');
 
             // Log to Logs_DoNotEdit for full audit trail
             const action = completedCount === toSave.length ? 'SCHEDULE_MARK_COMPLETE' : completedCount === 0 ? 'SCHEDULE_MARK_PENDING' : 'SCHEDULE_UPDATE';
@@ -174,7 +242,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                     ? `Marked ${toSave.length} schedule entries as pending`
                     : `Updated ${toSave.length} schedule entries (${completedCount} complete, ${toSave.length - completedCount} pending)`;
             const dataCol = toSave.map(e => `${e.companyId} (${e.companyName || e.companyId}) ${e.date} ${e.time}`).join('; ');
-            await appendLogsDoNotEdit(actorName, action, details, dataCol);
+            await appendLogsDoNotEdit(actorName, action, details, dataCol, 'email-schedule:PUT:Logs_DoNotEdit');
+
+            console.log('[email-schedule] PUT_complete', {
+                path: 'schedule_update',
+                entryCount: toSave.length,
+                completedCount,
+                action,
+                preservedCreatedMetaCount,
+                threadRows: threadRows.length,
+            });
 
             return res.status(200).json({ success: true, entries: toSave });
         }
@@ -197,8 +274,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
             // Log to Thread_History: one row per company
             const nowDel = new Date().toISOString();
-            await appendThreadHistory(
-                companyIds.map(id => [nowDel, id, actorName, `Email schedule removed for ${date}`])
+            await appendThreadHistoryWithFallback(
+                companyIds.map(id => [nowDel, id, actorName, `Email schedule removed for ${date}`]),
+                actorName,
+                'email-schedule:DELETE',
             );
 
             // Log to Logs_DoNotEdit for full audit trail
@@ -207,7 +286,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 'SCHEDULE_DELETE',
                 `Removed email schedule for ${companyIds.length} companies on ${date}`,
                 companyIds.join('; '),
+                'email-schedule:DELETE:Logs_DoNotEdit',
             );
+
+            console.log('[email-schedule] DELETE_complete', {
+                path: 'schedule_delete',
+                companyCount: companyIds.length,
+                date,
+                threadRows: companyIds.length,
+            });
 
             return res.status(200).json({ success: true });
         }

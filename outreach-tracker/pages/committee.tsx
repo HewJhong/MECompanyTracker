@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/router';
 import Layout from '../components/Layout';
 import CommitteeWorkspace from '../components/committee-workspace';
@@ -26,6 +26,10 @@ interface Company {
     lastContact?: string;
 }
 
+function isSheetsQuotaError(message: string): boolean {
+    return /quota|rate limit|429|resource exhausted/i.test(message);
+}
+
 function parseIsoLikeTimestamp(value?: string): number | null {
     if (!value || !/^\d{4}-\d{2}-\d{2}(?:[T\s]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})?)?$/.test(value)) {
         return null;
@@ -36,11 +40,12 @@ function parseIsoLikeTimestamp(value?: string): number | null {
 
 export default function CommitteePage() {
     const router = useRouter();
-    const { user, loading: userLoading } = useCurrentUser();
+    const { user, loading: userLoading, isImpersonating, stopImpersonation } = useCurrentUser();
     const [data, setData] = useState<Company[]>([]);
     const [loading, setLoading] = useState(true);
     // scheduleMap: companyId → next pending schedule { date, time, isOverdue, note? }
     const [scheduleMap, setScheduleMap] = useState<Record<string, { date: string; time: string; isOverdue: boolean; note?: string }>>({});
+    const refreshDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     // Redirect to home if not authenticated
     useEffect(() => {
@@ -52,42 +57,82 @@ export default function CommitteePage() {
     const currentUser = user?.name ?? '';
 
     const fetchData = async () => {
-        try {
-            const [dataRes, schedRes] = await Promise.all([
-                fetch('/api/data'),
-                fetch('/api/email-schedule'),
-            ]);
-            const responseData = await dataRes.json();
-            setData(responseData.companies || []);
-
-            if (schedRes.ok) {
-                const schedData = await schedRes.json();
-                const now = Date.now();
-                const map: Record<string, { date: string; time: string; isOverdue: boolean; note?: string }> = {};
-                const bestTsByCompany: Record<string, number> = {};
-                (schedData.entries || []).forEach((e: { companyId: string; date: string; time: string; completed?: string; note?: string }) => {
-                    if (!e?.companyId || !e?.date || !e?.time) return;
-                    if (e.completed === 'Y') return;
-                    const ts = new Date(`${e.date}T${e.time}`).getTime();
-                    if (!Number.isFinite(ts)) return;
-                    const prev = bestTsByCompany[e.companyId];
-                    if (prev === undefined || ts < prev) {
-                        bestTsByCompany[e.companyId] = ts;
-                        map[e.companyId] = { date: e.date, time: e.time, isOverdue: ts < now, note: e.note?.trim() || undefined };
+        const maxAttempts = 4;
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                const [dataRes, schedRes] = await Promise.all([
+                    fetch('/api/data'),
+                    fetch('/api/email-schedule'),
+                ]);
+                if (!dataRes.ok) {
+                    const errPayload = await dataRes.json().catch(() => null);
+                    const msg = String(errPayload?.message || dataRes.status);
+                    if (isSheetsQuotaError(msg) && attempt < maxAttempts) {
+                        await new Promise(r => setTimeout(r, 2000 * attempt));
+                        continue;
                     }
-                });
-                setScheduleMap(map);
-            }
+                    throw new Error(
+                        errPayload?.message
+                            ? `/api/data failed: ${errPayload.message}`
+                            : `/api/data failed with status ${dataRes.status}`
+                    );
+                }
+                const responseData = await dataRes.json();
+                if (Array.isArray(responseData.companies)) {
+                    setData(responseData.companies);
+                } else {
+                    throw new Error('Invalid /api/data response shape: missing companies array');
+                }
 
-            setLoading(false);
-        } catch (err) {
-            console.error('Failed to load data', err);
-            setLoading(false);
+                if (schedRes.ok) {
+                    const schedData = await schedRes.json();
+                    const now = Date.now();
+                    const map: Record<string, { date: string; time: string; isOverdue: boolean; note?: string }> = {};
+                    const bestTsByCompany: Record<string, number> = {};
+                    (schedData.entries || []).forEach((e: { companyId: string; date: string; time: string; completed?: string; note?: string }) => {
+                        if (!e?.companyId || !e?.date || !e?.time) return;
+                        if (e.completed === 'Y') return;
+                        const ts = new Date(`${e.date}T${e.time}`).getTime();
+                        if (!Number.isFinite(ts)) return;
+                        const prev = bestTsByCompany[e.companyId];
+                        if (prev === undefined || ts < prev) {
+                            bestTsByCompany[e.companyId] = ts;
+                            map[e.companyId] = { date: e.date, time: e.time, isOverdue: ts < now, note: e.note?.trim() || undefined };
+                        }
+                    });
+                    setScheduleMap(map);
+                }
+
+                setLoading(false);
+                return;
+            } catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                if (isSheetsQuotaError(msg) && attempt < maxAttempts) {
+                    await new Promise(r => setTimeout(r, 2000 * attempt));
+                    continue;
+                }
+                console.error('Failed to load data', err);
+                setLoading(false);
+                return;
+            }
         }
     };
 
+    /** Debounced so many bulk rows do not each trigger a full /api/data + Sheets burst. */
+    const scheduleRefresh = useCallback(() => {
+        if (refreshDebounceRef.current) clearTimeout(refreshDebounceRef.current);
+        refreshDebounceRef.current = setTimeout(() => {
+            refreshDebounceRef.current = null;
+            void fetchData();
+        }, 800);
+    }, []);
+
     useEffect(() => {
-        fetchData();
+        void fetchData();
+    }, []);
+
+    useEffect(() => () => {
+        if (refreshDebounceRef.current) clearTimeout(refreshDebounceRef.current);
     }, []);
 
     // Filter companies assigned to current user
@@ -205,7 +250,10 @@ export default function CommitteePage() {
                     companies={transformedCompanies}
                     memberName={currentUser}
                     onCompanyClick={handleCompanyClick}
-                    onRefresh={fetchData}
+                    onRefresh={scheduleRefresh}
+                    canEditCompanies={Boolean(user.canEditCompanies)}
+                    isImpersonating={isImpersonating}
+                    onStopImpersonation={stopImpersonation}
                 />
             )}
         </Layout>

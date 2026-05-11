@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth/next"
 import { authOptions } from '../../lib/auth';
 import { getCommitteeMembers } from '../../lib/committee-members';
 import { buildImpersonationClearCookie, readImpersonationEmailFromCookieHeader } from '../../lib/impersonation-cookie';
+import { allowImpersonationEdits } from '../../lib/authz';
 
 export interface MeUserIdentity {
     name: string | null;
@@ -126,6 +127,8 @@ export default async function handler(
 
         const effectiveRoleLower = effectiveMember?.role?.toLowerCase().trim() || '';
         const effectiveFlags = roleFlagsFromRole(effectiveRoleLower);
+        const effectiveCanEdit = Boolean(effectiveMember) && effectiveFlags.canEditCompanies;
+        const impersonationBlocksEdit = isImpersonating && !allowImpersonationEdits();
         const effectiveUser: MeUserIdentity = {
             name: effectiveMember?.name || session.user.name || null,
             email: effectiveMember?.email || session.user.email || null,
@@ -133,7 +136,7 @@ export default async function handler(
             isCommitteeMember: Boolean(effectiveMember),
             isAdmin: isImpersonating ? false : (Boolean(effectiveMember) && effectiveFlags.isAdmin),
             isSuperAdmin: Boolean(effectiveMember) && effectiveFlags.isSuperAdmin,
-            canEditCompanies: isImpersonating ? false : (Boolean(effectiveMember) && effectiveFlags.canEditCompanies),
+            canEditCompanies: impersonationBlocksEdit ? false : effectiveCanEdit,
         };
 
         return res.status(200).json({

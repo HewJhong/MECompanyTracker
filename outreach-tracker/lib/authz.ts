@@ -78,6 +78,16 @@ export function canEffectiveEditCompanies(ctx: AuthzContext) {
     return r === 'admin' || r === 'superadmin' || r === 'member' || r === 'committee member';
 }
 
+/**
+ * Temporary testing only: when `ALLOW_IMPERSONATION_EDITS` is `true` or `1`,
+ * company edit APIs allow writes while superadmin is impersonating another member.
+ * Remove or leave unset in production to keep impersonation view-only.
+ */
+export function allowImpersonationEdits(): boolean {
+    const v = process.env.ALLOW_IMPERSONATION_EDITS;
+    return v === 'true' || v === '1';
+}
+
 function bestMemberLabel(m: CommitteeMember | null, fallback?: string) {
     const name = m?.name?.trim();
     const email = m?.email?.trim();
@@ -132,7 +142,7 @@ export async function requireSuperAdmin(req: NextApiRequest, res: NextApiRespons
 export async function requireEffectiveCanEditCompanies(req: NextApiRequest, res: NextApiResponse) {
     const ctx = await requireAuthzContext(req, res);
     if (!ctx) return null;
-    if (ctx.isImpersonating) {
+    if (ctx.isImpersonating && !allowImpersonationEdits()) {
         res.status(403).json({ message: 'View-only mode: stop impersonation to make changes' });
         return null;
     }

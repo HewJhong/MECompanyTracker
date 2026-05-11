@@ -514,7 +514,7 @@ const SESSION_KEY_DATE = 'emailScheduleCenterDate';
 const SESSION_KEY_SCROLL = 'emailScheduleScrollY';
 
 function EmailScheduleContent() {
-    const { addTask, completeTask, failTask } = useBackgroundTasks();
+    const { addTask, updateTaskProgress, completeTask, failTask } = useBackgroundTasks();
     const { user, loading: userLoading } = useCurrentUser();
     const router = useRouter();
     const currentUser = user?.name ?? user?.email ?? 'Committee Member';
@@ -858,8 +858,10 @@ function EmailScheduleContent() {
         if (movingIds.size === 0) return;
 
         const taskId = addTask('Updating schedule...');
+        const movingCountGuess = movingIds.size;
 
         try {
+            updateTaskProgress(taskId, 8, { current: 0, total: Math.max(1, movingCountGuess) });
             const freshEntries = await fetchScheduleEntriesFromApi();
             setEntries(freshEntries);
 
@@ -878,7 +880,6 @@ function EmailScheduleContent() {
                 return;
             }
 
-            const emailsPerBatch = settings.emailsPerBatch;
             const entriesOnTargetDate = freshEntries.filter(e => e.date === targetDate && !movingIds.has(entryId(e)));
             const occupancy = new Map<string, number>();
             entriesOnTargetDate.forEach(e => {
@@ -899,8 +900,6 @@ function EmailScheduleContent() {
                 order: i,
             }));
 
-            const oldDates = [...new Set(movingEntries.map(e => e.date))];
-
             setEntries(prev => {
                 let next = prev.filter(e => !movingIds.has(entryId(e)));
                 next = [...next, ...newEntries];
@@ -909,29 +908,27 @@ function EmailScheduleContent() {
             });
             setSelectedIds(new Set());
 
-            for (const date of oldDates) {
-                const idsToRemove = movingEntries.filter(e => e.date === date).map(e => e.companyId);
-                if (idsToRemove.length === 0) continue;
-                const delRes = await fetch('/api/email-schedule', {
-                    method: 'DELETE',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ companyIds: idsToRemove, date }),
-                });
-                if (!delRes.ok) throw new Error('Delete failed');
-            }
-            const putRes = await fetch('/api/email-schedule', {
-                method: 'PUT',
+            const nMove = movingEntries.length;
+            updateTaskProgress(taskId, 35, { current: 0, total: nMove });
+            const moveRes = await fetch('/api/email-schedule/move', {
+                method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ entries: newEntries }),
+                body: JSON.stringify({
+                    sourceEntries: movingEntries,
+                    targetDate,
+                    targetStartTime: newSlots[0],
+                    pic: movingEntries[0]?.pic ?? '',
+                }),
             });
-            if (!putRes.ok) throw new Error('Save failed');
+            if (!moveRes.ok) throw new Error('Move failed');
+            updateTaskProgress(taskId, 100, { current: nMove, total: nMove });
             completeTask(taskId, 'Schedule updated');
             fetchEntries({ silent: true });
         } catch {
             failTask(taskId, 'Failed to update schedule');
             fetchEntries({ silent: true });
         }
-    }, [selectedIds, settings, visibleTimeSlots, addTask, completeTask, failTask, fetchEntries]);
+    }, [selectedIds, settings, visibleTimeSlots, addTask, updateTaskProgress, completeTask, failTask, fetchEntries]);
 
     const selectedEntries = useMemo(
         () => entries.filter(e => selectedIds.has(entryId(e))),
@@ -968,8 +965,10 @@ function EmailScheduleContent() {
         }
 
         const taskId = addTask('Updating schedule...');
+        const bulkMoveCountGuess = selectedIds.size;
 
         try {
+            updateTaskProgress(taskId, 8, { current: 0, total: Math.max(1, bulkMoveCountGuess) });
             const freshEntries = await fetchScheduleEntriesFromApi();
             setEntries(freshEntries);
 
@@ -1004,8 +1003,6 @@ function EmailScheduleContent() {
                 order: i,
             }));
 
-            const oldDates = [...new Set(movingEntries.map(e => e.date))];
-
             setEntries(prev => {
                 let next = prev.filter(e => !movingIds.has(entryId(e)));
                 next = [...next, ...newEntries];
@@ -1016,29 +1013,27 @@ function EmailScheduleContent() {
             setMoveDate('');
             setMoveTime('');
 
-            for (const date of oldDates) {
-                const idsToRemove = movingEntries.filter(e => e.date === date).map(e => e.companyId);
-                if (idsToRemove.length === 0) continue;
-                const delRes = await fetch('/api/email-schedule', {
-                    method: 'DELETE',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ companyIds: idsToRemove, date }),
-                });
-                if (!delRes.ok) throw new Error('Delete failed');
-            }
-            const putRes = await fetch('/api/email-schedule', {
-                method: 'PUT',
+            const nBulkMove = movingEntries.length;
+            updateTaskProgress(taskId, 35, { current: 0, total: nBulkMove });
+            const moveRes = await fetch('/api/email-schedule/move', {
+                method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ entries: newEntries }),
+                body: JSON.stringify({
+                    sourceEntries: movingEntries,
+                    targetDate,
+                    targetStartTime: normTime,
+                    pic: movingEntries[0]?.pic ?? '',
+                }),
             });
-            if (!putRes.ok) throw new Error('Save failed');
+            if (!moveRes.ok) throw new Error('Move failed');
+            updateTaskProgress(taskId, 100, { current: nBulkMove, total: nBulkMove });
             completeTask(taskId, 'Schedule updated');
             fetchEntries({ silent: true });
         } catch {
             failTask(taskId, 'Failed to update schedule');
             fetchEntries({ silent: true });
         }
-    }, [selectedIds, moveDate, moveTime, visibleTimeSlots, settings, addTask, completeTask, failTask, fetchEntries]);
+    }, [selectedIds, moveDate, moveTime, visibleTimeSlots, settings, addTask, updateTaskProgress, completeTask, failTask, fetchEntries]);
 
     const handleBulkMarkComplete = useCallback(async () => {
         if (selectedEntries.length === 0) return;
@@ -1066,7 +1061,13 @@ function EmailScheduleContent() {
             }
 
             const timestamp = new Date().toISOString();
-            for (const company of companiesToUpdate.values()) {
+            const companiesList = Array.from(companiesToUpdate.values());
+            const nCompanies = companiesList.length;
+            if (nCompanies > 0) {
+                updateTaskProgress(taskId, 0, { current: 0, total: nCompanies });
+            }
+            for (let i = 0; i < companiesList.length; i++) {
+                const company = companiesList[i];
                 const isFirstOutreach = (company.contactStatus || 'To Contact') === 'To Contact';
                 const nextCount = isFirstOutreach ? 0 : (company.followUpsCompleted || 0) + 1;
                 const updates = isFirstOutreach
@@ -1087,29 +1088,35 @@ function EmailScheduleContent() {
                     }),
                 });
                 if (!updateRes.ok) throw new Error(`Failed to update ${company.companyName || company.id}`);
+                if (nCompanies > 0) {
+                    updateTaskProgress(taskId, Math.round(((i + 1) / nCompanies) * 75), { current: i + 1, total: nCompanies });
+                }
             }
 
             const updated = selectedEntries.map(e => ({ ...e, completed: 'Y' }));
             const updatedEntryIds = new Set(updated.map(entryId));
             setEntries(prev => prev.map(e => updatedEntryIds.has(entryId(e)) ? { ...e, completed: 'Y' } : e));
             setSelectedIds(new Set());
+            updateTaskProgress(taskId, 88, nCompanies > 0 ? { current: nCompanies, total: nCompanies } : undefined);
             const res = await fetch('/api/email-schedule', {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ entries: updated }),
             });
             if (!res.ok) throw new Error('Save failed');
+            updateTaskProgress(taskId, 100, nCompanies > 0 ? { current: nCompanies, total: nCompanies } : undefined);
             completeTask(taskId, 'Marked as complete');
             fetchEntries({ silent: true });
         } catch (error) {
             failTask(taskId, error instanceof Error ? error.message : 'Failed to update');
             fetchEntries({ silent: true });
         }
-    }, [selectedEntries, addTask, completeTask, failTask, fetchEntries, currentUser]);
+    }, [selectedEntries, addTask, updateTaskProgress, completeTask, failTask, fetchEntries, currentUser]);
 
     const handleBulkMarkPending = useCallback(async () => {
         if (selectedEntries.length === 0) return;
         const taskId = addTask('Marking as pending...');
+        const entryCount = selectedEntries.length;
         const updated = selectedEntries.map(e => ({ ...e, completed: '' }));
         const updatedEntryIds = new Set(updated.map(entryId));
         const reminderCompanies = Array.from(new Map(
@@ -1121,6 +1128,7 @@ function EmailScheduleContent() {
         setEntries(prev => prev.map(e => updatedEntryIds.has(entryId(e)) ? { ...e, completed: '' } : e));
         setSelectedIds(new Set());
         try {
+            updateTaskProgress(taskId, 40, { current: 0, total: entryCount });
             const res = await fetch('/api/email-schedule', {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
@@ -1128,19 +1136,21 @@ function EmailScheduleContent() {
             });
             if (!res.ok) throw new Error('Save failed');
             setManualRevertReminderCompanies(reminderCompanies);
+            updateTaskProgress(taskId, 100, { current: entryCount, total: entryCount });
             completeTask(taskId, 'Marked as pending');
             fetchEntries({ silent: true });
         } catch {
             failTask(taskId, 'Failed to update');
             fetchEntries({ silent: true });
         }
-    }, [selectedEntries, addTask, completeTask, failTask, fetchEntries, resolveScheduleRow]);
+    }, [selectedEntries, addTask, updateTaskProgress, completeTask, failTask, fetchEntries, resolveScheduleRow]);
 
     const handleBulkDelete = useCallback(async () => {
         if (selectedEntries.length === 0) return;
         setBulkDeleteCount(null);
         const taskId = addTask('Removing from schedule...');
         const movingIds = new Set(selectedIds);
+        const totalRows = selectedEntries.length;
         setEntries(prev => prev.filter(e => !movingIds.has(entryId(e))));
         setSelectedIds(new Set());
         try {
@@ -1149,13 +1159,24 @@ function EmailScheduleContent() {
                 if (!byDate.has(e.date)) byDate.set(e.date, []);
                 byDate.get(e.date)!.push(e.companyId);
             });
-            for (const [date, companyIds] of byDate) {
+            const dateEntries = Array.from(byDate.entries());
+            let removedRowSlots = 0;
+            for (let i = 0; i < dateEntries.length; i++) {
+                const [date, companyIds] = dateEntries[i];
                 const res = await fetch('/api/email-schedule', {
                     method: 'DELETE',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ companyIds, date }),
                 });
                 if (!res.ok) throw new Error('Delete failed');
+                removedRowSlots += companyIds.length;
+                if (totalRows > 0) {
+                    updateTaskProgress(
+                        taskId,
+                        Math.round((removedRowSlots / totalRows) * 100),
+                        { current: removedRowSlots, total: totalRows },
+                    );
+                }
             }
             completeTask(taskId, 'Removed from schedule');
             fetchEntries({ silent: true });
@@ -1163,7 +1184,7 @@ function EmailScheduleContent() {
             failTask(taskId, 'Failed to remove from schedule');
             fetchEntries({ silent: true });
         }
-    }, [selectedEntries, selectedIds, addTask, completeTask, failTask, fetchEntries]);
+    }, [selectedEntries, selectedIds, addTask, updateTaskProgress, completeTask, failTask, fetchEntries]);
 
     const handleSaveSettings = async () => {
         setSavingSettings(true);

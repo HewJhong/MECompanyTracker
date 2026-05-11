@@ -5,6 +5,10 @@ import { cache } from '../../lib/cache';
 import { syncDailyStats } from '../../lib/daily-stats';
 import { requireEffectiveCanEditCompanies } from '../../lib/authz';
 import { formatActorLabel } from '../../lib/authz';
+import { withSheetsRetry, isRetryableSheetsError } from '../../lib/sheets-retry';
+
+const UPDATE_READ_ATTEMPTS = 5;
+const UPDATE_READ_RETRY_OPTS = { baseDelayMs: 1500 } as const;
 
 export default async function handler(
     req: NextApiRequest,
@@ -36,13 +40,20 @@ export default async function handler(
         const trackerUpdates: any[] = [];
         const dbUpdates: any[] = [];
 
-        const trackerMeta = await sheets.spreadsheets.get({ spreadsheetId: spreadsheetId2 });
+        const trackerMeta = await withSheetsRetry(
+            () => sheets.spreadsheets.get({ spreadsheetId: spreadsheetId2 }),
+            UPDATE_READ_ATTEMPTS,
+            'api/update:trackerMeta',
+            UPDATE_READ_RETRY_OPTS,
+        );
         const trackerSheetName = trackerMeta.data.sheets?.[0].properties?.title;
 
-        const idRange = await sheets.spreadsheets.values.get({
-            spreadsheetId: spreadsheetId2,
-            range: `${trackerSheetName}!A:A`,
-        });
+        const idRange = await withSheetsRetry(
+            () => sheets.spreadsheets.values.get({ spreadsheetId: spreadsheetId2, range: `${trackerSheetName}!A:A` }),
+            UPDATE_READ_ATTEMPTS,
+            'api/update:idRange',
+            UPDATE_READ_RETRY_OPTS,
+        );
 
         const trackerRows = idRange.data.values || [];
         const trackerRowIndex = trackerRows.findIndex(row => row[0] === companyId) + 1;
@@ -89,10 +100,15 @@ export default async function handler(
         // Uses last company contact (I) or last committee contact (J), whichever is more recent
         let remarkText = remark;
         if (!updates.contactStatus) {
-            const currentDataRange = await sheets.spreadsheets.values.get({
-                spreadsheetId: spreadsheetId2,
-                range: `${trackerSheetName}!G${trackerRowIndex}:K${trackerRowIndex}`,
-            });
+            const currentDataRange = await withSheetsRetry(
+                () => sheets.spreadsheets.values.get({
+                    spreadsheetId: spreadsheetId2,
+                    range: `${trackerSheetName}!G${trackerRowIndex}:K${trackerRowIndex}`,
+                }),
+                UPDATE_READ_ATTEMPTS,
+                'api/update:currentData',
+                UPDATE_READ_RETRY_OPTS,
+            );
             const currentData = currentDataRange.data.values?.[0] || [];
             const lastCompanyContact = currentData[2]; // I
             const lastContact = currentData[3];         // J (committee contact)
@@ -121,36 +137,48 @@ export default async function handler(
             });
         }
 
-        const dbMeta = await sheets.spreadsheets.get({ spreadsheetId: spreadsheetId1 });
-        const { title: dbSheetName } = getCompanyDatabaseSheet(dbMeta.data.sheets);
-
-        const dbIdRange = await sheets.spreadsheets.values.get({
-            spreadsheetId: spreadsheetId1,
-            range: `${dbSheetName}!A:A`,
-        });
-
-        const dbRows = dbIdRange.data.values || [];
-        const dbRowIndices: number[] = [];
-        dbRows.forEach((row, index) => {
-            if (row[0] === companyId) dbRowIndices.push(index + 1);
-        });
-
+        /** Dual-write to company DB sheet (spreadsheet 1) only when those fields are in the payload — avoids 2 Sheets reads on status-only updates (e.g. log outreach). */
         const DB_MAP: Record<string, string> = {
             'companyName': 'B',
             'discipline': 'C',
             'targetSponsorshipTier': 'D'
         };
+        const updateKeys = updates && typeof updates === 'object' ? Object.keys(updates as Record<string, unknown>) : [];
+        const needsDatabaseSheet = updateKeys.some(k => k in DB_MAP);
 
-        dbRowIndices.forEach(rowIndex => {
-            Object.entries(updates).forEach(([key, value]) => {
-                if (DB_MAP[key]) {
-                    dbUpdates.push({
-                        range: `${dbSheetName}!${DB_MAP[key]}${rowIndex}`,
-                        values: [[value]]
-                    });
-                }
+        let dbRowIndices: number[] = [];
+        if (needsDatabaseSheet) {
+            const dbMeta = await withSheetsRetry(
+                () => sheets.spreadsheets.get({ spreadsheetId: spreadsheetId1 }),
+                UPDATE_READ_ATTEMPTS,
+                'api/update:dbMeta',
+                UPDATE_READ_RETRY_OPTS,
+            );
+            const { title: dbSheetName } = getCompanyDatabaseSheet(dbMeta.data.sheets);
+
+            const dbIdRange = await withSheetsRetry(
+                () => sheets.spreadsheets.values.get({ spreadsheetId: spreadsheetId1, range: `${dbSheetName}!A:A` }),
+                UPDATE_READ_ATTEMPTS,
+                'api/update:dbIdRange',
+                UPDATE_READ_RETRY_OPTS,
+            );
+
+            const dbRows = dbIdRange.data.values || [];
+            dbRows.forEach((row, index) => {
+                if (row[0] === companyId) dbRowIndices.push(index + 1);
             });
-        });
+
+            dbRowIndices.forEach(rowIndex => {
+                Object.entries(updates as Record<string, unknown>).forEach(([key, value]) => {
+                    if (DB_MAP[key]) {
+                        dbUpdates.push({
+                            range: `${dbSheetName}!${DB_MAP[key]}${rowIndex}`,
+                            values: [[value]]
+                        });
+                    }
+                });
+            });
+        }
 
         if (trackerUpdates.length > 0) {
             await sheets.spreadsheets.values.batchUpdate({
@@ -256,10 +284,15 @@ export default async function handler(
         await syncDailyStats(sheets, spreadsheetId2);
 
         // Verify: Fetch the updated row (A–P) to confirm save; lastUpdate is column P
-        const verifyRange = await sheets.spreadsheets.values.get({
-            spreadsheetId: spreadsheetId2,
-            range: `${trackerSheetName}!A${trackerRowIndex}:P${trackerRowIndex}`,
-        });
+        const verifyRange = await withSheetsRetry(
+            () => sheets.spreadsheets.values.get({
+                spreadsheetId: spreadsheetId2,
+                range: `${trackerSheetName}!A${trackerRowIndex}:P${trackerRowIndex}`,
+            }),
+            UPDATE_READ_ATTEMPTS,
+            'api/update:verify',
+            UPDATE_READ_RETRY_OPTS,
+        );
         const updatedRow = verifyRange.data.values?.[0] || [];
         const verifiedData = {
             contactStatus: updatedRow[2],
@@ -271,6 +304,16 @@ export default async function handler(
             daysAttending: updatedRow[13] // N: Days Attending
         };
 
+        // Server terminal (next dev stdout) — client only receives JSON body, not this line
+        console.log('[api/update] verify_ok', {
+            companyId,
+            actor: formatActorLabel(ctx),
+            historyLogged,
+            contactStatus: verifiedData.contactStatus,
+            followUpsCompleted: verifiedData.followUpsCompleted,
+            lastUpdated: verifiedData.lastUpdated,
+        });
+
         res.status(200).json({
             success: true,
             updatedRows: dbRowIndices.length,
@@ -280,6 +323,9 @@ export default async function handler(
 
     } catch (error) {
         console.error('Update Error:', error);
-        res.status(500).json({ message: 'Update Failed' });
+        if (isRetryableSheetsError(error)) {
+            return res.status(503).json({ message: 'Sheets quota exceeded — please retry in a moment', quota: true });
+        }
+        return res.status(500).json({ message: error instanceof Error ? error.message : 'Update Failed' });
     }
 }

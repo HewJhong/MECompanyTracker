@@ -65,7 +65,7 @@ export default function CompaniesPage() {
     const [errorTitle, setErrorTitle] = useState('');
     const [errorMessage, setErrorMessage] = useState('');
     const [showAddCompanyModal, setShowAddCompanyModal] = useState(false);
-    const { addTask, completeTask, failTask } = useBackgroundTasks();
+    const { addTask, updateTaskProgress, completeTask, failTask } = useBackgroundTasks();
 
     // Email schedule state
     const [scheduleDate, setScheduleDate] = useState('');
@@ -379,6 +379,10 @@ export default function CompaniesPage() {
         const companyNames: Record<string, string> = {};
         data.forEach(c => { if (selectedCompanies.has(c.id)) companyNames[c.id] = c.companyName || c.name || c.id; });
         try {
+            if (count > 0) {
+                updateTaskProgress(taskId, 0, { current: 0, total: count });
+            }
+            updateTaskProgress(taskId, 12, { current: 0, total: count });
             const response = await fetch('/api/bulk-assign', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -395,7 +399,7 @@ export default function CompaniesPage() {
                 throw new Error(errData.userMessage || errData.error || 'Server error');
             }
 
-            completeTask(taskId, 'Changes saved successfully to Google Sheets');
+            updateTaskProgress(taskId, 45, { current: count, total: count });
             // Refetch from sheet so table shows exact server state (PIC, lastUpdated, schedule)
             setIsSyncing(true);
             try {
@@ -425,9 +429,11 @@ export default function CompaniesPage() {
                     });
                     setScheduleMap(map);
                 }
+                updateTaskProgress(taskId, 100, { current: count, total: count });
             } finally {
                 setIsSyncing(false);
             }
+            completeTask(taskId, 'Changes saved successfully to Google Sheets');
         } catch (error) {
             console.error('Background sync failed:', error);
             // 4. Error Handling (Revert)
@@ -471,6 +477,10 @@ export default function CompaniesPage() {
         const taskId = addTask(`Updating status for ${count} ${count === 1 ? 'company' : 'companies'}...`);
         setIsUpdatingStatus(true);
         try {
+            if (count > 0) {
+                updateTaskProgress(taskId, 0, { current: 0, total: count });
+            }
+            updateTaskProgress(taskId, 15, { current: 0, total: count });
             const response = await fetch('/api/bulk-update-status', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -482,7 +492,7 @@ export default function CompaniesPage() {
                 throw new Error(errData.error || 'Server error');
             }
 
-            completeTask(taskId, 'Status updated successfully');
+            updateTaskProgress(taskId, 50, { current: count, total: count });
             setIsSyncing(true);
             try {
                 const dataRes = await fetch('/api/data?refresh=true');
@@ -490,9 +500,11 @@ export default function CompaniesPage() {
                     const json = await dataRes.json();
                     setData(json.companies || []);
                 }
+                updateTaskProgress(taskId, 100, { current: count, total: count });
             } finally {
                 setIsSyncing(false);
             }
+            completeTask(taskId, 'Status updated successfully');
         } catch (error) {
             console.error('Bulk status update failed:', error);
             failTask(taskId, 'Failed to update status');
