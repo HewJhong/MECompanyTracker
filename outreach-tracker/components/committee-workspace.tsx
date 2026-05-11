@@ -410,6 +410,7 @@ export default function CommitteeWorkspace({
                 : `${qn} companies hit Sheets quota`;
 
             makeTaskRetryable(taskId, errorLabel, () => {
+                setBulkUpdating(true);
                 // Retry creates a fresh task for just the quota-failed companies
                 const retryTaskId = addTask(`Retrying ${qn} ${qn === 1 ? 'company' : 'companies'}...`);
                 updateTaskProgress(retryTaskId, 0, { current: 0, total: qn });
@@ -440,14 +441,14 @@ export default function CommitteeWorkspace({
                     }
                 }).catch(err => {
                     failTask(retryTaskId, err instanceof Error ? err.message : 'Retry failed');
-                });
+                }).finally(() => setBulkUpdating(false));
             }, 30 /* auto-retry in 30s */);
         } else if (failures.length > 0) {
             failTask(taskId, `${successCount} succeeded, ${failures.length} failed`);
         } else {
             completeTask(taskId, successLabel);
         }
-    }, [onRefresh, makeTaskRetryable, addTask, updateTaskProgress, executeBulkUpdates, completeTask, failTask]);
+    }, [onRefresh, makeTaskRetryable, addTask, updateTaskProgress, executeBulkUpdates, completeTask, failTask, setBulkUpdating]);
 
     const markAsFollowUp = useCallback(async () => {
         if (!canEditCompanies || followUpCount === 0 || !memberName || bulkUpdating) return;

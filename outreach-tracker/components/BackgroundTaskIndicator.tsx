@@ -122,7 +122,7 @@ const TaskCard = ({ task, onDismiss }: { task: Task, onDismiss: (id: string) => 
                         </div>
                         <div className="ml-4 flex-shrink-0 flex">
                             <button
-                                onClick={() => onDismiss(task.id)}
+                                onClick={() => { setCountdown(null); onDismiss(task.id); }}
                                 className="bg-white rounded-md inline-flex text-gray-400 hover:text-gray-500 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
                             >
                                 <span className="sr-only">Close</span>

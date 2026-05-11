@@ -514,7 +514,7 @@ const SESSION_KEY_DATE = 'emailScheduleCenterDate';
 const SESSION_KEY_SCROLL = 'emailScheduleScrollY';
 
 function EmailScheduleContent() {
-    const { addTask, updateTaskProgress, completeTask, failTask } = useBackgroundTasks();
+    const { addTask, updateTaskProgress, completeTask, failTask, makeTaskRetryable } = useBackgroundTasks();
     const { user, loading: userLoading } = useCurrentUser();
     const router = useRouter();
     const currentUser = user?.name ?? user?.email ?? 'Committee Member';
@@ -1066,8 +1066,8 @@ function EmailScheduleContent() {
             if (nCompanies > 0) {
                 updateTaskProgress(taskId, 0, { current: 0, total: nCompanies });
             }
-            for (let i = 0; i < companiesList.length; i++) {
-                const company = companiesList[i];
+
+            const bulkItems = companiesList.map((company) => {
                 const isFirstOutreach = (company.contactStatus || 'To Contact') === 'To Contact';
                 const nextCount = isFirstOutreach ? 0 : (company.followUpsCompleted || 0) + 1;
                 const updates = isFirstOutreach
@@ -1076,22 +1076,32 @@ function EmailScheduleContent() {
                 const remark = isFirstOutreach
                     ? '[Outreach] Marked complete from Email Schedule'
                     : `[Follow-up #${nextCount}] Marked complete from Email Schedule`;
-                const updateRes = await fetch('/api/update', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        companyId: company.id,
-                        user: currentUser,
-                        updates,
-                        remark,
-                        actionDate: timestamp,
-                    }),
-                });
-                if (!updateRes.ok) throw new Error(`Failed to update ${company.companyName || company.id}`);
-                if (nCompanies > 0) {
-                    updateTaskProgress(taskId, Math.round(((i + 1) / nCompanies) * 75), { current: i + 1, total: nCompanies });
+                return { companyId: company.id, updates, remark };
+            });
+
+            updateTaskProgress(taskId, 25, nCompanies > 0 ? { current: 0, total: nCompanies } : undefined);
+            const bulkRes = await fetch('/api/email-schedule/bulk-mark-tracker-from-schedule', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    user: currentUser,
+                    actionDate: timestamp,
+                    items: bulkItems,
+                }),
+            });
+            if (!bulkRes.ok) {
+                const errJson = await bulkRes.json().catch(() => ({}));
+                const isQuota = bulkRes.status === 503 || errJson?.quota === true;
+                const message = typeof errJson?.message === 'string'
+                    ? errJson.message
+                    : `Tracker batch update failed (${bulkRes.status})`;
+                if (isQuota) {
+                    makeTaskRetryable(taskId, message, () => handleBulkMarkComplete());
+                    return;
                 }
+                throw new Error(message);
             }
+            updateTaskProgress(taskId, 75, nCompanies > 0 ? { current: nCompanies, total: nCompanies } : undefined);
 
             const updated = selectedEntries.map(e => ({ ...e, completed: 'Y' }));
             const updatedEntryIds = new Set(updated.map(entryId));
@@ -1111,7 +1121,7 @@ function EmailScheduleContent() {
             failTask(taskId, error instanceof Error ? error.message : 'Failed to update');
             fetchEntries({ silent: true });
         }
-    }, [selectedEntries, addTask, updateTaskProgress, completeTask, failTask, fetchEntries, currentUser]);
+    }, [selectedEntries, addTask, updateTaskProgress, completeTask, failTask, makeTaskRetryable, fetchEntries, currentUser]);
 
     const handleBulkMarkPending = useCallback(async () => {
         if (selectedEntries.length === 0) return;
