@@ -90,6 +90,8 @@ interface Company {
     lastResponse?: string;
     assignedPic?: string;
     daysAttending?: string;
+    /** Spreadsheet 1 company DB column E (no tracker fallback). */
+    previousParticipationStatus?: string;
     channel?: string;
 }
 
@@ -1720,6 +1722,15 @@ export default function CompanyDetailPage() {
                                 {company.relationshipStatus && (
                                     <span className={`inline-flex px-3 py-1 rounded-full text-xs font-medium ${getRelationshipColor(company.relationshipStatus)}`}>
                                         {company.relationshipStatus}
+                                    </span>
+                                )}
+                                {(company.previousParticipationStatus || '').trim() && (
+                                    <span
+                                        className="inline-flex max-w-full items-center gap-1 px-3 py-1 rounded-full text-xs font-medium bg-white/15 text-blue-50 ring-1 ring-white/25 truncate"
+                                        title={(company.previousParticipationStatus || '').trim()}
+                                    >
+                                        <span className="shrink-0 text-[10px] uppercase tracking-wide text-blue-200/90">Prior</span>
+                                        <span className="truncate">{(company.previousParticipationStatus || '').trim()}</span>
                                     </span>
                                 )}
                                 {(company.contactStatus === 'Contacted' || (followUpsCompleted || 0) > 0) && (

@@ -39,6 +39,8 @@ interface Company {
     targetSponsorshipTier?: string;
     sponsorshipTier?: string;
     lastCompanyActivity?: string;
+    daysAttending?: string;
+    previousParticipationStatus?: string;
 }
 
 interface CommitteeMember {
@@ -299,6 +301,8 @@ export default function CompaniesPage() {
         discipline: company.discipline || '',
         targetSponsorshipTier: company.targetSponsorshipTier || '',
         sponsorshipTier: company.sponsorshipTier || '',
+        daysAttending: company.daysAttending || '',
+        previousParticipationStatus: company.previousParticipationStatus || '',
         scheduledDate: scheduleMap[company.id]?.date,
         scheduledTime: scheduleMap[company.id]?.time,
         scheduledIsOverdue: scheduleMap[company.id]?.isOverdue,

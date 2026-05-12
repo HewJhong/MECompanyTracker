@@ -152,6 +152,8 @@ const COLUMN_WIDTHS = {
     discipline: 160,
     targetTier: 170,
     registeredTier: 170,
+    daysAttending: 190,
+    previousParticipationStatus: 200,
     contact: 260,
     emails: 320,
     phones: 220,
@@ -161,7 +163,7 @@ const COLUMN_WIDTHS = {
     followUps: 120,
 } as const;
 
-type ColumnKey = 'id' | 'status' | 'discipline' | 'targetTier' | 'registeredTier' | 'contact' | 'emails' | 'phones' | 'assignedTo' | 'scheduled' | 'lastUpdated' | 'followUps';
+type ColumnKey = 'id' | 'status' | 'discipline' | 'targetTier' | 'registeredTier' | 'daysAttending' | 'previousParticipationStatus' | 'contact' | 'emails' | 'phones' | 'assignedTo' | 'scheduled' | 'lastUpdated' | 'followUps';
 
 const COLUMN_LABELS: Record<ColumnKey, string> = {
     id: 'ID',
@@ -169,6 +171,8 @@ const COLUMN_LABELS: Record<ColumnKey, string> = {
     discipline: 'Discipline',
     targetTier: 'Target Sponsorship',
     registeredTier: 'Registered Sponsorship',
+    daysAttending: 'Days Attending',
+    previousParticipationStatus: 'Previous participation',
     contact: 'Contact Person',
     emails: 'Emails',
     phones: 'Phones',
@@ -184,6 +188,8 @@ const DEFAULT_VISIBLE_COLUMNS: Record<ColumnKey, boolean> = {
     discipline: true,
     targetTier: true,
     registeredTier: true,
+    daysAttending: true,
+    previousParticipationStatus: true,
     contact: true,
     emails: false,
     phones: false,
@@ -215,6 +221,8 @@ interface Company {
     discipline?: string;
     targetSponsorshipTier?: string;
     sponsorshipTier?: string;
+    daysAttending?: string;
+    previousParticipationStatus?: string;
     followUpsCompleted?: number;
     scheduledDate?: string;
     scheduledTime?: string;
@@ -410,10 +418,28 @@ function ColumnPicker({
     );
 }
 
-type SortField = 'id' | 'name' | 'contactStatus' | 'assignedTo' | 'scheduled' | 'lastUpdated' | 'followUpsCompleted' | 'targetSponsorshipTier' | 'sponsorshipTier';
+type SortField = 'id' | 'name' | 'contactStatus' | 'assignedTo' | 'scheduled' | 'lastUpdated' | 'followUpsCompleted' | 'targetSponsorshipTier' | 'sponsorshipTier' | 'daysAttending' | 'previousParticipationStatus';
 type SortDirection = 'asc' | 'desc';
 const DEFAULT_SORT_FIELD: SortField = 'id';
 const DEFAULT_SORT_DIRECTION: SortDirection = 'asc';
+
+const VALID_SORT_FIELDS = new Set<SortField>([
+    'id',
+    'name',
+    'contactStatus',
+    'assignedTo',
+    'scheduled',
+    'lastUpdated',
+    'followUpsCompleted',
+    'targetSponsorshipTier',
+    'sponsorshipTier',
+    'daysAttending',
+    'previousParticipationStatus',
+]);
+
+function coerceStoredSortField(saved: string | null): SortField {
+    return saved && VALID_SORT_FIELDS.has(saved as SortField) ? (saved as SortField) : DEFAULT_SORT_FIELD;
+}
 
 export default function AllCompaniesTable({
     companies,
@@ -426,8 +452,7 @@ export default function AllCompaniesTable({
     const [isFilterUpdatePending, startFilterUpdateTransition] = useTransition();
     const [sortField, setSortField] = useState<SortField>(() => {
         if (typeof window !== 'undefined') {
-            const saved = sessionStorage.getItem('companies_sortField');
-            return saved ? (saved as SortField) : DEFAULT_SORT_FIELD;
+            return coerceStoredSortField(sessionStorage.getItem('companies_sortField'));
         }
         return DEFAULT_SORT_FIELD;
     });
@@ -459,6 +484,8 @@ export default function AllCompaniesTable({
         assignedTo: [] as string[],
         scheduled: [] as string[],
         contact: '',
+        daysAttending: '',
+        previousParticipationStatus: '',
         emails: '',
         phones: ''
     };
@@ -480,6 +507,8 @@ export default function AllCompaniesTable({
         id: columnFilters.id.trim(),
         name: columnFilters.name.trim(),
         contact: columnFilters.contact.trim(),
+        daysAttending: columnFilters.daysAttending.trim(),
+        previousParticipationStatus: columnFilters.previousParticipationStatus.trim(),
         emails: columnFilters.emails.trim(),
         phones: columnFilters.phones.trim(),
     }), [columnFilters]);
@@ -579,6 +608,8 @@ export default function AllCompaniesTable({
             c.discipline || '',
             c.targetSponsorshipTier || '',
             c.sponsorshipTier || '',
+            c.daysAttending || '',
+            c.previousParticipationStatus || '',
             c.contact,
             c.email,
             c.phone || '',
@@ -597,6 +628,8 @@ export default function AllCompaniesTable({
         const contactFilterNorm = normalise(deferredEffectiveColumnFilters.contact);
         const emailsFilterNorm = normalise(deferredEffectiveColumnFilters.emails);
         const phonesFilterNorm = normalise(deferredEffectiveColumnFilters.phones);
+        const daysAttendingFilterNorm = normalise(deferredEffectiveColumnFilters.daysAttending);
+        const previousParticipationFilterNorm = normalise(deferredEffectiveColumnFilters.previousParticipationStatus);
 
         let result = companies.filter((company, i) => {
             if (searchNorm && !companySearchStrings[i].includes(searchNorm)) return false;
@@ -623,6 +656,10 @@ export default function AllCompaniesTable({
                 normalise(company.email).includes(contactFilterNorm);
             const matchesEmails = !emailsFilterNorm || normalise(company.email).includes(emailsFilterNorm);
             const matchesPhones = !phonesFilterNorm || normalise(company.phone || '').includes(phonesFilterNorm);
+            const matchesDaysAttending =
+                !daysAttendingFilterNorm || normalise(company.daysAttending || '').includes(daysAttendingFilterNorm);
+            const matchesPreviousParticipation =
+                !previousParticipationFilterNorm || normalise(company.previousParticipationStatus || '').includes(previousParticipationFilterNorm);
 
             // Schedule filter: All | Has upcoming | Overdue (email not sent) | No schedule
             const hasSchedule = !!(company.scheduledDate && company.scheduledTime);
@@ -634,7 +671,7 @@ export default function AllCompaniesTable({
                 return false;
             });
 
-            return matchesId && matchesName && matchesContactStatus && matchesRelationshipStatus && matchesDiscipline && matchesTier && matchesRegisteredTier && matchesAssignee && matchesContact && matchesEmails && matchesPhones && matchesScheduled;
+            return matchesId && matchesName && matchesContactStatus && matchesRelationshipStatus && matchesDiscipline && matchesTier && matchesRegisteredTier && matchesAssignee && matchesContact && matchesEmails && matchesPhones && matchesDaysAttending && matchesPreviousParticipation && matchesScheduled;
         });
 
         const getScheduledTimestamp = (c: Company) => {
@@ -762,7 +799,7 @@ export default function AllCompaniesTable({
     const hasColumnFilters = !!(effectiveColumnFilters.id || effectiveColumnFilters.name || effectiveColumnFilters.contactStatus.length > 0 ||
         effectiveColumnFilters.relationshipStatus.length > 0 || effectiveColumnFilters.discipline.length > 0 ||
         effectiveColumnFilters.targetSponsorshipTier.length > 0 || effectiveColumnFilters.sponsorshipTier.length > 0 || effectiveColumnFilters.assignedTo.length > 0 ||
-        effectiveColumnFilters.scheduled.length > 0 || effectiveColumnFilters.contact || effectiveColumnFilters.emails || effectiveColumnFilters.phones);
+        effectiveColumnFilters.scheduled.length > 0 || effectiveColumnFilters.contact || effectiveColumnFilters.daysAttending || effectiveColumnFilters.previousParticipationStatus || effectiveColumnFilters.emails || effectiveColumnFilters.phones);
     const hasNonDefaultSort = sortField !== DEFAULT_SORT_FIELD || sortDirection !== DEFAULT_SORT_DIRECTION;
     const hasAnyFilter = !!debouncedSearch || hasColumnFilters || hasNonDefaultSort;
 
@@ -770,7 +807,7 @@ export default function AllCompaniesTable({
         if (typeof window !== 'undefined') sessionStorage.setItem(GLOBAL_SEARCH_STORAGE_KEY, '');
         startFilterUpdateTransition(() => {
             setDebouncedSearch('');
-            setColumnFilters({ id: '', name: '', contactStatus: [], relationshipStatus: [], discipline: [], targetSponsorshipTier: [], sponsorshipTier: [], assignedTo: [], scheduled: [], contact: '', emails: '', phones: '' });
+            setColumnFilters({ id: '', name: '', contactStatus: [], relationshipStatus: [], discipline: [], targetSponsorshipTier: [], sponsorshipTier: [], assignedTo: [], scheduled: [], contact: '', daysAttending: '', previousParticipationStatus: '', emails: '', phones: '' });
             setSortField(DEFAULT_SORT_FIELD);
             setSortDirection(DEFAULT_SORT_DIRECTION);
         });
@@ -789,6 +826,8 @@ export default function AllCompaniesTable({
         (col.discipline ? COLUMN_WIDTHS.discipline : 0) +
         (col.targetTier ? COLUMN_WIDTHS.targetTier : 0) +
         (col.registeredTier ? COLUMN_WIDTHS.registeredTier : 0) +
+        (col.daysAttending ? COLUMN_WIDTHS.daysAttending : 0) +
+        (col.previousParticipationStatus ? COLUMN_WIDTHS.previousParticipationStatus : 0) +
         (col.contact ? COLUMN_WIDTHS.contact : 0) +
         (col.emails ? COLUMN_WIDTHS.emails : 0) +
         (col.phones ? COLUMN_WIDTHS.phones : 0) +
@@ -911,6 +950,20 @@ export default function AllCompaniesTable({
                                         </button>
                                     </th>
                                 )}
+                                {col.daysAttending && (
+                                    <th className="px-6 py-3 text-xs font-medium text-slate-600 tracking-wider bg-slate-50 whitespace-nowrap" style={{ width: COLUMN_WIDTHS.daysAttending }}>
+                                        <button onClick={() => handleSort('daysAttending')} className="flex items-center gap-2 hover:text-slate-900 transition-colors">
+                                            Days Attending <SortIcon field="daysAttending" />
+                                        </button>
+                                    </th>
+                                )}
+                                {col.previousParticipationStatus && (
+                                    <th className="px-6 py-3 text-xs font-medium text-slate-600 tracking-wider bg-slate-50 whitespace-nowrap" style={{ width: COLUMN_WIDTHS.previousParticipationStatus }}>
+                                        <button onClick={() => handleSort('previousParticipationStatus')} className="flex items-center gap-2 hover:text-slate-900 transition-colors">
+                                            Previous participation <SortIcon field="previousParticipationStatus" />
+                                        </button>
+                                    </th>
+                                )}
                                 {col.contact && (
                                     <th className="px-6 py-3 text-xs font-medium text-slate-600 tracking-wider bg-slate-50 whitespace-nowrap" style={{ width: COLUMN_WIDTHS.contact }}>
                                         <span>Contact Person</span>
@@ -999,6 +1052,26 @@ export default function AllCompaniesTable({
                                 {col.registeredTier && (
                                     <th className="px-6 py-2 bg-white" style={{ width: COLUMN_WIDTHS.registeredTier }}>
                                         <FilterRowMultiSelect options={registeredTiers} selected={columnFilters.sponsorshipTier} onChange={s => setColumnFilters({ ...columnFilters, sponsorshipTier: s })} />
+                                    </th>
+                                )}
+                                {col.daysAttending && (
+                                    <th className="px-6 py-2 bg-white" style={{ width: COLUMN_WIDTHS.daysAttending }}>
+                                        <DebouncedFilterInput
+                                            appliedValue={columnFilters.daysAttending}
+                                            onApply={value => setColumnFilters(prev => ({ ...prev, daysAttending: value }))}
+                                            placeholder="Filter…"
+                                            className="w-full px-2 py-1 text-xs border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                        />
+                                    </th>
+                                )}
+                                {col.previousParticipationStatus && (
+                                    <th className="px-6 py-2 bg-white" style={{ width: COLUMN_WIDTHS.previousParticipationStatus }}>
+                                        <DebouncedFilterInput
+                                            appliedValue={columnFilters.previousParticipationStatus}
+                                            onApply={value => setColumnFilters(prev => ({ ...prev, previousParticipationStatus: value }))}
+                                            placeholder="Filter…"
+                                            className="w-full px-2 py-1 text-xs border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                        />
                                     </th>
                                 )}
                                 {col.contact && (
@@ -1142,6 +1215,20 @@ export default function AllCompaniesTable({
                                         {col.registeredTier && (
                                             <td className="px-6 py-4" style={{ width: COLUMN_WIDTHS.registeredTier }}>
                                                 <span className="text-slate-700">{company.sponsorshipTier || 'N/A'}</span>
+                                            </td>
+                                        )}
+                                        {col.daysAttending && (
+                                            <td className="px-6 py-4 text-slate-700 text-xs break-words" style={{ width: COLUMN_WIDTHS.daysAttending }}>
+                                                {(company.daysAttending || '').trim()
+                                                    ? (company.daysAttending || '').trim()
+                                                    : <span className="text-slate-300">—</span>}
+                                            </td>
+                                        )}
+                                        {col.previousParticipationStatus && (
+                                            <td className="px-6 py-4 text-slate-700 text-xs break-words" style={{ width: COLUMN_WIDTHS.previousParticipationStatus }}>
+                                                {(company.previousParticipationStatus || '').trim()
+                                                    ? (company.previousParticipationStatus || '').trim()
+                                                    : <span className="text-slate-300">—</span>}
                                             </td>
                                         )}
                                         {col.contact && (

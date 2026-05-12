@@ -145,26 +145,29 @@ export default async function handler(
         console.log(">>> [API DATA] Processing...");
         const trackerMap = new Map();
         const normalizeId = (s: string) => (s || '').toString().trim();
+        /** Tracker cells often have accidental spaces; trim so dashboard counts and filters match sheet intent. */
+        const cellTrim = (v: unknown) => (v ?? '').toString().trim();
         trackerRows.forEach((row) => {
             const rawId = row[0];
             if (!rawId) return;
             const id = normalizeId(rawId);
             if (!id) return;
+            const contactStatusRaw = cellTrim(row[2]);
             trackerMap.set(id, {
                 companyId: id,
                 companyName: row[1],
-                contactStatus: row[2] || 'To Contact',
-                relationshipStatus: row[3] || '',
-                channel: row[4] || '',
+                contactStatus: contactStatusRaw || 'To Contact',
+                relationshipStatus: cellTrim(row[3]),
+                channel: cellTrim(row[4]),
                 urgencyScore: parseInt(row[5]) || 0,
                 previousResponse: row[6],
-                assignedPic: row[7],
+                assignedPic: cellTrim(row[7]),
                 lastCompanyContact: row[8],
                 lastContact: row[9],
                 followUpsCompleted: parseInt(row[10]) || 0,
-                sponsorshipTier: row[12] || '',
-                daysAttending: row[13] || '',
-                remarks: row[14] || '',
+                sponsorshipTier: cellTrim(row[12]),
+                daysAttending: cellTrim(row[13]),
+                remarks: cellTrim(row[14]),
                 lastUpdate: row[15],
             });
         });
@@ -193,6 +196,8 @@ export default async function handler(
                     previousResponse: t?.previousResponse || '',
                     lastContact: t?.lastContact || '',
                     daysAttending: t?.daysAttending || '',
+                    /** Spreadsheet 1 company DB column E only (no tracker fallback). */
+                    previousParticipationStatus: cellTrim(row[4]),
                     discipline: row[2],
                     targetSponsorshipTier: row[3],
                     reference: row[10],
@@ -202,6 +207,10 @@ export default async function handler(
                 });
             }
             const c = companyMap.get(id);
+            const eParticipation = cellTrim(row[4]);
+            if (eParticipation && !c.previousParticipationStatus) {
+                c.previousParticipationStatus = eParticipation;
+            }
             const isArchived = (row[15] || '').toString().trim().toUpperCase() === 'Y';
             c.isDeleted = c.isDeleted || isArchived;
             const hasContactInfo = (row[5] && row[5].trim()) || (row[7] && row[7].trim()) || (row[8] && row[8].trim()) || (row[10] && row[10].trim());
