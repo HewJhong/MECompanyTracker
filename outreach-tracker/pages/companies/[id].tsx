@@ -97,6 +97,27 @@ interface Company {
 
 const contactStatusOptions = ['To Contact', 'Contacted', 'To Follow Up', 'No Reply'];
 const relationshipStatusOptions = ['Interested', 'Registered', 'Rejected'];
+
+/** Days attending is only stored for Registered rows; hide/clear for all other relationship states. */
+function daysAttendingForFormState(c: { relationshipStatus?: string; daysAttending?: string }) {
+    const rel = (c.relationshipStatus || '').trim();
+    if (rel !== 'Registered') return '';
+    return (c.daysAttending || '').trim();
+}
+
+/** Same rule as the dashboard day-attendance widget: days only count when Registered with a committed tier. */
+function tierOkForDaysAttending(relationshipStatus: string, sponsorshipTier: string) {
+    return relationshipStatus === 'Registered' && !!(sponsorshipTier && sponsorshipTier.trim());
+}
+
+function hasStaleTrackerDaysAttending(
+    trackerDays: string | undefined,
+    relationshipStatus: string,
+    sponsorshipTier: string
+) {
+    const tokens = (trackerDays || '').split(',').map(d => d.trim()).filter(Boolean);
+    return tokens.length > 0 && !tierOkForDaysAttending(relationshipStatus, sponsorshipTier);
+}
 const sponsorshipTierOptions = ['Official Partner', 'Gold', 'Silver', 'Bronze'];
 const REJECTION_REASON_TAG = '[Rejection Reason]';
 
@@ -159,6 +180,7 @@ export default function CompanyDetailPage() {
     const [sponsorshipTier, setSponsorshipTier] = useState('');
     const [companyResponseDate, setCompanyResponseDate] = useState('');
     const [daysAttending, setDaysAttending] = useState('');
+    const [daysAttendingAutoClearNotice, setDaysAttendingAutoClearNotice] = useState<string | null>(null);
     const [channel, setChannel] = useState('');
     const [scheduledDate, setScheduledDate] = useState<string>('');
     const [scheduledTime, setScheduledTime] = useState<string>('');
@@ -208,6 +230,7 @@ export default function CompanyDetailPage() {
     const [isDeletingCompany, setIsDeletingCompany] = useState(false);
     const [showConfirmDeleteScheduleEntryModal, setShowConfirmDeleteScheduleEntryModal] = useState(false);
     const [scheduleEntryToDelete, setScheduleEntryToDelete] = useState<{ date: string; time: string; note?: string } | null>(null);
+    const [isClearingInvalidDays, setIsClearingInvalidDays] = useState(false);
 
     const { addTask, completeTask, failTask, setWarningTask } = useBackgroundTasks();
 
@@ -259,7 +282,7 @@ export default function CompanyDetailPage() {
                 setLastCompanyActivity(found.lastCompanyActivity || found.lastUpdated || '');
                 setLastCommitteeContact(found.lastContact || '');
                 setSponsorshipTier(found.sponsorshipTier || '');
-                setDaysAttending(found.daysAttending || '');
+                setDaysAttending(daysAttendingForFormState(found));
                 setChannel(found.channel || '');
             } else {
                 setNotFound(true);
@@ -278,6 +301,59 @@ export default function CompanyDetailPage() {
             }
         } finally {
             setLoading(false);
+        }
+    };
+
+    const handleClearInvalidDaysAttending = async () => {
+        if (!company || !canEdit) return;
+        const prev = (company.daysAttending || '').trim();
+        if (!prev) return;
+
+        const existingRemark = (company.remark || '').trim();
+        const audit =
+            '[Company Update]: Cleared invalid Days attending (not Registered with a committed sponsorship tier). Previously: ' +
+            prev;
+        const finalRemark = existingRemark ? `${existingRemark}\n\n${audit}` : audit;
+
+        setIsClearingInvalidDays(true);
+        const taskId = addTask('Clearing invalid Days attending from tracker…');
+        try {
+            const res = await fetch('/api/update', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    companyId: company.id,
+                    updates: { daysAttending: '' },
+                    user: currentUser,
+                    remark: finalRemark,
+                }),
+            });
+            if (!res.ok) {
+                throw new Error('Update failed');
+            }
+            const result = await res.json();
+            if (result.verifiedData) {
+                setCompany(prev =>
+                    prev
+                        ? {
+                              ...prev,
+                              remark: result.verifiedData.remark ?? prev.remark,
+                              daysAttending: result.verifiedData.daysAttending ?? '',
+                              lastUpdated: result.verifiedData.lastUpdated ?? prev.lastUpdated,
+                          }
+                        : null
+                );
+            }
+            setDaysAttending('');
+            setDaysAttendingAutoClearNotice(null);
+            fetchData(true);
+            completeTask(taskId, 'Cleared invalid Days attending');
+        } catch (e) {
+            console.error(e);
+            failTask(taskId, 'Failed to clear Days attending');
+            showError('Save failed', 'Could not clear Days attending. Try again.');
+        } finally {
+            setIsClearingInvalidDays(false);
         }
     };
 
@@ -815,7 +891,7 @@ export default function CompanyDetailPage() {
             setLastCommitteeContact(company.lastContact || '');
             setSponsorshipTier(company.sponsorshipTier || '');
             setChannel(company.channel || '');
-            setDaysAttending(company.daysAttending || '');
+            setDaysAttending(daysAttendingForFormState(company));
             setHasUnsavedChanges(false);
         }
     }, [company]);
@@ -1037,6 +1113,8 @@ export default function CompanyDetailPage() {
     const handleSave = async () => {
         if (!company) return;
 
+        const resolvedDaysAttending = relationshipStatus === 'Registered' ? daysAttending : '';
+
         const existingRejectionReason = extractPlainRejectionReason(company.remark);
         const effectiveRejectionReason = remarks.trim() || existingRejectionReason;
 
@@ -1046,10 +1124,14 @@ export default function CompanyDetailPage() {
             return;
         }
 
-        // Validate sponsorship tier for registration
+        // Validate sponsorship tier for registration (allow save when only clearing stale Days attending)
         if (relationshipStatus === 'Registered' && !sponsorshipTier) {
-            showError("Sponsorship Tier Required", "Please select a sponsorship tier before marking as Registered.");
-            return;
+            const clearingOnlyStaleDays =
+                String(company.daysAttending || '').trim() !== '' && String(resolvedDaysAttending || '').trim() === '';
+            if (!clearingOnlyStaleDays) {
+                showError("Sponsorship Tier Required", "Please select a sponsorship tier before marking as Registered.");
+                return;
+            }
         }
 
         // Prepare data for save
@@ -1087,8 +1169,8 @@ export default function CompanyDetailPage() {
             changes.push(`Follow-ups: ${company.followUpsCompleted || 0} → ${followUpsCompleted}`);
         }
 
-        if ((company.daysAttending || '') !== daysAttending) {
-            changes.push(`Days Attending: ${company.daysAttending || '(none)'} → ${daysAttending}`);
+        if ((company.daysAttending || '') !== resolvedDaysAttending) {
+            changes.push(`Days Attending: ${company.daysAttending || '(none)'} → ${resolvedDaysAttending || '(none)'}`);
         }
 
         if ((company.channel || '') !== channel) {
@@ -1133,7 +1215,7 @@ export default function CompanyDetailPage() {
             // Keep committee contact separate from company activity to avoid overwriting
             // Last Committee Contact Date with Previous Response timestamps on save.
             lastContact: lastCommitteeContact,
-            daysAttending,
+            daysAttending: resolvedDaysAttending,
             channel,
             ...(relationshipStatus === 'Interested' || relationshipStatus === 'Registered' ? { sponsorshipTier } : {}),
             ...(companyResponseDate ? { lastCompanyActivity: new Date(companyResponseDate).toISOString() } : {})
@@ -1145,6 +1227,7 @@ export default function CompanyDetailPage() {
 
         // Manually update the 'company' state without waiting for re-fetch
         setCompany(newCompanyState);
+        setDaysAttending(resolvedDaysAttending);
 
         const taskId = addTask(`Saving changes for ${editedName || company.name}...`);
 
@@ -1182,17 +1265,31 @@ export default function CompanyDetailPage() {
                         followUpsCompleted: result.verifiedData.followUpsCompleted,
                         lastContact: result.verifiedData.lastContact,
                         lastUpdated: result.verifiedData.lastUpdated,
-                        remark: result.verifiedData.remark
+                        remark: result.verifiedData.remark,
+                        daysAttending: result.verifiedData.daysAttending ?? prev.daysAttending,
                     } : null);
                     setContactStatus(result.verifiedData.contactStatus || 'To Contact');
                     setRelationshipStatus(result.verifiedData.relationshipStatus || '');
                     setFollowUpsCompleted(result.verifiedData.followUpsCompleted);
                     setLastCommitteeContact(result.verifiedData.lastContact || '');
+                    if (result.verifiedData.daysAttending !== undefined) {
+                        setDaysAttending(result.verifiedData.daysAttending || '');
+                    }
                 }
                 // Background fetch to ensure consistency
                 fetchData(true);
                 setHasUnsavedChanges(false);
-                completeTask(taskId, 'Changes saved successfully');
+                setDaysAttendingAutoClearNotice(null);
+                const clearedDaysOnSave =
+                    company.relationshipStatus === 'Registered' &&
+                    relationshipStatus !== 'Registered' &&
+                    String(company.daysAttending || '').trim() !== '';
+                completeTask(
+                    taskId,
+                    clearedDaysOnSave
+                        ? 'Saved. Days attending were cleared because they only apply while Registered.'
+                        : 'Changes saved successfully'
+                );
                 // If this save included an outreach or follow-up log, mark the nearest schedule entry completed
                 const isOutreachLog = finalRemark.startsWith('[Outreach') || finalRemark.startsWith('[Follow-up');
                 if (isOutreachLog) {
@@ -1594,7 +1691,7 @@ export default function CompanyDetailPage() {
             setLastCommitteeContact(company.lastContact || '');
             setSponsorshipTier(company.sponsorshipTier || '');
             setChannel(company.channel || '');
-            setDaysAttending(company.daysAttending || '');
+            setDaysAttending(daysAttendingForFormState(company));
             setRemarks('');
             setIsEditMode(false);
             setHasUnsavedChanges(false);
@@ -1834,6 +1931,53 @@ export default function CompanyDetailPage() {
 
                     {activeTab === 'details' && (
                         <div className="space-y-6">
+                            {company &&
+                                hasStaleTrackerDaysAttending(company.daysAttending, relationshipStatus, sponsorshipTier) && (
+                                    <div
+                                        className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950"
+                                        role="status"
+                                    >
+                                        <div className="flex gap-3">
+                                            <ExclamationTriangleIcon
+                                                className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5"
+                                                aria-hidden
+                                            />
+                                            <div className="min-w-0 space-y-2">
+                                                <p className="font-semibold leading-snug">
+                                                    The tracker still lists Days attending, but they do not apply for this
+                                                    row
+                                                </p>
+                                                <p className="text-xs text-amber-900/90 leading-relaxed">
+                                                    Current value:{' '}
+                                                    <span className="font-mono rounded bg-amber-100/80 px-1 py-0.5">
+                                                        {(company.daysAttending || '').trim()}
+                                                    </span>
+                                                    . The dashboard only counts day attendance when the relationship is
+                                                    Registered and a sponsorship tier is set. The Days attending field is
+                                                    hidden unless both are true, so use the button below to clear column N
+                                                    without changing status.
+                                                </p>
+                                                {canEdit ? (
+                                                    <button
+                                                        type="button"
+                                                        onClick={handleClearInvalidDaysAttending}
+                                                        disabled={isClearingInvalidDays}
+                                                        className="inline-flex items-center rounded-lg bg-amber-900 px-3 py-1.5 text-xs font-medium text-amber-50 hover:bg-amber-950 disabled:opacity-50 disabled:cursor-not-allowed"
+                                                    >
+                                                        {isClearingInvalidDays
+                                                            ? 'Clearing…'
+                                                            : 'Clear invalid Days attending'}
+                                                    </button>
+                                                ) : (
+                                                    <p className="text-xs text-amber-900/85">
+                                                        Ask someone with edit access to clear this, or use Settings → Data
+                                                        management → Clear invalid Days attending (superadmin).
+                                                    </p>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
                                     <label htmlFor="contactStatus" className="block text-sm font-medium text-slate-700 mb-2">Contact Status</label>
@@ -1859,7 +2003,16 @@ export default function CompanyDetailPage() {
                                         id="relationshipStatus"
                                         value={relationshipStatus}
                                         onChange={(e) => {
-                                            setRelationshipStatus(e.target.value);
+                                            const next = e.target.value;
+                                            if (next !== 'Registered' && daysAttending.trim()) {
+                                                setDaysAttending('');
+                                                setDaysAttendingAutoClearNotice(
+                                                    'Days attending only apply while a company is Registered. They were cleared from this form; save to write changes to the sheet.'
+                                                );
+                                            } else if (next === 'Registered') {
+                                                setDaysAttendingAutoClearNotice(null);
+                                            }
+                                            setRelationshipStatus(next);
                                             setHasUnsavedChanges(true);
                                             setShowUnsavedWarning(true);
                                         }}
@@ -1872,6 +2025,11 @@ export default function CompanyDetailPage() {
                                         ))}
                                     </select>
                                 </div>
+                                {daysAttendingAutoClearNotice && (
+                                    <div className="col-span-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950" role="status">
+                                        {daysAttendingAutoClearNotice}
+                                    </div>
+                                )}
                             </div>
 
                             {/* Channel */}
@@ -1926,7 +2084,7 @@ export default function CompanyDetailPage() {
                             )}
 
                             {/* Days Attending */}
-                            {(relationshipStatus === 'Interested' || relationshipStatus === 'Registered') && (
+                            {relationshipStatus === 'Registered' && (
                                 <div>
                                     <label htmlFor="daysAttending" className="block text-sm font-medium text-slate-700 mb-2 font-semibold">Days Attending</label>
                                     <input
@@ -1942,7 +2100,9 @@ export default function CompanyDetailPage() {
                                         placeholder="e.g. 1, 2, 4"
                                         className="w-full px-4 py-2 bg-white border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all text-slate-900"
                                     />
-                                    <p className="mt-1 text-xs text-slate-500">Enter comma-separated day numbers</p>
+                                    <p className="mt-1 text-xs text-slate-500">
+                                        Comma-separated day numbers. Only used while relationship is Registered.
+                                    </p>
                                 </div>
                             )}
 

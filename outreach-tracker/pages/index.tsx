@@ -10,7 +10,8 @@ import {
     ArrowTrendingUpIcon,
     ArrowPathIcon,
     FlagIcon,
-    CheckCircleIcon
+    CheckCircleIcon,
+    ExclamationTriangleIcon
 } from '@heroicons/react/24/outline';
 import { SparklesIcon as SolidSparkles } from '@heroicons/react/24/solid';
 
@@ -220,6 +221,8 @@ export default function Home() {
         const disciplineDist: Record<string, number> = {};
         const dayDist: Record<string, number> = {};
         const dayTierBreakdown: Record<string, Record<string, number>> = {};
+        const dayAttendanceTierMismatch: { id: string; companyName: string; hint: string }[] = [];
+        const dayAttendanceMismatchIds = new Set<string>();
 
         data.forEach(c => {
             if (c.relationshipStatus === 'Registered' && c.sponsorshipTier) {
@@ -232,18 +235,38 @@ export default function Home() {
                 });
             }
             if (c.daysAttending) {
-                c.daysAttending.split(',').forEach(d => {
-                    const trimmed = d.trim();
-                    if (trimmed) {
-                        dayDist[trimmed] = (dayDist[trimmed] || 0) + 1;
-                        if (c.relationshipStatus === 'Registered' && c.sponsorshipTier) {
-                            if (!dayTierBreakdown[trimmed]) dayTierBreakdown[trimmed] = {};
-                            dayTierBreakdown[trimmed][c.sponsorshipTier] = (dayTierBreakdown[trimmed][c.sponsorshipTier] || 0) + 1;
+                const dayTokens = c.daysAttending.split(',').map(d => d.trim()).filter(Boolean);
+                if (dayTokens.length > 0) {
+                    const tierOk =
+                        c.relationshipStatus === 'Registered' && !!(c.sponsorshipTier && c.sponsorshipTier.trim());
+                    if (!tierOk) {
+                        if (!dayAttendanceMismatchIds.has(c.id)) {
+                            dayAttendanceMismatchIds.add(c.id);
+                            const hint =
+                                c.relationshipStatus !== 'Registered'
+                                    ? `Days attending should only exist while Registered (current: ${c.relationshipStatus}). Open the company and use “Clear invalid Days attending”, or run Settings → Data management → Clear invalid Days attending.`
+                                    : 'Registered but sponsorship tier is empty. Set their tier, clear Days attending on the company page, or use Settings → Data management → Clear invalid Days attending.';
+                            dayAttendanceTierMismatch.push({
+                                id: c.id,
+                                companyName: c.companyName || c.name || 'Unknown company',
+                                hint
+                            });
                         }
+                    } else {
+                        dayTokens.forEach(trimmed => {
+                            if (!dayTierBreakdown[trimmed]) dayTierBreakdown[trimmed] = {};
+                            const tier = c.sponsorshipTier!.trim();
+                            dayTierBreakdown[trimmed][tier] = (dayTierBreakdown[trimmed][tier] || 0) + 1;
+                            dayDist[trimmed] = (dayDist[trimmed] || 0) + 1;
+                        });
                     }
-                });
+                }
             }
         });
+
+        dayAttendanceTierMismatch.sort((a, b) =>
+            a.companyName.localeCompare(b.companyName, undefined, { sensitivity: 'base' })
+        );
 
         // Committee Leaderboard
         const memberStats = new Map<string, { registered: number; assigned: number; contacted: number; followUps: number }>();
@@ -332,6 +355,7 @@ export default function Home() {
             disciplineDist,
             dayDist,
             dayTierBreakdown,
+            dayAttendanceTierMismatch,
             leaderboard,
             timeline: cumulativeTimeline,
             realMembers,
@@ -519,13 +543,68 @@ export default function Home() {
                                         Day Attendance
                                     </h3>
                                 </div>
+                                {stats.dayAttendanceTierMismatch.length > 0 && (
+                                    <div
+                                        className="mb-5 rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-950"
+                                        role="status"
+                                        aria-live="polite"
+                                    >
+                                        <div className="flex gap-2.5">
+                                            <ExclamationTriangleIcon className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" aria-hidden />
+                                            <div className="min-w-0 space-y-2">
+                                                <p className="font-semibold text-amber-950 leading-snug">
+                                                    Day attendance only counts Registered sponsors with a sponsorship tier
+                                                </p>
+                                                <p className="text-xs text-amber-900/90 leading-relaxed">
+                                                    {stats.dayAttendanceTierMismatch.length}{' '}
+                                                    {stats.dayAttendanceTierMismatch.length === 1 ? 'company has' : 'companies have'}{' '}
+                                                    Days attending in the tracker while not Registered (or Registered without a tier). They are omitted from the chart until fixed. On each company’s Details tab, use “Clear invalid Days attending” when shown.
+                                                </p>
+                                                <ul className="space-y-1.5 text-xs border-t border-amber-200/80 pt-2 mt-1">
+                                                    {stats.dayAttendanceTierMismatch.slice(0, 10).map(row => (
+                                                        <li key={row.id} className="leading-snug">
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => handleCompanyClick(row.id)}
+                                                                className="font-semibold text-amber-950 underline decoration-amber-400/80 underline-offset-2 hover:text-amber-800 text-left"
+                                                            >
+                                                                {row.companyName}
+                                                            </button>
+                                                            <span className="text-amber-900/85"> — {row.hint}</span>
+                                                        </li>
+                                                    ))}
+                                                </ul>
+                                                {stats.dayAttendanceTierMismatch.length > 10 && (
+                                                    <p className="text-[11px] text-amber-800/90">
+                                                        And {stats.dayAttendanceTierMismatch.length - 10} more — fix on each company’s Details tab, or use Settings → Data management → Clear invalid Days attending.
+                                                    </p>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
                                 {(() => {
                                     const displayDayDist = stats.dayDist;
                                     const displayDayTier = stats.dayTierBreakdown;
                                     const displayDayTierSlots: Record<string, Record<string, number>> = {};
                                     const tierOrder = ['OP', 'Gold', 'Silver', 'Bronze'];
                                     const tierOrderStackedBar = ['OP', 'Bronze', 'Silver', 'Gold'];
-                                    const tierColors: Record<string, string> = { OP: 'bg-blue-500', Gold: 'bg-amber-400', Silver: 'bg-slate-300', Bronze: 'bg-amber-700' };
+                                    const tierColors: Record<string, string> = {
+                                        OP: 'bg-blue-500',
+                                        Gold: 'bg-amber-400',
+                                        Silver: 'bg-slate-300',
+                                        Bronze: 'bg-amber-700',
+                                    };
+                                    const stackTiersForDay = (tiers: Record<string, number>) => {
+                                        const ordered: string[] = [];
+                                        for (const t of tierOrderStackedBar) {
+                                            if ((tiers[t] || 0) > 0) ordered.push(t);
+                                        }
+                                        for (const t of Object.keys(tiers)) {
+                                            if (!tierOrderStackedBar.includes(t) && (tiers[t] || 0) > 0) ordered.push(t);
+                                        }
+                                        return ordered;
+                                    };
                                     const maxHeight = Math.max(...Object.values(displayDayDist), 1);
                                     return (
                                         <div className="space-y-5 flex-1 flex flex-col">
@@ -535,7 +614,8 @@ export default function Home() {
                                                     const count = displayDayDist[dayKey] || 0;
                                                     const tiers = displayDayTier[dayKey] || {};
                                                     const slots = displayDayTierSlots[dayKey] || {};
-                                                    const totalTier = tierOrder.reduce((sum, t) => sum + (tiers[t] || 0), 0);
+                                                    const totalTier = Object.values(tiers).reduce((sum, n) => sum + n, 0);
+                                                    const stackTiers = stackTiersForDay(tiers);
                                                     return (
                                                         <div key={day} className="flex-1 flex flex-col items-center gap-2 min-w-0">
                                                             <div className="w-full text-center">
@@ -546,11 +626,12 @@ export default function Home() {
                                                             <div className="w-full rounded-t-md relative flex flex-col-reverse overflow-hidden border border-blue-100 bg-blue-50/80" style={{ height: '100px' }} title="Empty area = vacancies">
                                                                 {totalTier > 0 ? (
                                                                     <div className="w-full flex flex-col-reverse" style={{ height: `${(count / maxHeight) * 100}%` }}>
-                                                                        {tierOrderStackedBar.map(tier => {
+                                                                        {stackTiers.map(tier => {
                                                                             const n = tiers[tier] || 0;
                                                                             if (n === 0) return null;
+                                                                            const colorClass = tierColors[tier] || 'bg-slate-500';
                                                                             return (
-                                                                                <div key={tier} className={`w-full ${tierColors[tier]} min-h-[3px] transition-all duration-1000`} style={{ height: `${(n / totalTier) * 100}%` }} title={`${tier}: ${n}`} />
+                                                                                <div key={tier} className={`w-full ${colorClass} min-h-[3px] transition-all duration-1000`} style={{ height: `${(n / totalTier) * 100}%` }} title={`${tier}: ${n}`} />
                                                                             );
                                                                         })}
                                                                     </div>
@@ -560,14 +641,18 @@ export default function Home() {
                                                             </div>
                                                             {totalTier > 0 && (
                                                                 <div className="w-full space-y-1.5 pt-1">
-                                                                    {tierOrder.filter(t => (tiers[t] || 0) > 0).map(t => {
+                                                                    {[
+                                                                        ...tierOrder.filter(t => (tiers[t] || 0) > 0),
+                                                                        ...Object.keys(tiers).filter(t => !tierOrder.includes(t) && (tiers[t] || 0) > 0),
+                                                                    ].map(t => {
                                                                         const current = tiers[t] || 0;
                                                                         const max = slots[t];
                                                                         const countLabel = max != null ? `${current}/${max}` : String(current);
+                                                                        const rowColor = tierColors[t] || 'bg-slate-500';
                                                                         return (
                                                                             <div key={t} className="flex items-center justify-between gap-2 text-xs">
                                                                                 <span className="flex items-center gap-1.5 font-medium text-slate-600 min-w-0">
-                                                                                    <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${tierColors[t]}`} />
+                                                                                    <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${rowColor}`} />
                                                                                     <span className="truncate">{t}</span>
                                                                                 </span>
                                                                                 <span className="font-bold text-slate-900 tabular-nums flex-shrink-0">{countLabel}</span>

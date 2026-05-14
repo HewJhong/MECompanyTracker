@@ -2,6 +2,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { getGoogleSheetsClient } from '../../lib/google-sheets';
 import { cache } from '../../lib/cache';
 import { formatActorLabel, requireEffectiveAdmin } from '../../lib/authz';
+import { TRACKER_COLUMN } from '../../lib/tracker-sheet-columns';
 
 const CONTACT_STATUSES = ['To Contact', 'Contacted', 'To Follow Up', 'No Reply'] as const;
 const RELATIONSHIP_STATUSES = ['Interested', 'Registered', 'Rejected'] as const;
@@ -61,6 +62,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         const lastUpdatedColumnIndex = headers.findIndex((h: string) =>
             h === 'last updated' || h === 'last update' || h === 'updated'
         );
+        const daysAttendingHeaderIndex = headers.findIndex((h: string) => h === 'days attending');
+        if (daysAttendingHeaderIndex !== -1 && daysAttendingHeaderIndex !== 13) {
+            return res.status(500).json({
+                error: 'Tracker sheet column layout mismatch for Days attending',
+                details: `Expected Days attending at column index 13 (N); header resolved to index ${daysAttendingHeaderIndex}.`,
+            });
+        }
 
         if (statusColumnIndex === -1) {
             return res.status(500).json({
@@ -72,8 +80,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         const timestamp = new Date().toISOString();
         const updates: { range: string; values: string[][] }[] = [];
         const successfulIds: string[] = [];
+        const clearDaysWhenNotRegistered = field === 'relationshipStatus' && value !== 'Registered';
 
-            for (const companyId of companyIds) {
+        for (const companyId of companyIds) {
             const rowIndex = rows.findIndex(row => row[0] === companyId);
             if (rowIndex > 0) {
                 const rowNum = rowIndex + 1;
@@ -85,6 +94,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                     updates.push({
                         range: `${safeSheetName}!${String.fromCharCode(65 + lastUpdatedColumnIndex)}${rowNum}`,
                         values: [[timestamp]],
+                    });
+                }
+                if (clearDaysWhenNotRegistered) {
+                    updates.push({
+                        range: `${safeSheetName}!${TRACKER_COLUMN.daysAttending}${rowNum}`,
+                        values: [['']],
                     });
                 }
                 successfulIds.push(companyId);
@@ -117,7 +132,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                         timestamp,
                         id,
                         actorName,
-                        `Bulk ${field} update to "${value}" (from All Companies)`,
+                        `Bulk ${field} update to "${value}" (from All Companies)${clearDaysWhenNotRegistered ? '; Days attending cleared (Registered-only field)' : ''}`,
                     ]),
                 },
             });
@@ -135,7 +150,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                         timestamp,
                         actorName,
                         'BULK_UPDATE_STATUS',
-                        `Set ${field} to "${value}" for ${successfulIds.length} companies`,
+                        `Set ${field} to "${value}" for ${successfulIds.length} companies${clearDaysWhenNotRegistered ? '; cleared Days attending (column N)' : ''}`,
                         successfulIds.join('; '),
                     ]],
                 },

@@ -6,6 +6,7 @@ import { syncDailyStats } from '../../lib/daily-stats';
 import { requireEffectiveCanEditCompanies } from '../../lib/authz';
 import { formatActorLabel } from '../../lib/authz';
 import { withSheetsRetry, isRetryableSheetsError } from '../../lib/sheets-retry';
+import { TRACKER_FIELD_TO_COLUMN, TRACKER_ROW_INDEX } from '../../lib/tracker-sheet-columns';
 
 const UPDATE_READ_ATTEMPTS = 5;
 const UPDATE_READ_RETRY_OPTS = { baseDelayMs: 1500 } as const;
@@ -21,11 +22,17 @@ export default async function handler(
     const ctx = await requireEffectiveCanEditCompanies(req, res);
     if (!ctx) return;
 
-    const { companyId, updates, user, remark, actionDate } = req.body;
+    const { companyId, updates: updatesBody, user, remark, actionDate } = req.body;
 
     if (!companyId || !user) {
         return res.status(400).json({ message: 'Missing required fields (companyId, user)' });
     }
+
+    if (!updatesBody || typeof updatesBody !== 'object') {
+        return res.status(400).json({ message: 'Missing or invalid updates' });
+    }
+
+    const updates = { ...(updatesBody as Record<string, unknown>) };
 
     try {
         const sheets = await getGoogleSheetsClient();
@@ -37,8 +44,8 @@ export default async function handler(
         }
 
         const timestamp = new Date().toISOString();
-        const trackerUpdates: any[] = [];
-        const dbUpdates: any[] = [];
+        const trackerUpdates: { range: string; values: unknown[][] }[] = [];
+        const dbUpdates: { range: string; values: unknown[][] }[] = [];
 
         const trackerMeta = await withSheetsRetry(
             () => sheets.spreadsheets.get({ spreadsheetId: spreadsheetId2 }),
@@ -62,22 +69,42 @@ export default async function handler(
             return res.status(404).json({ message: 'Company not found in Outreach Tracker' });
         }
 
-        const TRACKER_MAP: Record<string, string> = {
-            'companyName': 'B',
-            'contactStatus': 'C',
-            'relationshipStatus': 'D',
-            'channel': 'E',
-            'urgencyScore': 'F',
-            'previousResponse': 'G',
-            'assignedPic': 'H',
-            'lastCompanyContact': 'I',
-            'lastContact': 'J',
-            'followUpsCompleted': 'K',
-            'sponsorshipTier': 'M',
-            'daysAttending': 'N',
-            'remarks': 'O',
-            'lastUpdate': 'P'
-        };
+        /**
+         * Days attending is only valid while relationship is Registered (see dashboard + company UI).
+         * When leaving Registered, always clear column N even if the client omitted `daysAttending` in the payload.
+         */
+        const currentSliceRange = await withSheetsRetry(
+            () =>
+                sheets.spreadsheets.values.get({
+                    spreadsheetId: spreadsheetId2,
+                    range: `${trackerSheetName}!${TRACKER_FIELD_TO_COLUMN.relationshipStatus}${trackerRowIndex}:${TRACKER_FIELD_TO_COLUMN.daysAttending}${trackerRowIndex}`,
+                }),
+            UPDATE_READ_ATTEMPTS,
+            'api/update:currentRelationshipDays',
+            UPDATE_READ_RETRY_OPTS,
+        );
+        const curSlice = currentSliceRange.data.values?.[0] || [];
+        const currentRelationship = (curSlice[0] ?? '').toString().trim();
+        const currentDaysAttending = (curSlice[TRACKER_ROW_INDEX.daysAttending - TRACKER_ROW_INDEX.relationshipStatus] ?? '')
+            .toString()
+            .trim();
+
+        const requestedRelationship =
+            updates.relationshipStatus !== undefined ? (updates.relationshipStatus ?? '').toString().trim() : undefined;
+        const leavingRegistered =
+            currentRelationship === 'Registered' &&
+            requestedRelationship !== undefined &&
+            requestedRelationship !== 'Registered';
+
+        let autoDayClearNote = '';
+        if (leavingRegistered) {
+            updates.daysAttending = '';
+            if (currentDaysAttending) {
+                autoDayClearNote = `[Auto] Cleared Days attending (relationship no longer Registered). Previously: ${currentDaysAttending}`;
+            }
+        }
+
+        const TRACKER_MAP = TRACKER_FIELD_TO_COLUMN;
 
         trackerUpdates.push({
             range: `${trackerSheetName}!${TRACKER_MAP['lastUpdate']}${trackerRowIndex}`,
@@ -98,7 +125,10 @@ export default async function handler(
 
         // Automatic "No Reply" transition logic - SKIP if contactStatus is being manually updated
         // Uses last company contact (I) or last committee contact (J), whichever is more recent
-        let remarkText = remark;
+        let remarkText = typeof remark === 'string' ? remark : '';
+        if (autoDayClearNote) {
+            remarkText = remarkText ? `${remarkText}\n\n${autoDayClearNote}` : autoDayClearNote;
+        }
         if (!updates.contactStatus) {
             const currentDataRange = await withSheetsRetry(
                 () => sheets.spreadsheets.values.get({
@@ -146,7 +176,7 @@ export default async function handler(
         const updateKeys = updates && typeof updates === 'object' ? Object.keys(updates as Record<string, unknown>) : [];
         const needsDatabaseSheet = updateKeys.some(k => k in DB_MAP);
 
-        let dbRowIndices: number[] = [];
+        const dbRowIndices: number[] = [];
         if (needsDatabaseSheet) {
             const dbMeta = await withSheetsRetry(
                 () => sheets.spreadsheets.get({ spreadsheetId: spreadsheetId1 }),

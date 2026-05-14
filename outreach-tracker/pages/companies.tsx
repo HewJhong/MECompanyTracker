@@ -16,6 +16,7 @@ import {
     DEFAULT_SCHEDULE_SETTINGS,
     ScheduleSettings,
 } from '../lib/schedule-calculator';
+import { readCompaniesListLocalCache, writeCompaniesListLocalCache } from '../lib/companies-list-local-cache';
 
 const CONTACT_STATUSES = ['To Contact', 'Contacted', 'To Follow Up', 'No Reply'] as const;
 const RELATIONSHIP_STATUSES = ['Interested', 'Rejected'] as const;
@@ -54,6 +55,7 @@ export default function CompaniesPage() {
     const { user } = useCurrentUser();
     const [data, setData] = useState<Company[]>([]);
     const [loading, setLoading] = useState(true);
+    const [isRefreshing, setIsRefreshing] = useState(false);
     const [selectedCompanies, setSelectedCompanies] = useState<Set<string>>(new Set());
     const [lastSelectedIndex, setLastSelectedIndex] = useState<number | null>(null);
     const [committeeMembers, setCommitteeMembers] = useState<CommitteeMember[]>([]);
@@ -177,8 +179,30 @@ export default function CompaniesPage() {
         Boolean(scheduleStartTime) &&
         hasScheduleCapacityLimit;
 
-    const fetchData = async (forceRefresh = false) => {
-        setLoading(true);
+    const persistCompaniesPayload = (json: {
+        companies?: Company[];
+        idNameMismatches?: Array<{ id: string; trackerName: string; dbName: string }>;
+        trackerOnlyCompanies?: Array<{ id: string; name: string }>;
+    }) => {
+        const companies = json.companies || [];
+        if (companies.length === 0) return;
+        writeCompaniesListLocalCache({
+            companies,
+            idNameMismatches: json.idNameMismatches,
+            trackerOnlyCompanies: json.trackerOnlyCompanies,
+        });
+    };
+
+    const fetchData = async (
+        forceRefresh = false,
+        options?: { skipLoadingSpinner?: boolean }
+    ) => {
+        const skipLoadingSpinner = options?.skipLoadingSpinner === true;
+        if (!skipLoadingSpinner) {
+            setLoading(true);
+        } else {
+            setIsRefreshing(true);
+        }
         const taskId = forceRefresh ? addTask('Refreshing company list...') : null;
         console.log('Fetching data...');
 
@@ -200,6 +224,7 @@ export default function CompaniesPage() {
             setData(responseData.companies || []);
             setIdNameMismatches(forceRefresh && responseData.idNameMismatches ? responseData.idNameMismatches : []);
             setTrackerOnlyCompanies(responseData.trackerOnlyCompanies || []);
+            persistCompaniesPayload(responseData);
             if (taskId) completeTask(taskId, 'Data refreshed');
         } catch (err) {
             clearTimeout(timeoutId);
@@ -212,6 +237,7 @@ export default function CompaniesPage() {
             }
         } finally {
             setLoading(false);
+            setIsRefreshing(false);
         }
     };
 
@@ -228,9 +254,22 @@ export default function CompaniesPage() {
     useEffect(() => {
         if (!router.isReady) return;
         const fromArchive = router.query.refresh === '1';
-        // Always bypass cache: serverless instances have separate caches, so archived
-        // companies may still appear if we use cached data from another instance
-        fetchData(true);
+
+        let hadLocalCache = false;
+        if (!fromArchive) {
+            const cached = readCompaniesListLocalCache();
+            if (cached && cached.companies.length > 0) {
+                hadLocalCache = true;
+                setData(cached.companies as Company[]);
+                setIdNameMismatches((cached.idNameMismatches || []) as Array<{ id: string; trackerName: string; dbName: string }>);
+                setTrackerOnlyCompanies((cached.trackerOnlyCompanies || []) as Array<{ id: string; name: string }>);
+                setLoading(false);
+            }
+        }
+
+        // Always refresh from Sheets when opening this page; local cache is for instant paint only.
+        fetchData(true, { skipLoadingSpinner: hadLocalCache && !fromArchive });
+
         if (user?.isAdmin) {
             fetchCommitteeMembers();
         }
@@ -414,6 +453,7 @@ export default function CompaniesPage() {
                 if (dataRes.ok) {
                     const json = await dataRes.json();
                     setData(json.companies || []);
+                    persistCompaniesPayload(json);
                 }
                 if (scheduleRes.ok) {
                     const json = await scheduleRes.json();
@@ -449,7 +489,7 @@ export default function CompaniesPage() {
                     ? error.message
                     : "The update appeared to succeed but failed to save to the server. Reloading data..."
             );
-            fetchData(); // Force reload to revert to correct server state
+            fetchData(true, { skipLoadingSpinner: true }); // Force reload to revert to correct server state
         }
     };
 
@@ -467,9 +507,20 @@ export default function CompaniesPage() {
         const count = companiesToUpdate.length;
 
         setData(prevData => prevData.map(c =>
-            selectedCompanies.has(c.id) ? { ...c, [field]: value, lastUpdated: new Date().toISOString() } : c
+            selectedCompanies.has(c.id)
+                ? {
+                    ...c,
+                    [field]: value,
+                    lastUpdated: new Date().toISOString(),
+                    ...(field === 'relationshipStatus' && value !== 'Registered' ? { daysAttending: '' } : {}),
+                }
+                : c
         ));
-        setSuccessMessage(`${field === 'contactStatus' ? 'Contact' : 'Relationship'} status set to "${value}" for ${count} ${count === 1 ? 'company' : 'companies'}`);
+        const clearsDays = field === 'relationshipStatus' && value !== 'Registered';
+        setSuccessMessage(
+            `${field === 'contactStatus' ? 'Contact' : 'Relationship'} status set to "${value}" for ${count} ${count === 1 ? 'company' : 'companies'}` +
+                (clearsDays ? '. Days attending were cleared on the sheet (field is Registered-only).' : '')
+        );
         setShowSuccessModal(true);
         setSelectedCompanies(new Set());
         setLastSelectedIndex(null);
@@ -503,6 +554,7 @@ export default function CompaniesPage() {
                 if (dataRes.ok) {
                     const json = await dataRes.json();
                     setData(json.companies || []);
+                    persistCompaniesPayload(json);
                 }
                 updateTaskProgress(taskId, 100, { current: count, total: count });
             } finally {
@@ -517,7 +569,7 @@ export default function CompaniesPage() {
                 'Update failed',
                 'Status could not be saved to the server. Reloading data…'
             );
-            fetchData();
+            fetchData(true, { skipLoadingSpinner: true });
         } finally {
             setIsUpdatingStatus(false);
         }
@@ -551,11 +603,11 @@ export default function CompaniesPage() {
                     </div>
                     <div className="flex items-center gap-2">
                         <button
-                            onClick={() => fetchData(true)}
+                            onClick={() => fetchData(true, { skipLoadingSpinner: true })}
                             className="inline-flex items-center gap-2 px-4 py-2.5 bg-white text-slate-700 border border-slate-200 rounded-lg font-medium hover:bg-slate-50 transition-colors shadow-sm"
                             title="Fetch latest data from Google Sheets"
                         >
-                            <svg className={`w-5 h-5 ${loading ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <svg className={`w-5 h-5 ${loading || isRefreshing ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                             </svg>
                             Refresh
@@ -572,6 +624,12 @@ export default function CompaniesPage() {
                     </div>
                 </div>
             </div>
+
+            {isRefreshing && data.length > 0 && (
+                <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 px-4 py-2 text-sm text-slate-600" role="status">
+                    Updating list from server…
+                </div>
+            )}
 
             {/* Tracker-only companies warning: exist in Tracker but not in Database */}
             {trackerOnlyCompanies.length > 0 && (
@@ -923,7 +981,7 @@ export default function CompaniesPage() {
                 isOpen={showAddCompanyModal}
                 onClose={() => setShowAddCompanyModal(false)}
                 onSuccess={() => {
-                    fetchData(); // Refresh the company list
+                    fetchData(true, { skipLoadingSpinner: true }); // Refresh the company list
                     setSuccessMessage('Company added successfully!');
                     setShowSuccessModal(true);
                 }}

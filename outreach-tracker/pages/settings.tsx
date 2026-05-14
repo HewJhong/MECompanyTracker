@@ -95,6 +95,14 @@ function SettingsContent() {
     const [restoringId, setRestoringId] = useState<string | null>(null);
     const [archivedResult, setArchivedResult] = useState<{ success: boolean; message: string } | null>(null);
 
+    const [daysCleanupPreview, setDaysCleanupPreview] = useState<{
+        wouldClear: number;
+        companies: { companyId: string; rowNum: number; reason: string }[];
+    } | null>(null);
+    const [daysCleanupLoading, setDaysCleanupLoading] = useState(false);
+    const [daysCleanupRunning, setDaysCleanupRunning] = useState(false);
+    const [daysCleanupResult, setDaysCleanupResult] = useState<{ success: boolean; message: string } | null>(null);
+
     const [profile, setProfile] = useState({
         name: '',
         email: '',
@@ -258,6 +266,66 @@ function SettingsContent() {
             } as any);
         } finally {
             setSyncing(false);
+        }
+    };
+
+    const handleDaysAttendingCleanupPreview = async () => {
+        setDaysCleanupLoading(true);
+        setDaysCleanupResult(null);
+        try {
+            const res = await fetch('/api/cleanup-invalid-days-attending', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ dryRun: true }),
+            });
+            const data = await res.json();
+            if (!res.ok) {
+                throw new Error(data.error || data.details || 'Preview failed');
+            }
+            setDaysCleanupPreview({
+                wouldClear: data.wouldClear ?? data.cleared ?? 0,
+                companies: data.companies || [],
+            });
+        } catch (e) {
+            setDaysCleanupPreview(null);
+            setDaysCleanupResult({
+                success: false,
+                message: e instanceof Error ? e.message : 'Preview failed',
+            });
+        } finally {
+            setDaysCleanupLoading(false);
+        }
+    };
+
+    const handleDaysAttendingCleanupRun = async () => {
+        setDaysCleanupRunning(true);
+        setDaysCleanupResult(null);
+        try {
+            const res = await fetch('/api/cleanup-invalid-days-attending', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ dryRun: false }),
+            });
+            const data = await res.json();
+            if (!res.ok) {
+                throw new Error(data.error || data.details || 'Cleanup failed');
+            }
+            const n = data.cleared ?? 0;
+            setDaysCleanupResult({
+                success: true,
+                message:
+                    n === 0
+                        ? 'No rows needed changes (all days attending already valid).'
+                        : `Cleared days attending on ${n} tracker row(s).`,
+            });
+            setDaysCleanupPreview(null);
+        } catch (e) {
+            setDaysCleanupResult({
+                success: false,
+                message: e instanceof Error ? e.message : 'Cleanup failed',
+            });
+        } finally {
+            setDaysCleanupRunning(false);
         }
     };
 
@@ -976,6 +1044,66 @@ function SettingsContent() {
                                     {syncPreviewData && !syncPreviewData.success && (
                                         <div className="p-3 bg-red-50 rounded border border-red-200 text-sm text-red-700">
                                             {syncPreviewData.message}
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* Clear invalid Days attending (Tracker) */}
+                                <div className="p-4 bg-slate-50 rounded-lg border border-slate-200 space-y-4">
+                                    <h3 className="text-sm font-semibold text-slate-900">Clear invalid Days attending</h3>
+                                    <p className="text-xs text-slate-600">
+                                        Clears column N when the tracker still has Days attending but the row is not Registered, or is Registered without a sponsorship tier — the same rule as the dashboard Day Attendance widget. Preview first, then apply. Superadmin only.
+                                    </p>
+                                    <div className="flex flex-wrap gap-2">
+                                        <button
+                                            type="button"
+                                            onClick={handleDaysAttendingCleanupPreview}
+                                            disabled={daysCleanupLoading || daysCleanupRunning}
+                                            className="inline-flex items-center gap-2 px-4 py-2 bg-slate-200 text-slate-800 rounded-lg text-sm font-medium hover:bg-slate-300 disabled:opacity-50"
+                                        >
+                                            {daysCleanupLoading ? (
+                                                <div className="animate-spin rounded-full h-4 w-4 border-2 border-slate-400 border-t-slate-600" />
+                                            ) : null}
+                                            Preview affected rows
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={handleDaysAttendingCleanupRun}
+                                            disabled={daysCleanupRunning || daysCleanupLoading}
+                                            className="inline-flex items-center gap-2 px-4 py-2 bg-amber-100 text-amber-900 rounded-lg text-sm font-medium hover:bg-amber-200 disabled:opacity-50"
+                                        >
+                                            {daysCleanupRunning ? (
+                                                <div className="animate-spin rounded-full h-4 w-4 border-2 border-amber-400 border-t-amber-800" />
+                                            ) : null}
+                                            Clear on sheet
+                                        </button>
+                                    </div>
+                                    {daysCleanupPreview && (
+                                        <div className="p-3 bg-white rounded border border-slate-200 text-sm space-y-2 max-h-56 overflow-y-auto">
+                                            <div className="font-medium text-slate-700">
+                                                Would clear {daysCleanupPreview.wouldClear} row(s)
+                                            </div>
+                                            {daysCleanupPreview.companies.length === 0 ? (
+                                                <p className="text-slate-600">No invalid rows found.</p>
+                                            ) : (
+                                                <ul className="list-disc pl-4 space-y-1 text-xs text-slate-700">
+                                                    {daysCleanupPreview.companies.slice(0, 50).map((c) => (
+                                                        <li key={`${c.companyId}-${c.rowNum}`}>
+                                                            <span className="font-mono">{c.companyId}</span> — {c.reason}
+                                                        </li>
+                                                    ))}
+                                                </ul>
+                                            )}
+                                            {daysCleanupPreview.companies.length > 50 && (
+                                                <p className="text-xs text-slate-500">Showing first 50 of {daysCleanupPreview.companies.length}.</p>
+                                            )}
+                                        </div>
+                                    )}
+                                    {daysCleanupResult && (
+                                        <div
+                                            className={`p-3 rounded text-sm ${daysCleanupResult.success ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}
+                                        >
+                                            {daysCleanupResult.message}
                                         </div>
                                     )}
                                 </div>
