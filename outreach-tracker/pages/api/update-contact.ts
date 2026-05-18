@@ -39,6 +39,7 @@ export default async function handler(
             'email': 'H',
             'phone': 'I',
             'linkedin': 'K',
+            'reference': 'L',
             'remark': 'M',
             'isActive': 'N',
             'isEmailInvalid': 'Q',

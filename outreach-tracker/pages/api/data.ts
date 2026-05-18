@@ -200,7 +200,7 @@ export default async function handler(
                     previousParticipationStatus: cellTrim(row[4]),
                     discipline: row[2],
                     targetSponsorshipTier: row[3],
-                    reference: row[10],
+                    reference: row[11],
                     isFlagged: false,
                     isDeleted: false,
                     contacts: []
@@ -224,6 +224,7 @@ export default async function handler(
                     phone: row[8],
                     landline: row[9],
                     linkedin: row[10],
+                    reference: row[11],
                     remark: row[12],
                     isActive: row[13] === 'TRUE',
                     activeMethods: row[14] || '',

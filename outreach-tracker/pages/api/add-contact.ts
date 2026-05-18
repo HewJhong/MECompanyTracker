@@ -64,7 +64,7 @@ export default async function handler(
             contact.phone?.trim() || '',
             '', // Landline
             contact.linkedin?.trim() || '',
-            '', // Reference
+            contact.reference?.trim() || '',
             contact.remark?.trim() || '',
             contact.isActive ? 'TRUE' : 'FALSE',
             '', // O: activeMethods (comma-separated)
