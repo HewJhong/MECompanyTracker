@@ -78,8 +78,8 @@ sequenceDiagram
 
 **Relevant files:** `outreach-tracker/pages/api/data.ts`
 
-- [ ] Add `reference: row[11]` inside the `contacts.push({...})` object, following the same pattern as `linkedin`, `remark`, etc.
-- [ ] Fix the company-level mapping from `reference: row[10]` to `reference: row[11]` to correct the existing bug (even though this field is not currently displayed, keeping it correct prevents future confusion).
+- [x] Add `reference: row[11]` inside the `contacts.push({...})` object, following the same pattern as `linkedin`, `remark`, etc.
+- [x] Fix the company-level mapping from `reference: row[10]` to `reference: row[11]` to correct the existing bug (even though this field is not currently displayed, keeping it correct prevents future confusion).
 
 **Dependencies:** None.
 
@@ -93,8 +93,8 @@ sequenceDiagram
 
 **Relevant files:** `outreach-tracker/pages/api/add-contact.ts`
 
-- [ ] Replace the hardcoded `''` placeholder for column L with `contact.reference?.trim() || ''`.
-- [ ] No changes needed to the request body destructuring, as `contact` is already forwarded as an object — the new field just needs to be read from it.
+- [x] Replace the hardcoded `''` placeholder for column L with `contact.reference?.trim() || ''`.
+- [x] No changes needed to the request body destructuring, as `contact` is already forwarded as an object — the new field just needs to be read from it.
 
 **Dependencies:** None.
 
@@ -104,7 +104,7 @@ sequenceDiagram
 
 **Relevant files:** `outreach-tracker/pages/api/update-contact.ts`
 
-- [ ] Add `'reference': 'L'` to the `CONTACT_COL_MAP` dictionary.
+- [x] Add `'reference': 'L'` to the `CONTACT_COL_MAP` dictionary.
 
 **Dependencies:** None.
 
@@ -118,10 +118,10 @@ sequenceDiagram
 
 **Relevant files:** `outreach-tracker/pages/companies/[id].tsx`
 
-- [ ] Add `reference?: string` to the `Contact` interface.
-- [ ] Add `reference: ''` to the initial value of `newContact` state (the `useState` initialiser).
-- [ ] Add `reference: ''` to every place where `newContact` is reset (after save, after cancel) — there are several such resets in the file; search for `setNewContact({` to find them all.
-- [ ] In `startEditingContact`, populate `reference: contact.reference || ''` alongside the other fields.
+- [x] Add `reference?: string` to the `Contact` interface.
+- [x] Add `reference: ''` to the initial value of `newContact` state (the `useState` initialiser).
+- [x] Add `reference: ''` to every place where `newContact` is reset (after save, after cancel) — there are several such resets in the file; search for `setNewContact({` to find them all.
+- [x] In `startEditingContact`, populate `reference: contact.reference || ''` alongside the other fields.
 
 **Dependencies:** Phase 1 must be complete so the field arrives from the API.
 
@@ -131,9 +131,9 @@ sequenceDiagram
 
 **Relevant files:** `outreach-tracker/pages/companies/[id].tsx`
 
-- [ ] Add a text input for Reference, placed logically after the LinkedIn URL input and before (or alongside) the Remarks textarea.
-- [ ] Use the placeholder `"Referred by (e.g. Dr. Ahmad)"` or similar to communicate intent.
-- [ ] Wire `value` to `newContact.reference` and `onChange` to update the state (same pattern as other fields).
+- [x] Add a text input for Reference, placed logically after the LinkedIn URL input and before (or alongside) the Remarks textarea.
+- [x] Use the placeholder `"Referred by (e.g. Dr. Ahmad)"` or similar to communicate intent.
+- [x] Wire `value` to `newContact.reference` and `onChange` to update the state (same pattern as other fields).
 
 **Dependencies:** Task 3.1.
 
@@ -143,9 +143,9 @@ sequenceDiagram
 
 **Relevant files:** `outreach-tracker/pages/companies/[id].tsx`
 
-- [ ] In the contact card render block, conditionally render a small labelled line (e.g. `Referred by: Prof. Smith`) when `contact.reference` is non-empty.
-- [ ] Style it consistently with the existing `contact.remark` display (small, muted text). A label prefix like "Ref:" or "Referred by:" helps scanability.
-- [ ] Optionally make it copyable (same `handleCopyContactField` pattern used for phone, email, etc.).
+- [x] In the contact card render block, conditionally render a small labelled line (e.g. `Referred by: Prof. Smith`) when `contact.reference` is non-empty.
+- [x] Style it consistently with the existing `contact.remark` display (small, muted text). A label prefix like "Ref:" or "Referred by:" helps scanability.
+- [x] Optionally make it copyable (same `handleCopyContactField` pattern used for phone, email, etc.).
 
 **Dependencies:** Task 3.1.
 
@@ -155,8 +155,8 @@ sequenceDiagram
 
 **Relevant files:** `outreach-tracker/pages/companies/[id].tsx`
 
-- [ ] In the section that builds the `changes` array for contact updates (look for the block that checks `updates.linkedin`, `updates.remark`, etc.), add a comparable check for `updates.reference` and push a `Reference: old → new` entry when it changes.
-- [ ] Pass `reference: newContact.reference` in the updates object sent to `handleUpdateContact`.
+- [x] In the section that builds the `changes` array for contact updates (look for the block that checks `updates.linkedin`, `updates.remark`, etc.), add a comparable check for `updates.reference` and push a `Reference: old → new` entry when it changes.
+- [x] Pass `reference: newContact.reference` in the updates object sent to `handleUpdateContact`.
 
 **Dependencies:** Task 3.1, Task 3.2.
 
@@ -201,3 +201,14 @@ sequenceDiagram
 - The `reference` field is a free-text string. No validation or dropdown is needed — referrers can be any person (lecturer, student, alumnus, etc.).
 - Do not add Reference to the Add Company modal per user preference; it is only editable through the Contacts tab after a company is created.
 - When writing the history log entry for a new contact that includes a reference, consider whether to include it in the `historyLog` string sent to `add-contact.ts` (e.g. `[Contact Added]: Jane Doe (Procurement Manager) — Ref: Prof. Smith`). This is optional but improves auditability.
+
+---
+
+## Implementation Notes
+
+- **Completed:** Phases 1–3 implemented across `data.ts`, `add-contact.ts`, `update-contact.ts`, and `companies/[id].tsx`.
+- **UI location:** Company detail page → **Contacts** tab → inline add/edit form (field after LinkedIn) and contact card view (`Referred by:` line when set).
+- **Add Company modal:** Intentionally excluded per product decision.
+- **History log:** New contacts with a reference append `— Ref: …` to the Thread_History entry.
+- **Company-level `reference`:** Still populated from the first DB row for that company (`row[11]`); not shown in the UI — only per-contact reference is surfaced.
+- **Manual verification:** Run through the Testing Checklist in this plan against a dev/staging sheet after deploy.

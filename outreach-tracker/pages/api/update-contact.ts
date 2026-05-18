@@ -49,7 +49,11 @@ export default async function handler(
 
         Object.entries(updates).forEach(([key, value]) => {
             if (CONTACT_COL_MAP[key]) {
-                const val = (key === 'isActive') ? (value ? 'TRUE' : 'FALSE') : value;
+                const val = (key === 'isActive')
+                    ? (value ? 'TRUE' : 'FALSE')
+                    : (key === 'reference')
+                        ? String(value ?? '').trim()
+                        : value;
                 valueUpdates.push({
                     range: `${sheetName}!${CONTACT_COL_MAP[key]}${rowNumber}`,
                     values: [[val]]

@@ -200,7 +200,7 @@ export default async function handler(
                     previousParticipationStatus: cellTrim(row[4]),
                     discipline: row[2],
                     targetSponsorshipTier: row[3],
-                    reference: row[11],
+                    reference: cellTrim(row[11]),
                     isFlagged: false,
                     isDeleted: false,
                     contacts: []
@@ -213,7 +213,7 @@ export default async function handler(
             }
             const isArchived = (row[15] || '').toString().trim().toUpperCase() === 'Y';
             c.isDeleted = c.isDeleted || isArchived;
-            const hasContactInfo = (row[5] && row[5].trim()) || (row[7] && row[7].trim()) || (row[8] && row[8].trim()) || (row[10] && row[10].trim());
+            const hasContactInfo = (row[5] && row[5].trim()) || (row[7] && row[7].trim()) || (row[8] && row[8].trim()) || (row[10] && row[10].trim()) || cellTrim(row[11]);
             if (hasContactInfo) {
                 c.contacts.push({
                     id: `contact-${id}-${index}`,
@@ -224,7 +224,7 @@ export default async function handler(
                     phone: row[8],
                     landline: row[9],
                     linkedin: row[10],
-                    reference: row[11],
+                    reference: cellTrim(row[11]),
                     remark: row[12],
                     isActive: row[13] === 'TRUE',
                     activeMethods: row[14] || '',

@@ -47,6 +47,7 @@ interface Contact {
     isEmailInvalid?: boolean;
     role?: string;
     linkedin?: string;
+    reference?: string;
     remark?: string;
     isActive?: boolean;
     activeMethods?: string;
@@ -151,6 +152,19 @@ function withRejectionReasonTag(reason: string): string {
 }
 
 const STORAGE_KEY_SELECTION_RESTORE = 'companies_selection_restore';
+
+const EMPTY_NEW_CONTACT = {
+    name: '',
+    phone: '',
+    email: '',
+    role: '',
+    linkedin: '',
+    reference: '',
+    remark: '',
+    isActive: false,
+    isEmailInvalid: false,
+};
+
 // disciplineOptions and priorityOptions are now imported from mapping utilities
 
 export default function CompanyDetailPage() {
@@ -199,7 +213,7 @@ export default function CompanyDetailPage() {
     const [successMessage, setSuccessMessage] = useState('');
     const [showAddContact, setShowAddContact] = useState(false);
     const [editingContactId, setEditingContactId] = useState<string | null>(null);
-    const [newContact, setNewContact] = useState({ name: '', phone: '', email: '', role: '', linkedin: '', remark: '', isActive: false, isEmailInvalid: false });
+    const [newContact, setNewContact] = useState({ ...EMPTY_NEW_CONTACT });
     const [committeeMembers, setCommitteeMembers] = useState<{ name: string, email: string, role: string }[]>([]);
 
     // Custom Modal States
@@ -1329,6 +1343,7 @@ export default function CompanyDetailPage() {
                     isEmailInvalid: updates.isEmailInvalid ?? c.isEmailInvalid,
                     phone: updates.phone ?? c.phone,
                     linkedin: updates.linkedin ?? c.linkedin,
+                    reference: updates.reference ?? c.reference,
                     remark: updates.remark ?? c.remark,
                     isActive: updates.isActive ?? c.isActive
                 };
@@ -1377,6 +1392,9 @@ export default function CompanyDetailPage() {
                         if (updates.linkedin !== undefined && norm(updates.linkedin) !== norm(originalContact.linkedin))
                             changes.push(`LinkedIn: ${fmt(originalContact.linkedin)} → ${updates.linkedin}`);
 
+                        if (updates.reference !== undefined && norm(updates.reference) !== norm(originalContact.reference))
+                            changes.push(`Reference: ${fmt(originalContact.reference)} → ${updates.reference}`);
+
                         if (updates.remark !== undefined && norm(updates.remark) !== norm(originalContact.remark))
                             changes.push(`Remark: ${fmt(originalContact.remark)} → ${updates.remark}`);
 
@@ -1416,12 +1434,13 @@ export default function CompanyDetailPage() {
                     email: newContact.email,
                     phone: newContact.phone,
                     linkedin: newContact.linkedin,
+                    reference: newContact.reference,
                     remark: newContact.remark,
                     isActive: newContact.isActive,
                     isEmailInvalid: newContact.isEmailInvalid,
                 });
                 setEditingContactId(null);
-                setNewContact({ name: '', phone: '', email: '', role: '', linkedin: '', remark: '', isActive: false, isEmailInvalid: false });
+                setNewContact({ ...EMPTY_NEW_CONTACT });
                 setShowAddContact(false);
             } catch (error) {
                 // Errors handled in handleUpdateContact
@@ -1438,14 +1457,14 @@ export default function CompanyDetailPage() {
                         discipline: company?.discipline || '',
                         contact: newContact,
                         user: currentUser,
-                        historyLog: `[Contact Added]: ${newContact.name} (${newContact.role || 'No role'})`
+                        historyLog: `[Contact Added]: ${newContact.name} (${newContact.role || 'No role'})${newContact.reference?.trim() ? ` — Ref: ${newContact.reference.trim()}` : ''}`
                     })
                 });
 
                 if (res.ok) {
                     fetchData(true);
                     completeTask(taskId, 'Contact added successfully');
-                    setNewContact({ name: '', phone: '', email: '', role: '', linkedin: '', remark: '', isActive: false, isEmailInvalid: false });
+                    setNewContact({ ...EMPTY_NEW_CONTACT });
                     setShowAddContact(false);
                 } else {
                     throw new Error('Failed to add contact');
@@ -1466,6 +1485,12 @@ export default function CompanyDetailPage() {
         });
     };
 
+    const resetContactForm = () => {
+        setNewContact({ ...EMPTY_NEW_CONTACT });
+        setShowAddContact(false);
+        setEditingContactId(null);
+    };
+
     const startEditingContact = (contact: Contact) => {
         setEditingContactId(contact.id);
         setNewContact({
@@ -1474,6 +1499,7 @@ export default function CompanyDetailPage() {
             email: contact.email || '',
             role: contact.role || '',
             linkedin: contact.linkedin || '',
+            reference: contact.reference?.trim() || '',
             remark: contact.remark || '',
             isActive: contact.isActive || false,
             isEmailInvalid: contact.isEmailInvalid || false,
@@ -2503,9 +2529,13 @@ export default function CompanyDetailPage() {
                                     <button
                                         type="button"
                                         onClick={() => {
-                                            setShowAddContact(!showAddContact);
-                                            setEditingContactId(null);
-                                            setNewContact({ name: '', phone: '', email: '', role: '', linkedin: '', remark: '', isActive: false, isEmailInvalid: false });
+                                            if (showAddContact) {
+                                                resetContactForm();
+                                            } else {
+                                                setEditingContactId(null);
+                                                setNewContact({ ...EMPTY_NEW_CONTACT });
+                                                setShowAddContact(true);
+                                            }
                                         }}
                                         className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded-lg"
                                     >
@@ -2562,6 +2592,13 @@ export default function CompanyDetailPage() {
                                         onChange={(e) => setNewContact({ ...newContact, linkedin: e.target.value })}
                                         className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
                                     />
+                                    <input
+                                        type="text"
+                                        placeholder="Referred by (e.g. Dr. Ahmad)"
+                                        value={newContact.reference}
+                                        onChange={(e) => setNewContact({ ...newContact, reference: e.target.value })}
+                                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+                                    />
                                     <textarea
                                         placeholder="Contact-specific remarks..."
                                         value={newContact.remark}
@@ -2580,7 +2617,7 @@ export default function CompanyDetailPage() {
                                         </button>
                                         <button
                                             type="button"
-                                            onClick={() => { setShowAddContact(false); setEditingContactId(null); }}
+                                            onClick={resetContactForm}
                                             className="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 rounded-lg"
                                         >
                                             Cancel
@@ -2708,6 +2745,20 @@ export default function CompanyDetailPage() {
                                                         </div>
                                                     )}
                                                 </div>
+                                                {contact.reference?.trim() && (
+                                                    <p className="text-xs text-slate-500 mt-2">
+                                                        <span className="text-slate-400">Referred by:</span>{' '}
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleCopyContactField(contact.reference!.trim(), `${contact.id}-reference`)}
+                                                            title="Click to copy"
+                                                            className="text-left hover:bg-slate-100 rounded px-0.5 -mx-0.5 py-0.5 transition-colors cursor-pointer"
+                                                        >
+                                                            {contact.reference.trim()}
+                                                        </button>
+                                                        {copiedContactField === `${contact.id}-reference` && <span className="text-xs text-green-600 font-medium ml-1">Copied!</span>}
+                                                    </p>
+                                                )}
                                                 {contact.remark && (
                                                     <p className="text-xs text-slate-500 mt-2 italic">
                                                         <button
