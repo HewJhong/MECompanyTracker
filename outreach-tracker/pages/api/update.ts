@@ -88,6 +88,9 @@ export default async function handler(
         const currentDaysAttending = (curSlice[TRACKER_ROW_INDEX.daysAttending - TRACKER_ROW_INDEX.relationshipStatus] ?? '')
             .toString()
             .trim();
+        const currentSponsorshipTier = (curSlice[TRACKER_ROW_INDEX.sponsorshipTier - TRACKER_ROW_INDEX.relationshipStatus] ?? '')
+            .toString()
+            .trim();
 
         const requestedRelationship =
             updates.relationshipStatus !== undefined ? (updates.relationshipStatus ?? '').toString().trim() : undefined;
@@ -95,6 +98,9 @@ export default async function handler(
             currentRelationship === 'Registered' &&
             requestedRelationship !== undefined &&
             requestedRelationship !== 'Registered';
+        const rejectingCompany =
+            requestedRelationship !== undefined &&
+            requestedRelationship === 'Rejected';
 
         let autoDayClearNote = '';
         if (leavingRegistered) {
@@ -102,6 +108,12 @@ export default async function handler(
             if (currentDaysAttending) {
                 autoDayClearNote = `[Auto] Cleared Days attending (relationship no longer Registered). Previously: ${currentDaysAttending}`;
             }
+        }
+
+        let autoSponsorshipClearNote = '';
+        if (rejectingCompany && currentSponsorshipTier) {
+            updates.sponsorshipTier = '';
+            autoSponsorshipClearNote = `[Auto] Cleared Registered Sponsorship (relationship rejected). Previously: ${currentSponsorshipTier}`;
         }
 
         const TRACKER_MAP = TRACKER_FIELD_TO_COLUMN;
@@ -128,6 +140,9 @@ export default async function handler(
         let remarkText = typeof remark === 'string' ? remark : '';
         if (autoDayClearNote) {
             remarkText = remarkText ? `${remarkText}\n\n${autoDayClearNote}` : autoDayClearNote;
+        }
+        if (autoSponsorshipClearNote) {
+            remarkText = remarkText ? `${remarkText}\n\n${autoSponsorshipClearNote}` : autoSponsorshipClearNote;
         }
         if (!updates.contactStatus) {
             const currentDataRange = await withSheetsRetry(

@@ -416,8 +416,8 @@ export default function CompanyDetailPage() {
     }, [company?.id]);
 
     useEffect(() => {
-        if (company?.id && user?.isAdmin) fetchScheduleForCompany();
-    }, [company?.id, user?.isAdmin, fetchScheduleForCompany]);
+        if (company?.id && user?.canEditCompanies) fetchScheduleForCompany();
+    }, [company?.id, user?.canEditCompanies, fetchScheduleForCompany]);
 
     // When admin changes outreach date, fetch next available start time
     useEffect(() => {
@@ -916,15 +916,6 @@ export default function CompanyDetailPage() {
     }));
     const history: HistoryEntry[] = company?.history || [];
 
-    const staleThresholdDays = 3;
-    const isCompanyStalled = lastCompanyActivity ? (Date.now() - new Date(lastCompanyActivity).getTime()) / (1000 * 60 * 60 * 24) > 7 : false;
-    // Follow-up due: only show when status is Contacted and it's been at least 3 days since last committee contact (lastContact = when we last contacted them)
-    const lastCommitteeContactValue = company?.lastContact || '';
-    const lastCommitteeContactAtMs = parseIsoLikeTimestamp(lastCommitteeContactValue);
-    const isFollowUpDue = company?.contactStatus === 'Contacted'
-        && lastCommitteeContactAtMs !== null
-        && (Date.now() - lastCommitteeContactAtMs) / (1000 * 60 * 60 * 24) >= 3;
-
     // Warning Logic: Company Replied > Committee Contact > 3 Days
     const needsReplyWarning = (() => {
         if (!company?.previousResponse || !company.lastContact) return false;
@@ -953,12 +944,6 @@ export default function CompanyDetailPage() {
         if (!next) return null;
         return { ...next, isOverdue: next.ts < now };
     })();
-    const daysSinceCommitteeContact = lastCommitteeContactAtMs === null
-        ? null
-        : (Date.now() - lastCommitteeContactAtMs) / (1000 * 60 * 60 * 24);
-    const isCommitteeStale = contactStatus === 'To Contact'
-        ? !!nextPendingEmailSchedule?.isOverdue
-        : (lastCommitteeContactAtMs === null || (daysSinceCommitteeContact !== null && daysSinceCommitteeContact > staleThresholdDays));
 
     // Success messages now shown via background tasks only
 
@@ -1890,18 +1875,6 @@ export default function CompanyDetailPage() {
                                 </button>
                             )}
                             {isFlagged && <FlagIcon className="w-6 h-6 text-red-400 flex-shrink-0" aria-label="Flagged" />}
-                            {isCommitteeStale && (
-                                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-100 text-amber-700 text-xs font-bold border border-amber-200">
-                                    <ClockIcon className="w-3 h-3" />
-                                    STALE
-                                </span>
-                            )}
-                            {isFollowUpDue && (
-                                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-100 text-amber-700 text-xs font-bold border border-amber-200">
-                                    <ClockIcon className="w-3 h-3" />
-                                    FOLLOW-UP DUE
-                                </span>
-                            )}
                             {needsReplyWarning && (
                                 <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-red-100 text-red-700 text-xs font-bold border border-red-200 animate-pulse">
                                     <ExclamationTriangleIcon className="w-3 h-3" />
@@ -1914,16 +1887,6 @@ export default function CompanyDetailPage() {
                                     {new Date(nextPendingEmailSchedule.date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}, {formatTime(nextPendingEmailSchedule.time)}
                                 </span>
                             )}
-                            {(() => {
-                                const hasIncompleteFollowUp = scheduleEntries.some(e => e.completed !== 'Y');
-                                const isLaterStage = ['Interested', 'Registered'].includes(relationshipStatus);
-                                return hasIncompleteFollowUp && isLaterStage ? (
-                                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-100 text-amber-700 text-xs font-bold border border-amber-200">
-                                        <CalendarDaysIcon className="w-3 h-3" />
-                                        Follow-up scheduled
-                                    </span>
-                                ) : null;
-                            })()}
                         </div>
                     </div>
                 </div>

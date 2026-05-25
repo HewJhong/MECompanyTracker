@@ -69,6 +69,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 details: `Expected Days attending at column index 13 (N); header resolved to index ${daysAttendingHeaderIndex}.`,
             });
         }
+        const sponsorshipTierHeaderIndex = headers.findIndex((h: string) => h === 'registered sponsorship' || h === 'sponsorship tier');
+        if (sponsorshipTierHeaderIndex !== -1 && sponsorshipTierHeaderIndex !== 12) {
+            return res.status(500).json({
+                error: 'Tracker sheet column layout mismatch for Registered Sponsorship',
+                details: `Expected Registered Sponsorship at column index 12 (M); header resolved to index ${sponsorshipTierHeaderIndex}.`,
+            });
+        }
 
         if (statusColumnIndex === -1) {
             return res.status(500).json({
@@ -81,6 +88,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         const updates: { range: string; values: string[][] }[] = [];
         const successfulIds: string[] = [];
         const clearDaysWhenNotRegistered = field === 'relationshipStatus' && value !== 'Registered';
+        const clearSponsorshipWhenRejected = field === 'relationshipStatus' && value === 'Rejected';
 
         for (const companyId of companyIds) {
             const rowIndex = rows.findIndex(row => row[0] === companyId);
@@ -99,6 +107,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 if (clearDaysWhenNotRegistered) {
                     updates.push({
                         range: `${safeSheetName}!${TRACKER_COLUMN.daysAttending}${rowNum}`,
+                        values: [['']],
+                    });
+                }
+                if (clearSponsorshipWhenRejected) {
+                    updates.push({
+                        range: `${safeSheetName}!${TRACKER_COLUMN.sponsorshipTier}${rowNum}`,
                         values: [['']],
                     });
                 }
@@ -132,7 +146,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                         timestamp,
                         id,
                         actorName,
-                        `Bulk ${field} update to "${value}" (from All Companies)${clearDaysWhenNotRegistered ? '; Days attending cleared (Registered-only field)' : ''}`,
+                        `Bulk ${field} update to "${value}" (from All Companies)${clearDaysWhenNotRegistered ? '; Days attending cleared (Registered-only field)' : ''}${clearSponsorshipWhenRejected ? '; Registered Sponsorship cleared (rejected companies)' : ''}`,
                     ]),
                 },
             });
@@ -150,7 +164,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                         timestamp,
                         actorName,
                         'BULK_UPDATE_STATUS',
-                        `Set ${field} to "${value}" for ${successfulIds.length} companies${clearDaysWhenNotRegistered ? '; cleared Days attending (column N)' : ''}`,
+                        `Set ${field} to "${value}" for ${successfulIds.length} companies${clearDaysWhenNotRegistered ? '; cleared Days attending (column N)' : ''}${clearSponsorshipWhenRejected ? '; cleared Registered Sponsorship (column M)' : ''}`,
                         successfulIds.join('; '),
                     ]],
                 },
