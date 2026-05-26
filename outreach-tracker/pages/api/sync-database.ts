@@ -199,14 +199,18 @@ export default async function handler(
             if (primaryRow) {
                 claimedRows.add(primaryRow.rowIndex);
 
-                // When the ID matches, it is safe to align the tracker company name to the Database.
-                if (primaryRow.currentName.trim() !== dbName) {
-                    nameMismatches.push({
-                        rowIndex: primaryRow.rowIndex,
-                        oldName: primaryRow.currentName,
-                        newName: dbName,
-                        id: dbId
-                    });
+                // Check ALL tracker rows for this ID (including duplicates) so we catch any
+                // row whose name diverges from the database — matching data.ts mismatch detection.
+                const allEntries = trackerEntriesById.get(dbIdKey)!;
+                for (const entry of allEntries) {
+                    if (entry.name.trim() !== dbName) {
+                        nameMismatches.push({
+                            rowIndex: entry.rowIndex,
+                            oldName: entry.name,
+                            newName: dbName,
+                            id: dbId
+                        });
+                    }
                 }
             } else {
                 // No existing row found - add new (16-column layout)
@@ -481,7 +485,7 @@ export default async function handler(
         return res.status(200).json({
             success: true,
             preview,
-            stats: { ...stats, idNameMismatchesCount: idNameMismatches.length },
+            stats: { ...stats, idNameMismatchesCount: nameMismatches.length },
             details: {
                 added: missingInTracker.map(r => ({ id: r[0], name: r[1] })),
                 nameCorrections: nameMismatches.map(m => ({ id: m.id, oldName: m.oldName, newName: m.newName })),

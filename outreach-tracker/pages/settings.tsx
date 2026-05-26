@@ -240,7 +240,7 @@ function SettingsContent() {
                     const { added, addedToDatabase, updated, duplicatesRemoved, idNameMismatchesCount = 0 } = data.stats;
                     let msg = `Sync complete: Added ${added} to tracker, ${addedToDatabase} to database, updated ${updated} companies, and removed ${duplicatesRemoved} duplicates.`;
                     if (idNameMismatchesCount > 0) {
-                        msg += ` ${idNameMismatchesCount} ID/name mismatch(es) flagged for manual review.`;
+                        msg += ` ${idNameMismatchesCount} name mismatch(es) detected (auto-corrected).`;
                     }
                     setSyncResult({
                         success: true,

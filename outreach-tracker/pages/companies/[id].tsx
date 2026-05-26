@@ -958,25 +958,78 @@ export default function CompanyDetailPage() {
         const timestamp = companyResponseDate ? new Date(companyResponseDate).toISOString() : new Date().toISOString();
 
         const actionTag = isFirstOutreach ? 'Outreach' : 'Follow-up';
-        const remarkPrefix = `[${actionTag} #${newCount}]`;
+        const formattedTime = formatDate(timestamp);
+        const remarkPrefix = `[${actionTag} #${newCount} - ${formattedTime}]`;
 
-        // Stage changes locally
-        if (contactStatus === 'To Contact') {
-            setContactStatus('Contacted');
-        }
+        // Compute final remark eagerly so we can use it in the API call
+        const currentRemarks = remarks.trim();
+        const finalRemark = currentRemarks.startsWith(remarkPrefix)
+            ? currentRemarks
+            : currentRemarks ? `${remarkPrefix} ${currentRemarks}` : `${remarkPrefix} Logged`;
+
+        const newContactStatus = isFirstOutreach ? 'Contacted' : contactStatus;
+
+        // Stage changes locally (optimistic UI update)
+        setContactStatus(newContactStatus);
         setFollowUpsCompleted(newCount);
         setLastCompanyActivity(timestamp);
         setLastCommitteeContact(timestamp);
+        setRemarks(finalRemark);
 
-        // Append prefix to remarks if not already there
-        setRemarks(prev => {
-            const trimmed = prev.trim();
-            if (trimmed.startsWith(remarkPrefix)) return trimmed;
-            return trimmed ? `${remarkPrefix} ${trimmed}` : `${remarkPrefix} Logged`;
-        });
-
-        setHasUnsavedChanges(true);
-        setShowUnsavedWarning(true);
+        // Auto-save immediately using computed values (not state, which hasn't updated yet)
+        setIsSaving(true);
+        const previousCompanyState = { ...company };
+        const taskId = addTask(`Logging ${actionTag} for ${company.name}...`);
+        try {
+            const res = await fetch('/api/update', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    companyId: company.id,
+                    updates: {
+                        contactStatus: newContactStatus,
+                        followUpsCompleted: newCount,
+                        lastContact: timestamp,
+                    },
+                    user: currentUser,
+                    remark: finalRemark
+                })
+            });
+            if (res.ok) {
+                const result = await res.json();
+                if (result.verifiedData) {
+                    setCompany(prev => prev ? {
+                        ...prev,
+                        contactStatus: result.verifiedData.contactStatus,
+                        followUpsCompleted: result.verifiedData.followUpsCompleted,
+                        lastContact: result.verifiedData.lastContact,
+                        lastUpdated: result.verifiedData.lastUpdated,
+                        remark: result.verifiedData.remark,
+                    } : null);
+                    setContactStatus(result.verifiedData.contactStatus || 'To Contact');
+                    setFollowUpsCompleted(result.verifiedData.followUpsCompleted);
+                    setLastCommitteeContact(result.verifiedData.lastContact || '');
+                }
+                fetchData(true);
+                setRemarks('');
+                setHasUnsavedChanges(false);
+                setShowUnsavedWarning(false);
+                completeTask(taskId, `${actionTag} logged successfully`);
+                markScheduleEntryCompleted();
+            } else {
+                throw new Error('Update failed');
+            }
+        } catch (error) {
+            console.error('Failed to log outreach', error);
+            failTask(taskId, `Failed to log ${actionTag}`);
+            setCompany(previousCompanyState);
+            setContactStatus(previousCompanyState.contactStatus || 'To Contact');
+            setFollowUpsCompleted(previousCompanyState.followUpsCompleted || 0);
+            setLastCommitteeContact(previousCompanyState.lastContact || '');
+            setRemarks('');
+        } finally {
+            setIsSaving(false);
+        }
     };
 
     const handleLogCompanyReply = async () => {
@@ -984,42 +1037,138 @@ export default function CompanyDetailPage() {
 
         const timestamp = new Date().toISOString();
         const replyDateISO = companyResponseDate ? new Date(companyResponseDate).toISOString() : timestamp;
-        const remarkPrefix = `[Company Reply]`;
+        const formattedTime = formatDate(replyDateISO);
+        const remarkPrefix = `[Company Reply - ${formattedTime}]`;
 
-        // Stage changes locally — company replied positively: move to To Follow Up contact-wise,
-        // and mark Interested unless already Registered (avoid regressing a closed deal).
-        if (relationshipStatus !== 'Registered') setRelationshipStatus('Interested');
+        // Compute final remark eagerly
+        const currentRemarks = remarks.trim();
+        const finalRemark = currentRemarks.startsWith(remarkPrefix)
+            ? currentRemarks
+            : currentRemarks ? `${remarkPrefix} ${currentRemarks}` : `${remarkPrefix} Received`;
+
+        const newRelationshipStatus = relationshipStatus !== 'Registered' ? 'Interested' : relationshipStatus;
+
+        // Stage changes locally (optimistic UI update)
+        setRelationshipStatus(newRelationshipStatus);
         setContactStatus('To Follow Up');
         setCompanyResponseDate(replyDateISO);
+        setRemarks(finalRemark);
 
-        setRemarks(prev => {
-            const trimmed = prev.trim();
-            if (trimmed.startsWith(remarkPrefix)) return trimmed;
-            return trimmed ? `${remarkPrefix} ${trimmed}` : `${remarkPrefix} Received`;
-        });
-
-        setHasUnsavedChanges(true);
-        setShowUnsavedWarning(true);
+        // Auto-save immediately using computed values
+        setIsSaving(true);
+        const previousCompanyState = { ...company };
+        const taskId = addTask(`Logging Company Reply for ${company.name}...`);
+        try {
+            const res = await fetch('/api/update', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    companyId: company.id,
+                    updates: {
+                        contactStatus: 'To Follow Up',
+                        ...(relationshipStatus !== 'Registered' ? { relationshipStatus: 'Interested' } : {}),
+                        lastCompanyActivity: replyDateISO,
+                    },
+                    user: currentUser,
+                    remark: finalRemark
+                })
+            });
+            if (res.ok) {
+                const result = await res.json();
+                if (result.verifiedData) {
+                    setCompany(prev => prev ? {
+                        ...prev,
+                        contactStatus: result.verifiedData.contactStatus,
+                        relationshipStatus: result.verifiedData.relationshipStatus,
+                        lastUpdated: result.verifiedData.lastUpdated,
+                        remark: result.verifiedData.remark,
+                    } : null);
+                    setContactStatus(result.verifiedData.contactStatus || 'To Follow Up');
+                    setRelationshipStatus(result.verifiedData.relationshipStatus || newRelationshipStatus);
+                }
+                fetchData(true);
+                setRemarks('');
+                setHasUnsavedChanges(false);
+                setShowUnsavedWarning(false);
+                completeTask(taskId, 'Company reply logged successfully');
+            } else {
+                throw new Error('Update failed');
+            }
+        } catch (error) {
+            console.error('Failed to log company reply', error);
+            failTask(taskId, 'Failed to log company reply');
+            setCompany(previousCompanyState);
+            setContactStatus(previousCompanyState.contactStatus || 'To Contact');
+            setRelationshipStatus(previousCompanyState.relationshipStatus || '');
+            setRemarks('');
+        } finally {
+            setIsSaving(false);
+        }
     };
 
     const handleLogOurReply = async () => {
         if (!company) return;
 
         const timestamp = companyResponseDate ? new Date(companyResponseDate).toISOString() : new Date().toISOString();
-        const remarkPrefix = `[Our Reply]`;
+        const formattedTime = formatDate(timestamp);
+        const remarkPrefix = `[Our Reply - ${formattedTime}]`;
 
-        // Stage changes locally
+        // Compute final remark eagerly
+        const currentRemarks = remarks.trim();
+        const finalRemark = currentRemarks.startsWith(remarkPrefix)
+            ? currentRemarks
+            : currentRemarks ? `${remarkPrefix} ${currentRemarks}` : `${remarkPrefix} Sent`;
+
+        // Stage changes locally (optimistic UI update)
         setLastCompanyActivity(timestamp);
         setLastCommitteeContact(timestamp);
+        setRemarks(finalRemark);
 
-        setRemarks(prev => {
-            const trimmed = prev.trim();
-            if (trimmed.startsWith(remarkPrefix)) return trimmed;
-            return trimmed ? `${remarkPrefix} ${trimmed}` : `${remarkPrefix} Sent`;
-        });
-
-        setHasUnsavedChanges(true);
-        setShowUnsavedWarning(true);
+        // Auto-save immediately using computed values
+        setIsSaving(true);
+        const previousCompanyState = { ...company };
+        const taskId = addTask(`Logging Our Reply for ${company.name}...`);
+        try {
+            const res = await fetch('/api/update', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    companyId: company.id,
+                    updates: {
+                        lastContact: timestamp,
+                    },
+                    user: currentUser,
+                    remark: finalRemark
+                })
+            });
+            if (res.ok) {
+                const result = await res.json();
+                if (result.verifiedData) {
+                    setCompany(prev => prev ? {
+                        ...prev,
+                        lastContact: result.verifiedData.lastContact,
+                        lastUpdated: result.verifiedData.lastUpdated,
+                        remark: result.verifiedData.remark,
+                    } : null);
+                    setLastCommitteeContact(result.verifiedData.lastContact || '');
+                }
+                fetchData(true);
+                setRemarks('');
+                setHasUnsavedChanges(false);
+                setShowUnsavedWarning(false);
+                completeTask(taskId, 'Our reply logged successfully');
+            } else {
+                throw new Error('Update failed');
+            }
+        } catch (error) {
+            console.error('Failed to log our reply', error);
+            failTask(taskId, 'Failed to log our reply');
+            setCompany(previousCompanyState);
+            setLastCommitteeContact(previousCompanyState.lastContact || '');
+            setRemarks('');
+        } finally {
+            setIsSaving(false);
+        }
     };
 
     const handleResetFollowUps = async () => {
