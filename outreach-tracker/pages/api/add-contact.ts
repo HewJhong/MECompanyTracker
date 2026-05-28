@@ -70,11 +70,12 @@ export default async function handler(
             '', // O: activeMethods (comma-separated)
             '', // P: Archived?
             contact.isEmailInvalid ? 'TRUE' : 'FALSE', // Q: isEmailInvalid
+            contact.isPhoneInvalid ? 'TRUE' : 'FALSE', // R: isPhoneInvalid
         ];
 
         await sheets.spreadsheets.values.append({
             spreadsheetId: databaseSpreadsheetId,
-            range: `${sheetName}!A:Q`,
+            range: `${sheetName}!A:R`,
             valueInputOption: 'USER_ENTERED',
             requestBody: { values: [newRow] }
         });

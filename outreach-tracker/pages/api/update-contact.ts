@@ -43,6 +43,7 @@ export default async function handler(
             'remark': 'M',
             'isActive': 'N',
             'isEmailInvalid': 'Q',
+            'isPhoneInvalid': 'R',
         };
 
         const valueUpdates: any[] = [];
@@ -61,16 +62,23 @@ export default async function handler(
             }
         });
 
-        // If email is being marked invalid, force-clear it from activeMethods and isActive.
+        // If email/phone is being marked invalid, force-clear it from activeMethods and isActive.
         // This prevents accidentally selecting/sending to a known-bad address.
+        const invalidatedMethods: string[] = [];
         if (Object.prototype.hasOwnProperty.call(updates, 'isEmailInvalid') && updates.isEmailInvalid === true) {
+            invalidatedMethods.push('email');
+        }
+        if (Object.prototype.hasOwnProperty.call(updates, 'isPhoneInvalid') && updates.isPhoneInvalid === true) {
+            invalidatedMethods.push('phone');
+        }
+        if (invalidatedMethods.length > 0) {
             const dbResponse = await sheets.spreadsheets.values.get({
                 spreadsheetId,
                 range: `${sheetName}!O${rowNumber}`,
             });
             const currentMethodsStr = dbResponse.data.values?.[0]?.[0] || '';
             const currentMethods = currentMethodsStr ? currentMethodsStr.split(',').filter(Boolean) : [];
-            const newMethods = currentMethods.filter((m: string) => m !== 'email');
+            const newMethods = currentMethods.filter((m: string) => !invalidatedMethods.includes(m));
             valueUpdates.push(
                 { range: `${sheetName}!O${rowNumber}`, values: [[newMethods.join(',')]] },
                 { range: `${sheetName}!N${rowNumber}`, values: [[newMethods.length > 0 ? 'TRUE' : 'FALSE']] },
