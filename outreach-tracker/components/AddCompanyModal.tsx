@@ -7,16 +7,19 @@ interface AddCompanyModalProps {
     onClose: () => void;
     onSuccess: () => void;
     committeeMembers: { name: string; email: string; role: string }[];
+    existingBatchLabels?: string[];
 }
 
-export default function AddCompanyModal({ isOpen, onClose, onSuccess, committeeMembers }: AddCompanyModalProps) {
+export default function AddCompanyModal({ isOpen, onClose, onSuccess, committeeMembers, existingBatchLabels = [] }: AddCompanyModalProps) {
     const [companyName, setCompanyName] = useState('');
     const [discipline, setDiscipline] = useState('');
     const [contactName, setContactName] = useState('');
+    const [contactRole, setContactRole] = useState('');
     const [contactEmail, setContactEmail] = useState('');
     const [contactPhone, setContactPhone] = useState('');
     const [assignedTo, setAssignedTo] = useState('');
     const [remarks, setRemarks] = useState('');
+    const [batchLabel, setBatchLabel] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [error, setError] = useState('');
 
@@ -26,12 +29,23 @@ export default function AddCompanyModal({ isOpen, onClose, onSuccess, committeeM
             setCompanyName('');
             setDiscipline('');
             setContactName('');
+            setContactRole('');
             setContactEmail('');
             setContactPhone('');
             setAssignedTo('');
             setRemarks('');
+            setBatchLabel('');
             setError('');
         }
+    }, [isOpen]);
+
+    // Prefill batch label with today's date when modal first opens
+    useEffect(() => {
+        if (isOpen && !batchLabel) {
+            const today = new Date().toISOString().slice(0, 10);
+            setBatchLabel(today);
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [isOpen]);
 
     const handleSubmit = async (e: React.FormEvent) => {
@@ -59,10 +73,12 @@ export default function AddCompanyModal({ isOpen, onClose, onSuccess, committeeM
                     companyName: companyName.trim(),
                     discipline,
                     contactName: contactName.trim() || undefined,
+                    contactRole: contactRole.trim() || undefined,
                     contactEmail: contactEmail.trim() || undefined,
                     contactPhone: contactPhone.trim() || undefined,
                     assignedTo: assignedTo || 'Unassigned',
-                    remarks: remarks.trim() || undefined
+                    remarks: remarks.trim() || undefined,
+                    batchLabel: batchLabel.trim() || undefined,
                 })
             });
 
@@ -172,6 +188,20 @@ export default function AddCompanyModal({ isOpen, onClose, onSuccess, committeeM
                                 </div>
 
                                 <div>
+                                    <label htmlFor="contactRole" className="block text-sm font-medium text-slate-700 mb-2">
+                                        Position / Role
+                                    </label>
+                                    <input
+                                        type="text"
+                                        id="contactRole"
+                                        value={contactRole}
+                                        onChange={(e) => setContactRole(e.target.value)}
+                                        className="w-full px-4 py-2.5 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                        placeholder="e.g. HR Manager, Director"
+                                    />
+                                </div>
+
+                                <div>
                                     <label htmlFor="contactEmail" className="block text-sm font-medium text-slate-700 mb-2">
                                         Contact Email
                                     </label>
@@ -234,6 +264,32 @@ export default function AddCompanyModal({ isOpen, onClose, onSuccess, committeeM
                                 className="w-full px-4 py-2.5 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
                                 placeholder="Add any additional notes..."
                             />
+                        </div>
+
+                        {/* Batch Label */}
+                        <div className="border-t border-slate-200 pt-6">
+                            <label htmlFor="batchLabel" className="block text-sm font-medium text-slate-700 mb-1">
+                                Batch Label
+                            </label>
+                            <p className="text-xs text-slate-500 mb-2">
+                                Group companies added together (e.g. a set of name cards). Prefilled with today&apos;s date — edit to give the batch a meaningful name.
+                            </p>
+                            <input
+                                type="text"
+                                id="batchLabel"
+                                list="batchLabel-suggestions"
+                                value={batchLabel}
+                                onChange={(e) => setBatchLabel(e.target.value)}
+                                className="w-full px-4 py-2.5 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                placeholder="e.g. CIDB Conference May 2026"
+                            />
+                            {existingBatchLabels.length > 0 && (
+                                <datalist id="batchLabel-suggestions">
+                                    {existingBatchLabels.map(label => (
+                                        <option key={label} value={label} />
+                                    ))}
+                                </datalist>
+                            )}
                         </div>
 
                         {/* Actions */}

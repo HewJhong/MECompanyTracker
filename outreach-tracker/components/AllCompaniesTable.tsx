@@ -160,10 +160,12 @@ const COLUMN_WIDTHS = {
     assignedTo: 180,
     scheduled: 170,
     lastUpdated: 200,
+    createdAt: 200,
     followUps: 120,
+    batchLabel: 180,
 } as const;
 
-type ColumnKey = 'id' | 'status' | 'discipline' | 'targetTier' | 'registeredTier' | 'daysAttending' | 'previousParticipationStatus' | 'contact' | 'emails' | 'phones' | 'assignedTo' | 'scheduled' | 'lastUpdated' | 'followUps';
+type ColumnKey = 'id' | 'status' | 'discipline' | 'targetTier' | 'registeredTier' | 'daysAttending' | 'previousParticipationStatus' | 'contact' | 'emails' | 'phones' | 'assignedTo' | 'scheduled' | 'lastUpdated' | 'createdAt' | 'followUps' | 'batchLabel';
 
 const COLUMN_LABELS: Record<ColumnKey, string> = {
     id: 'ID',
@@ -179,7 +181,9 @@ const COLUMN_LABELS: Record<ColumnKey, string> = {
     assignedTo: 'Assigned To',
     scheduled: 'Scheduled',
     lastUpdated: 'Last Updated',
+    createdAt: 'Created',
     followUps: 'Follow Ups',
+    batchLabel: 'Batch',
 };
 
 const DEFAULT_VISIBLE_COLUMNS: Record<ColumnKey, boolean> = {
@@ -196,8 +200,16 @@ const DEFAULT_VISIBLE_COLUMNS: Record<ColumnKey, boolean> = {
     assignedTo: true,
     scheduled: false,
     lastUpdated: true,
+    createdAt: false,
     followUps: true,
+    batchLabel: false,
 };
+
+const DEFAULT_COLUMN_ORDER: ColumnKey[] = [
+    'id', 'status', 'discipline', 'targetTier', 'registeredTier',
+    'daysAttending', 'previousParticipationStatus', 'contact', 'emails', 'phones',
+    'assignedTo', 'scheduled', 'lastUpdated', 'createdAt', 'followUps', 'batchLabel',
+];
 
 const UNMARKED_TIER = 'Not set';
 
@@ -227,6 +239,8 @@ interface Company {
     scheduledDate?: string;
     scheduledTime?: string;
     scheduledIsOverdue?: boolean;
+    batchLabel?: string;
+    createdAt?: string;
 }
 
 interface AllCompaniesTableProps {
@@ -352,9 +366,13 @@ function FilterRowMultiSelect({ options, selected, onChange, placeholder = 'All'
 function ColumnPicker({
     visibleColumns,
     onChange,
+    columnOrder,
+    onOrderChange,
 }: {
     visibleColumns: Record<ColumnKey, boolean>;
     onChange: (cols: Record<ColumnKey, boolean>) => void;
+    columnOrder: ColumnKey[];
+    onOrderChange: (key: ColumnKey, dir: -1 | 1) => void;
 }) {
     const [isOpen, setIsOpen] = useState(false);
     const ref = useRef<HTMLDivElement>(null);
@@ -384,19 +402,38 @@ function ColumnPicker({
                 <span className="text-xs text-slate-400 font-normal">{visibleCount}/{Object.keys(COLUMN_LABELS).length}</span>
             </button>
             {isOpen && (
-                <div className="absolute right-0 top-full mt-1.5 w-52 bg-white border border-slate-200 rounded-xl shadow-xl z-50 p-2">
-                    <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide px-2 mb-1.5">Toggle columns</p>
-                    {(Object.keys(COLUMN_LABELS) as ColumnKey[]).map(key => (
-                        <button
-                            key={key}
-                            onClick={() => toggle(key)}
-                            className="w-full flex items-center gap-2.5 px-2 py-1.5 rounded-lg hover:bg-slate-50 text-left transition-colors"
-                        >
-                            <span className={`w-4 h-4 rounded flex items-center justify-center shrink-0 border ${visibleColumns[key] ? 'bg-blue-600 border-blue-600' : 'border-slate-300 bg-white'}`}>
-                                {visibleColumns[key] && <CheckIcon className="w-3 h-3 text-white" />}
-                            </span>
-                            <span className="text-sm text-slate-700">{COLUMN_LABELS[key]}</span>
-                        </button>
+                <div className="absolute right-0 top-full mt-1.5 w-64 bg-white border border-slate-200 rounded-xl shadow-xl z-50 p-2">
+                    <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide px-2 mb-1.5">Toggle &amp; reorder columns</p>
+                    {columnOrder.map((key, idx) => (
+                        <div key={key} className="flex items-center gap-1 px-1 py-0.5 rounded-lg hover:bg-slate-50">
+                            <button
+                                onClick={() => toggle(key)}
+                                className="flex items-center gap-2.5 flex-1 text-left py-1 px-1"
+                            >
+                                <span className={`w-4 h-4 rounded flex items-center justify-center shrink-0 border ${visibleColumns[key] ? 'bg-blue-600 border-blue-600' : 'border-slate-300 bg-white'}`}>
+                                    {visibleColumns[key] && <CheckIcon className="w-3 h-3 text-white" />}
+                                </span>
+                                <span className="text-sm text-slate-700">{COLUMN_LABELS[key]}</span>
+                            </button>
+                            <div className="flex flex-col shrink-0">
+                                <button
+                                    onClick={() => onOrderChange(key, -1)}
+                                    disabled={idx === 0}
+                                    className="p-0.5 text-slate-400 hover:text-slate-700 disabled:opacity-20 disabled:cursor-not-allowed"
+                                    title="Move up"
+                                >
+                                    <ChevronUpIcon className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                    onClick={() => onOrderChange(key, 1)}
+                                    disabled={idx === columnOrder.length - 1}
+                                    className="p-0.5 text-slate-400 hover:text-slate-700 disabled:opacity-20 disabled:cursor-not-allowed"
+                                    title="Move down"
+                                >
+                                    <ChevronDownIcon className="w-3.5 h-3.5" />
+                                </button>
+                            </div>
+                        </div>
                     ))}
                     <div className="border-t border-slate-100 mt-1.5 pt-1.5 flex gap-2 px-2">
                         <button
@@ -418,7 +455,7 @@ function ColumnPicker({
     );
 }
 
-type SortField = 'id' | 'name' | 'contactStatus' | 'assignedTo' | 'scheduled' | 'lastUpdated' | 'followUpsCompleted' | 'targetSponsorshipTier' | 'sponsorshipTier' | 'daysAttending' | 'previousParticipationStatus';
+type SortField = 'id' | 'name' | 'contactStatus' | 'assignedTo' | 'scheduled' | 'lastUpdated' | 'createdAt' | 'followUpsCompleted' | 'targetSponsorshipTier' | 'sponsorshipTier' | 'daysAttending' | 'previousParticipationStatus';
 type SortDirection = 'asc' | 'desc';
 const DEFAULT_SORT_FIELD: SortField = 'id';
 const DEFAULT_SORT_DIRECTION: SortDirection = 'asc';
@@ -430,6 +467,7 @@ const VALID_SORT_FIELDS = new Set<SortField>([
     'assignedTo',
     'scheduled',
     'lastUpdated',
+    'createdAt',
     'followUpsCompleted',
     'targetSponsorshipTier',
     'sponsorshipTier',
@@ -487,7 +525,8 @@ export default function AllCompaniesTable({
         daysAttending: '',
         previousParticipationStatus: '',
         emails: '',
-        phones: ''
+        phones: '',
+        batchLabel: [] as string[],
     };
     const [columnFilters, setColumnFilters] = useState<typeof defaultColumnFilters>(() => {
         if (typeof window !== 'undefined') {
@@ -535,6 +574,40 @@ export default function AllCompaniesTable({
             localStorage.setItem('companies_visibleColumns', JSON.stringify(visibleColumns));
         }
     }, [visibleColumns]);
+
+    const [columnOrder, setColumnOrder] = useState<ColumnKey[]>(() => {
+        if (typeof window !== 'undefined') {
+            const saved = localStorage.getItem('companies_columnOrder');
+            if (saved) {
+                try {
+                    const parsed = JSON.parse(saved) as ColumnKey[];
+                    const validSet = new Set(DEFAULT_COLUMN_ORDER);
+                    const validSaved = parsed.filter((k: ColumnKey) => validSet.has(k));
+                    const missing = DEFAULT_COLUMN_ORDER.filter(k => !validSaved.includes(k));
+                    return [...validSaved, ...missing];
+                } catch { /* ignore */ }
+            }
+        }
+        return DEFAULT_COLUMN_ORDER;
+    });
+
+    useEffect(() => {
+        if (typeof window !== 'undefined') {
+            localStorage.setItem('companies_columnOrder', JSON.stringify(columnOrder));
+        }
+    }, [columnOrder]);
+
+    const moveColumn = (key: ColumnKey, dir: -1 | 1) => {
+        setColumnOrder(prev => {
+            const idx = prev.indexOf(key);
+            if (idx < 0) return prev;
+            const next = idx + dir;
+            if (next < 0 || next >= prev.length) return prev;
+            const arr = [...prev];
+            [arr[idx], arr[next]] = [arr[next], arr[idx]];
+            return arr;
+        });
+    };
 
     useEffect(() => {
         if (!copiedCell) return;
@@ -597,6 +670,10 @@ export default function AllCompaniesTable({
         const tiers = Array.from(new Set(companies.map(c => c.sponsorshipTier).filter(Boolean) as string[])).sort();
         return [UNMARKED_TIER, ...tiers];
     }, [companies]);
+    const batchLabels = useMemo(() =>
+        Array.from(new Set(companies.map(c => c.batchLabel).filter(Boolean) as string[])).sort(),
+        [companies]
+    );
 
     // Precompute one normalised search string per company so the filter loop only does includes()
     const companySearchStrings = useMemo(() =>
@@ -671,7 +748,9 @@ export default function AllCompaniesTable({
                 return false;
             });
 
-            return matchesId && matchesName && matchesContactStatus && matchesRelationshipStatus && matchesDiscipline && matchesTier && matchesRegisteredTier && matchesAssignee && matchesContact && matchesEmails && matchesPhones && matchesDaysAttending && matchesPreviousParticipation && matchesScheduled;
+            const matchesBatchLabel = deferredEffectiveColumnFilters.batchLabel.length === 0 || deferredEffectiveColumnFilters.batchLabel.includes(company.batchLabel || '');
+
+            return matchesId && matchesName && matchesContactStatus && matchesRelationshipStatus && matchesDiscipline && matchesTier && matchesRegisteredTier && matchesAssignee && matchesContact && matchesEmails && matchesPhones && matchesDaysAttending && matchesPreviousParticipation && matchesScheduled && matchesBatchLabel;
         });
 
         const getScheduledTimestamp = (c: Company) => {
@@ -686,9 +765,9 @@ export default function AllCompaniesTable({
         result.sort((a, b) => {
             let aVal: string | number = (a as unknown as Record<string, unknown>)[sortField] as string | number;
             let bVal: string | number = (b as unknown as Record<string, unknown>)[sortField] as string | number;
-            if (sortField === 'lastUpdated') {
-                aVal = new Date(aVal as string | number | Date).getTime();
-                bVal = new Date(bVal as string | number | Date).getTime();
+            if (sortField === 'lastUpdated' || sortField === 'createdAt') {
+                aVal = aVal ? new Date(aVal as string | number | Date).getTime() : 0;
+                bVal = bVal ? new Date(bVal as string | number | Date).getTime() : 0;
             } else if (sortField === 'scheduled') {
                 aVal = getScheduledTimestamp(a);
                 bVal = getScheduledTimestamp(b);
@@ -799,7 +878,7 @@ export default function AllCompaniesTable({
     const hasColumnFilters = !!(effectiveColumnFilters.id || effectiveColumnFilters.name || effectiveColumnFilters.contactStatus.length > 0 ||
         effectiveColumnFilters.relationshipStatus.length > 0 || effectiveColumnFilters.discipline.length > 0 ||
         effectiveColumnFilters.targetSponsorshipTier.length > 0 || effectiveColumnFilters.sponsorshipTier.length > 0 || effectiveColumnFilters.assignedTo.length > 0 ||
-        effectiveColumnFilters.scheduled.length > 0 || effectiveColumnFilters.contact || effectiveColumnFilters.daysAttending || effectiveColumnFilters.previousParticipationStatus || effectiveColumnFilters.emails || effectiveColumnFilters.phones);
+        effectiveColumnFilters.scheduled.length > 0 || effectiveColumnFilters.contact || effectiveColumnFilters.daysAttending || effectiveColumnFilters.previousParticipationStatus || effectiveColumnFilters.emails || effectiveColumnFilters.phones || effectiveColumnFilters.batchLabel.length > 0);
     const hasNonDefaultSort = sortField !== DEFAULT_SORT_FIELD || sortDirection !== DEFAULT_SORT_DIRECTION;
     const hasAnyFilter = !!debouncedSearch || hasColumnFilters || hasNonDefaultSort;
 
@@ -807,7 +886,7 @@ export default function AllCompaniesTable({
         if (typeof window !== 'undefined') sessionStorage.setItem(GLOBAL_SEARCH_STORAGE_KEY, '');
         startFilterUpdateTransition(() => {
             setDebouncedSearch('');
-            setColumnFilters({ id: '', name: '', contactStatus: [], relationshipStatus: [], discipline: [], targetSponsorshipTier: [], sponsorshipTier: [], assignedTo: [], scheduled: [], contact: '', daysAttending: '', previousParticipationStatus: '', emails: '', phones: '' });
+            setColumnFilters({ id: '', name: '', contactStatus: [], relationshipStatus: [], discipline: [], targetSponsorshipTier: [], sponsorshipTier: [], assignedTo: [], scheduled: [], contact: '', daysAttending: '', previousParticipationStatus: '', emails: '', phones: '', batchLabel: [] });
             setSortField(DEFAULT_SORT_FIELD);
             setSortDirection(DEFAULT_SORT_DIRECTION);
         });
@@ -834,7 +913,9 @@ export default function AllCompaniesTable({
         (col.assignedTo ? COLUMN_WIDTHS.assignedTo : 0) +
         (col.scheduled ? COLUMN_WIDTHS.scheduled : 0) +
         (col.lastUpdated ? COLUMN_WIDTHS.lastUpdated : 0) +
-        (col.followUps ? COLUMN_WIDTHS.followUps : 0);
+        (col.createdAt ? COLUMN_WIDTHS.createdAt : 0) +
+        (col.followUps ? COLUMN_WIDTHS.followUps : 0) +
+        (col.batchLabel ? COLUMN_WIDTHS.batchLabel : 0);
 
     return (
         <div className="space-y-4">
@@ -874,7 +955,7 @@ export default function AllCompaniesTable({
                                 </span>
                             )}
                         </button>
-                        <ColumnPicker visibleColumns={visibleColumns} onChange={setVisibleColumns} />
+                        <ColumnPicker visibleColumns={visibleColumns} onChange={setVisibleColumns} columnOrder={columnOrder} onOrderChange={moveColumn} />
                     </div>
                 </div>
 
@@ -924,89 +1005,32 @@ export default function AllCompaniesTable({
                                         Company Name <SortIcon field="name" />
                                     </button>
                                 </th>
-                                {col.status && (
-                                    <th className="px-6 py-3 text-xs font-medium text-slate-600 tracking-wider bg-slate-50 whitespace-nowrap" style={{ width: COLUMN_WIDTHS.status }}>
-                                        <button onClick={() => handleSort('contactStatus')} className="flex items-center gap-2 hover:text-slate-900 transition-colors">
-                                            Status <SortIcon field="contactStatus" />
+                                {columnOrder.filter(k => col[k]).map(key => {
+                                    const thClass = "px-6 py-3 text-xs font-medium text-slate-600 tracking-wider bg-slate-50 whitespace-nowrap";
+                                    const sortBtn = (label: string, field: SortField) => (
+                                        <button onClick={() => handleSort(field)} className="flex items-center gap-2 hover:text-slate-900 transition-colors">
+                                            {label} <SortIcon field={field} />
                                         </button>
-                                    </th>
-                                )}
-                                {col.discipline && (
-                                    <th className="px-6 py-3 text-xs font-medium text-slate-600 tracking-wider bg-slate-50 whitespace-nowrap" style={{ width: COLUMN_WIDTHS.discipline }}>
-                                        <span>Discipline</span>
-                                    </th>
-                                )}
-                                {col.targetTier && (
-                                    <th className="px-6 py-3 text-xs font-medium text-slate-600 tracking-wider bg-slate-50 whitespace-nowrap" style={{ width: COLUMN_WIDTHS.targetTier }}>
-                                        <button onClick={() => handleSort('targetSponsorshipTier')} className="flex items-center gap-2 hover:text-slate-900 transition-colors">
-                                            Target Sponsorship <SortIcon field="targetSponsorshipTier" />
-                                        </button>
-                                    </th>
-                                )}
-                                {col.registeredTier && (
-                                    <th className="px-6 py-3 text-xs font-medium text-slate-600 tracking-wider bg-slate-50 whitespace-nowrap" style={{ width: COLUMN_WIDTHS.registeredTier }}>
-                                        <button onClick={() => handleSort('sponsorshipTier')} className="flex items-center gap-2 hover:text-slate-900 transition-colors">
-                                            Registered Sponsorship <SortIcon field="sponsorshipTier" />
-                                        </button>
-                                    </th>
-                                )}
-                                {col.daysAttending && (
-                                    <th className="px-6 py-3 text-xs font-medium text-slate-600 tracking-wider bg-slate-50 whitespace-nowrap" style={{ width: COLUMN_WIDTHS.daysAttending }}>
-                                        <button onClick={() => handleSort('daysAttending')} className="flex items-center gap-2 hover:text-slate-900 transition-colors">
-                                            Days Attending <SortIcon field="daysAttending" />
-                                        </button>
-                                    </th>
-                                )}
-                                {col.previousParticipationStatus && (
-                                    <th className="px-6 py-3 text-xs font-medium text-slate-600 tracking-wider bg-slate-50 whitespace-nowrap" style={{ width: COLUMN_WIDTHS.previousParticipationStatus }}>
-                                        <button onClick={() => handleSort('previousParticipationStatus')} className="flex items-center gap-2 hover:text-slate-900 transition-colors">
-                                            Previous participation <SortIcon field="previousParticipationStatus" />
-                                        </button>
-                                    </th>
-                                )}
-                                {col.contact && (
-                                    <th className="px-6 py-3 text-xs font-medium text-slate-600 tracking-wider bg-slate-50 whitespace-nowrap" style={{ width: COLUMN_WIDTHS.contact }}>
-                                        <span>Contact Person</span>
-                                    </th>
-                                )}
-                                {col.emails && (
-                                    <th className="px-6 py-3 text-xs font-medium text-slate-600 tracking-wider bg-slate-50 whitespace-nowrap" style={{ width: COLUMN_WIDTHS.emails }}>
-                                        <span>Emails</span>
-                                    </th>
-                                )}
-                                {col.phones && (
-                                    <th className="px-6 py-3 text-xs font-medium text-slate-600 tracking-wider bg-slate-50 whitespace-nowrap" style={{ width: COLUMN_WIDTHS.phones }}>
-                                        <span>Phones</span>
-                                    </th>
-                                )}
-                                {col.assignedTo && (
-                                    <th className="px-6 py-3 text-xs font-medium text-slate-600 tracking-wider bg-slate-50 whitespace-nowrap" style={{ width: COLUMN_WIDTHS.assignedTo }}>
-                                        <button onClick={() => handleSort('assignedTo')} className="flex items-center gap-2 hover:text-slate-900 transition-colors">
-                                            Assigned To <SortIcon field="assignedTo" />
-                                        </button>
-                                    </th>
-                                )}
-                                {col.scheduled && (
-                                    <th className="px-6 py-3 text-xs font-medium text-slate-600 tracking-wider bg-slate-50 whitespace-nowrap" style={{ width: COLUMN_WIDTHS.scheduled }}>
-                                        <button onClick={() => handleSort('scheduled')} className="flex items-center gap-2 hover:text-slate-900 transition-colors">
-                                            Scheduled <SortIcon field="scheduled" />
-                                        </button>
-                                    </th>
-                                )}
-                                {col.lastUpdated && (
-                                    <th className="px-6 py-3 text-xs font-medium text-slate-600 tracking-wider bg-slate-50 whitespace-nowrap" style={{ width: COLUMN_WIDTHS.lastUpdated }}>
-                                        <button onClick={() => handleSort('lastUpdated')} className="flex items-center gap-2 hover:text-slate-900 transition-colors">
-                                            Last Updated <SortIcon field="lastUpdated" />
-                                        </button>
-                                    </th>
-                                )}
-                                {col.followUps && (
-                                    <th className="px-6 py-3 text-xs font-medium text-slate-600 tracking-wider bg-slate-50 whitespace-nowrap" style={{ width: COLUMN_WIDTHS.followUps }}>
-                                        <button onClick={() => handleSort('followUpsCompleted')} className="flex items-center gap-2 hover:text-slate-900 transition-colors">
-                                            Follow Ups <SortIcon field="followUpsCompleted" />
-                                        </button>
-                                    </th>
-                                )}
+                                    );
+                                    switch (key) {
+                                        case 'status': return <th key={key} className={thClass} style={{ width: COLUMN_WIDTHS.status }}>{sortBtn('Status', 'contactStatus')}</th>;
+                                        case 'discipline': return <th key={key} className={thClass} style={{ width: COLUMN_WIDTHS.discipline }}>Discipline</th>;
+                                        case 'targetTier': return <th key={key} className={thClass} style={{ width: COLUMN_WIDTHS.targetTier }}>{sortBtn('Target Sponsorship', 'targetSponsorshipTier')}</th>;
+                                        case 'registeredTier': return <th key={key} className={thClass} style={{ width: COLUMN_WIDTHS.registeredTier }}>{sortBtn('Registered Sponsorship', 'sponsorshipTier')}</th>;
+                                        case 'daysAttending': return <th key={key} className={thClass} style={{ width: COLUMN_WIDTHS.daysAttending }}>{sortBtn('Days Attending', 'daysAttending')}</th>;
+                                        case 'previousParticipationStatus': return <th key={key} className={thClass} style={{ width: COLUMN_WIDTHS.previousParticipationStatus }}>{sortBtn('Previous participation', 'previousParticipationStatus')}</th>;
+                                        case 'contact': return <th key={key} className={thClass} style={{ width: COLUMN_WIDTHS.contact }}>Contact Person</th>;
+                                        case 'emails': return <th key={key} className={thClass} style={{ width: COLUMN_WIDTHS.emails }}>Emails</th>;
+                                        case 'phones': return <th key={key} className={thClass} style={{ width: COLUMN_WIDTHS.phones }}>Phones</th>;
+                                        case 'assignedTo': return <th key={key} className={thClass} style={{ width: COLUMN_WIDTHS.assignedTo }}>{sortBtn('Assigned To', 'assignedTo')}</th>;
+                                        case 'scheduled': return <th key={key} className={thClass} style={{ width: COLUMN_WIDTHS.scheduled }}>{sortBtn('Scheduled', 'scheduled')}</th>;
+                                        case 'lastUpdated': return <th key={key} className={thClass} style={{ width: COLUMN_WIDTHS.lastUpdated }}>{sortBtn('Last Updated', 'lastUpdated')}</th>;
+                                        case 'createdAt': return <th key={key} className={thClass} style={{ width: COLUMN_WIDTHS.createdAt }}>{sortBtn('Created', 'createdAt')}</th>;
+                                        case 'followUps': return <th key={key} className={thClass} style={{ width: COLUMN_WIDTHS.followUps }}>{sortBtn('Follow Ups', 'followUpsCompleted')}</th>;
+                                        case 'batchLabel': return <th key={key} className={thClass} style={{ width: COLUMN_WIDTHS.batchLabel }}>Batch</th>;
+                                        default: return null;
+                                    }
+                                })}
                             </tr>
 
                             {/* Per-column filter row */}
@@ -1014,113 +1038,31 @@ export default function AllCompaniesTable({
                                 <th className="px-4 py-2 bg-white" style={{ width: COLUMN_WIDTHS.select }} />
                                 {col.id && (
                                     <th className="px-6 py-2 bg-white" style={{ width: COLUMN_WIDTHS.id }}>
-                                        <DebouncedFilterInput
-                                            appliedValue={columnFilters.id}
-                                            onApply={value => setColumnFilters(prev => ({ ...prev, id: value }))}
-                                            placeholder="Filter…"
-                                            className="w-full px-2 py-1 text-xs border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
-                                        />
+                                        <DebouncedFilterInput appliedValue={columnFilters.id} onApply={value => setColumnFilters(prev => ({ ...prev, id: value }))} placeholder="Filter…" className="w-full px-2 py-1 text-xs border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-500" />
                                     </th>
                                 )}
                                 {/* Name filter (always visible) */}
                                 <th className="px-6 py-2 bg-white" style={{ width: COLUMN_WIDTHS.name }}>
-                                    <DebouncedFilterInput
-                                        appliedValue={columnFilters.name}
-                                        onApply={value => setColumnFilters(prev => ({ ...prev, name: value }))}
-                                        placeholder="Filter…"
-                                        className="w-full px-2 py-1 text-xs border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
-                                    />
+                                    <DebouncedFilterInput appliedValue={columnFilters.name} onApply={value => setColumnFilters(prev => ({ ...prev, name: value }))} placeholder="Filter…" className="w-full px-2 py-1 text-xs border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-500" />
                                 </th>
-                                {col.status && (
-                                    <th className="px-6 py-2 bg-white" style={{ width: COLUMN_WIDTHS.status }}>
-                                        <div className="flex flex-col gap-1">
-                                            <FilterRowMultiSelect options={contactStatuses} selected={columnFilters.contactStatus} onChange={s => setColumnFilters({ ...columnFilters, contactStatus: s })} placeholder="Contact…" />
-                                            <FilterRowMultiSelect options={relationshipStatuses} selected={columnFilters.relationshipStatus} onChange={s => setColumnFilters({ ...columnFilters, relationshipStatus: s })} placeholder="Relationship…" />
-                                        </div>
-                                    </th>
-                                )}
-                                {col.discipline && (
-                                    <th className="px-6 py-2 bg-white" style={{ width: COLUMN_WIDTHS.discipline }}>
-                                        <FilterRowMultiSelect options={disciplines} selected={columnFilters.discipline} onChange={s => setColumnFilters({ ...columnFilters, discipline: s })} />
-                                    </th>
-                                )}
-                                {col.targetTier && (
-                                    <th className="px-6 py-2 bg-white" style={{ width: COLUMN_WIDTHS.targetTier }}>
-                                        <FilterRowMultiSelect options={targetTiers} selected={columnFilters.targetSponsorshipTier} onChange={s => setColumnFilters({ ...columnFilters, targetSponsorshipTier: s })} />
-                                    </th>
-                                )}
-                                {col.registeredTier && (
-                                    <th className="px-6 py-2 bg-white" style={{ width: COLUMN_WIDTHS.registeredTier }}>
-                                        <FilterRowMultiSelect options={registeredTiers} selected={columnFilters.sponsorshipTier} onChange={s => setColumnFilters({ ...columnFilters, sponsorshipTier: s })} />
-                                    </th>
-                                )}
-                                {col.daysAttending && (
-                                    <th className="px-6 py-2 bg-white" style={{ width: COLUMN_WIDTHS.daysAttending }}>
-                                        <DebouncedFilterInput
-                                            appliedValue={columnFilters.daysAttending}
-                                            onApply={value => setColumnFilters(prev => ({ ...prev, daysAttending: value }))}
-                                            placeholder="Filter…"
-                                            className="w-full px-2 py-1 text-xs border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
-                                        />
-                                    </th>
-                                )}
-                                {col.previousParticipationStatus && (
-                                    <th className="px-6 py-2 bg-white" style={{ width: COLUMN_WIDTHS.previousParticipationStatus }}>
-                                        <DebouncedFilterInput
-                                            appliedValue={columnFilters.previousParticipationStatus}
-                                            onApply={value => setColumnFilters(prev => ({ ...prev, previousParticipationStatus: value }))}
-                                            placeholder="Filter…"
-                                            className="w-full px-2 py-1 text-xs border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
-                                        />
-                                    </th>
-                                )}
-                                {col.contact && (
-                                    <th className="px-6 py-2 bg-white" style={{ width: COLUMN_WIDTHS.contact }}>
-                                        <DebouncedFilterInput
-                                            appliedValue={columnFilters.contact}
-                                            onApply={value => setColumnFilters(prev => ({ ...prev, contact: value }))}
-                                            placeholder="Filter…"
-                                            className="w-full px-2 py-1 text-xs border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
-                                        />
-                                    </th>
-                                )}
-                                {col.emails && (
-                                    <th className="px-6 py-2 bg-white" style={{ width: COLUMN_WIDTHS.emails }}>
-                                        <DebouncedFilterInput
-                                            appliedValue={columnFilters.emails}
-                                            onApply={value => setColumnFilters(prev => ({ ...prev, emails: value }))}
-                                            placeholder="Filter…"
-                                            className="w-full px-2 py-1 text-xs border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
-                                        />
-                                    </th>
-                                )}
-                                {col.phones && (
-                                    <th className="px-6 py-2 bg-white" style={{ width: COLUMN_WIDTHS.phones }}>
-                                        <DebouncedFilterInput
-                                            appliedValue={columnFilters.phones}
-                                            onApply={value => setColumnFilters(prev => ({ ...prev, phones: value }))}
-                                            placeholder="Filter…"
-                                            className="w-full px-2 py-1 text-xs border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
-                                        />
-                                    </th>
-                                )}
-                                {col.assignedTo && (
-                                    <th className="px-6 py-2 bg-white" style={{ width: COLUMN_WIDTHS.assignedTo }}>
-                                        <FilterRowMultiSelect options={assignees} selected={columnFilters.assignedTo} onChange={s => setColumnFilters({ ...columnFilters, assignedTo: s })} />
-                                    </th>
-                                )}
-                                {col.scheduled && (
-                                    <th className="px-6 py-2 bg-white" style={{ width: COLUMN_WIDTHS.scheduled }}>
-                                        <FilterRowMultiSelect
-                                            options={SCHEDULE_FILTER_OPTIONS.map(o => o.label)}
-                                            selected={columnFilters.scheduled}
-                                            onChange={s => setColumnFilters({ ...columnFilters, scheduled: s })}
-                                            placeholder="Schedule…"
-                                        />
-                                    </th>
-                                )}
-                                {col.lastUpdated && <th className="px-6 py-2 bg-white" style={{ width: COLUMN_WIDTHS.lastUpdated }} />}
-                                {col.followUps && <th className="px-6 py-2 bg-white" style={{ width: COLUMN_WIDTHS.followUps }} />}
+                                {columnOrder.filter(k => col[k]).map(key => {
+                                    const fi = "w-full px-2 py-1 text-xs border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-500";
+                                    switch (key) {
+                                        case 'status': return <th key={key} className="px-6 py-2 bg-white" style={{ width: COLUMN_WIDTHS.status }}><div className="flex flex-col gap-1"><FilterRowMultiSelect options={contactStatuses} selected={columnFilters.contactStatus} onChange={s => setColumnFilters({ ...columnFilters, contactStatus: s })} placeholder="Contact…" /><FilterRowMultiSelect options={relationshipStatuses} selected={columnFilters.relationshipStatus} onChange={s => setColumnFilters({ ...columnFilters, relationshipStatus: s })} placeholder="Relationship…" /></div></th>;
+                                        case 'discipline': return <th key={key} className="px-6 py-2 bg-white" style={{ width: COLUMN_WIDTHS.discipline }}><FilterRowMultiSelect options={disciplines} selected={columnFilters.discipline} onChange={s => setColumnFilters({ ...columnFilters, discipline: s })} /></th>;
+                                        case 'targetTier': return <th key={key} className="px-6 py-2 bg-white" style={{ width: COLUMN_WIDTHS.targetTier }}><FilterRowMultiSelect options={targetTiers} selected={columnFilters.targetSponsorshipTier} onChange={s => setColumnFilters({ ...columnFilters, targetSponsorshipTier: s })} /></th>;
+                                        case 'registeredTier': return <th key={key} className="px-6 py-2 bg-white" style={{ width: COLUMN_WIDTHS.registeredTier }}><FilterRowMultiSelect options={registeredTiers} selected={columnFilters.sponsorshipTier} onChange={s => setColumnFilters({ ...columnFilters, sponsorshipTier: s })} /></th>;
+                                        case 'daysAttending': return <th key={key} className="px-6 py-2 bg-white" style={{ width: COLUMN_WIDTHS.daysAttending }}><DebouncedFilterInput appliedValue={columnFilters.daysAttending} onApply={value => setColumnFilters(prev => ({ ...prev, daysAttending: value }))} placeholder="Filter…" className={fi} /></th>;
+                                        case 'previousParticipationStatus': return <th key={key} className="px-6 py-2 bg-white" style={{ width: COLUMN_WIDTHS.previousParticipationStatus }}><DebouncedFilterInput appliedValue={columnFilters.previousParticipationStatus} onApply={value => setColumnFilters(prev => ({ ...prev, previousParticipationStatus: value }))} placeholder="Filter…" className={fi} /></th>;
+                                        case 'contact': return <th key={key} className="px-6 py-2 bg-white" style={{ width: COLUMN_WIDTHS.contact }}><DebouncedFilterInput appliedValue={columnFilters.contact} onApply={value => setColumnFilters(prev => ({ ...prev, contact: value }))} placeholder="Filter…" className={fi} /></th>;
+                                        case 'emails': return <th key={key} className="px-6 py-2 bg-white" style={{ width: COLUMN_WIDTHS.emails }}><DebouncedFilterInput appliedValue={columnFilters.emails} onApply={value => setColumnFilters(prev => ({ ...prev, emails: value }))} placeholder="Filter…" className={fi} /></th>;
+                                        case 'phones': return <th key={key} className="px-6 py-2 bg-white" style={{ width: COLUMN_WIDTHS.phones }}><DebouncedFilterInput appliedValue={columnFilters.phones} onApply={value => setColumnFilters(prev => ({ ...prev, phones: value }))} placeholder="Filter…" className={fi} /></th>;
+                                        case 'assignedTo': return <th key={key} className="px-6 py-2 bg-white" style={{ width: COLUMN_WIDTHS.assignedTo }}><FilterRowMultiSelect options={assignees} selected={columnFilters.assignedTo} onChange={s => setColumnFilters({ ...columnFilters, assignedTo: s })} /></th>;
+                                        case 'scheduled': return <th key={key} className="px-6 py-2 bg-white" style={{ width: COLUMN_WIDTHS.scheduled }}><FilterRowMultiSelect options={SCHEDULE_FILTER_OPTIONS.map(o => o.label)} selected={columnFilters.scheduled} onChange={s => setColumnFilters({ ...columnFilters, scheduled: s })} placeholder="Schedule…" /></th>;
+                                        case 'batchLabel': return <th key={key} className="px-6 py-2 bg-white" style={{ width: COLUMN_WIDTHS.batchLabel }}><FilterRowMultiSelect options={batchLabels} selected={columnFilters.batchLabel} onChange={s => setColumnFilters({ ...columnFilters, batchLabel: s })} placeholder="Batch…" /></th>;
+                                        default: return <th key={key} className="px-6 py-2 bg-white" style={{ width: COLUMN_WIDTHS[key] }} />;
+                                    }
+                                })}
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
@@ -1178,143 +1120,53 @@ export default function AllCompaniesTable({
                                                 <span className="font-medium text-slate-900">{company.name}</span>
                                             </div>
                                         </td>
-                                        {col.status && (
-                                            <td className="px-6 py-4" style={{ width: COLUMN_WIDTHS.status }}>
-                                                <div className="flex flex-wrap gap-1">
-                                                    <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-medium whitespace-nowrap ${getStatusColor(company.contactStatus)}`}>
-                                                        {company.contactStatus}
-                                                    </span>
-                                                    {company.relationshipStatus && (
-                                                        <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-medium whitespace-nowrap ${getRelationshipColor(company.relationshipStatus)}`}>
-                                                            {company.relationshipStatus}
-                                                        </span>
-                                                    )}
-                                                </div>
-                                            </td>
-                                        )}
-                                        {col.discipline && (
-                                            <td className="px-6 py-4" style={{ width: COLUMN_WIDTHS.discipline }}>
-                                                <div className="flex flex-wrap gap-1">
-                                                    {company.discipline ? company.discipline.split(',').map(d => {
-                                                        const trimmed = d.trim();
-                                                        if (!trimmed) return null;
-                                                        return (
-                                                            <span key={trimmed} className={`inline-flex px-1.5 py-0.5 rounded border text-[10px] font-bold uppercase tracking-tight ${getDisciplineColor(trimmed)}`}>
-                                                                {trimmed}
-                                                            </span>
-                                                        );
-                                                    }) : <span className="text-slate-300 italic text-xs">N/A</span>}
-                                                </div>
-                                            </td>
-                                        )}
-                                        {col.targetTier && (
-                                            <td className="px-6 py-4" style={{ width: COLUMN_WIDTHS.targetTier }}>
-                                                <span className="text-slate-700">{company.targetSponsorshipTier || 'N/A'}</span>
-                                            </td>
-                                        )}
-                                        {col.registeredTier && (
-                                            <td className="px-6 py-4" style={{ width: COLUMN_WIDTHS.registeredTier }}>
-                                                <span className="text-slate-700">{company.sponsorshipTier || 'N/A'}</span>
-                                            </td>
-                                        )}
-                                        {col.daysAttending && (
-                                            <td className="px-6 py-4 text-slate-700 text-xs break-words" style={{ width: COLUMN_WIDTHS.daysAttending }}>
-                                                {(company.daysAttending || '').trim()
-                                                    ? (company.daysAttending || '').trim()
-                                                    : <span className="text-slate-300">—</span>}
-                                            </td>
-                                        )}
-                                        {col.previousParticipationStatus && (
-                                            <td className="px-6 py-4 text-slate-700 text-xs break-words" style={{ width: COLUMN_WIDTHS.previousParticipationStatus }}>
-                                                {(company.previousParticipationStatus || '').trim()
-                                                    ? (company.previousParticipationStatus || '').trim()
-                                                    : <span className="text-slate-300">—</span>}
-                                            </td>
-                                        )}
-                                        {col.contact && (
-                                            <td className="px-6 py-4 text-slate-700 font-medium" style={{ width: COLUMN_WIDTHS.contact }}>
-                                                {company.contact || '—'}
-                                            </td>
-                                        )}
-                                        {col.emails && (
-                                            <td
-                                                className={`relative px-6 py-4 text-slate-700 text-xs align-top ${company.email?.trim() ? 'cursor-pointer hover:text-blue-600 hover:bg-blue-50/50' : ''}`}
-                                                style={{
-                                                    width: COLUMN_WIDTHS.emails,
-                                                    minWidth: COLUMN_WIDTHS.emails,
-                                                    ...(company.email?.trim() ? { minHeight: '4.5rem' } : {}),
-                                                }}
-                                                onClick={e => handleCopyEmails(e, company)}
-                                                title={company.email?.trim() ? 'Click to copy all emails' : ''}
-                                            >
-                                                {company.email?.trim() && copiedCell?.companyId === company.id && copiedCell?.field === 'emails' && (
-                                                    <span className="absolute top-1/2 -translate-y-1/2 right-2 z-10 text-xs text-green-600 font-medium bg-white/95 px-1.5 py-0.5 rounded shadow-sm ring-1 ring-green-200" aria-live="polite">
-                                                        Copied!
-                                                    </span>
-                                                )}
-                                                <div className="flex items-start gap-2 min-w-0 overflow-hidden">
-                                                    <span
-                                                        className="min-w-0 flex-1 break-words line-clamp-3"
-                                                        title={company.email?.trim() || undefined}
-                                                    >
-                                                        {company.email?.trim() ? company.email : <span className="text-slate-300">—</span>}
-                                                    </span>
-                                                    {company.email?.trim() && (
-                                                        <ClipboardDocumentIcon className="w-3.5 h-3.5 text-slate-400 shrink-0 mt-0.5" aria-hidden />
-                                                    )}
-                                                </div>
-                                            </td>
-                                        )}
-                                        {col.phones && (
-                                            <td
-                                                className={`relative px-6 py-4 text-slate-700 text-xs ${company.phone?.trim() ? 'cursor-pointer hover:text-blue-600 hover:bg-blue-50/50' : ''}`}
-                                                style={{ width: COLUMN_WIDTHS.phones, minWidth: COLUMN_WIDTHS.phones }}
-                                                onClick={e => handleCopyPhones(e, company)}
-                                                title={company.phone?.trim() ? 'Click to copy all phone numbers' : ''}
-                                            >
-                                                {company.phone?.trim() && copiedCell?.companyId === company.id && copiedCell?.field === 'phones' && (
-                                                    <span className="absolute top-1/2 -translate-y-1/2 right-2 z-10 text-xs text-green-600 font-medium bg-white/95 px-1.5 py-0.5 rounded shadow-sm ring-1 ring-green-200" aria-live="polite">
-                                                        Copied!
-                                                    </span>
-                                                )}
-                                                <div className="flex items-center gap-2 min-w-0 overflow-hidden">
-                                                    <span className="min-w-0 truncate block" title={company.phone?.trim() || undefined}>
-                                                        {company.phone?.trim() ? company.phone : <span className="text-slate-300">—</span>}
-                                                    </span>
-                                                    {company.phone?.trim() && (
-                                                        <ClipboardDocumentIcon className="w-3.5 h-3.5 text-slate-400 shrink-0" aria-hidden />
-                                                    )}
-                                                </div>
-                                            </td>
-                                        )}
-                                        {col.assignedTo && (
-                                            <td className="px-6 py-4 text-slate-700" style={{ width: COLUMN_WIDTHS.assignedTo }}>
-                                                {company.assignedTo}
-                                            </td>
-                                        )}
-                                        {col.scheduled && (
-                                            <td className="px-6 py-4 text-xs whitespace-nowrap" style={{ width: COLUMN_WIDTHS.scheduled }}>
-                                                {company.scheduledDate && company.scheduledTime ? (
-                                                    <span className={company.scheduledIsOverdue ? 'text-red-700 font-semibold' : 'text-slate-600'}>
-                                                        {formatScheduledDate(company.scheduledDate)}, {formatTime(company.scheduledTime)}
-                                                    </span>
-                                                ) : (
-                                                    <span className="text-slate-300">—</span>
-                                                )}
-                                            </td>
-                                        )}
-                                        {col.lastUpdated && (
-                                            <td className="px-6 py-4 text-slate-600 whitespace-nowrap" style={{ width: COLUMN_WIDTHS.lastUpdated }}>
-                                                {formatDate(company.lastUpdated)}
-                                            </td>
-                                        )}
-                                        {col.followUps && (
-                                            <td className="px-6 py-4 text-center" style={{ width: COLUMN_WIDTHS.followUps }}>
-                                                <span className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-blue-50 text-blue-700 font-semibold text-xs border border-blue-100">
-                                                    {company.followUpsCompleted || 0}
-                                                </span>
-                                            </td>
-                                        )}
+                                        {columnOrder.filter(k => col[k]).map(key => {
+                                            switch (key) {
+                                                case 'status': return (
+                                                    <td key={key} className="px-6 py-4" style={{ width: COLUMN_WIDTHS.status }}>
+                                                        <div className="flex flex-wrap gap-1">
+                                                            <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-medium whitespace-nowrap ${getStatusColor(company.contactStatus)}`}>{company.contactStatus}</span>
+                                                            {company.relationshipStatus && <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-medium whitespace-nowrap ${getRelationshipColor(company.relationshipStatus)}`}>{company.relationshipStatus}</span>}
+                                                        </div>
+                                                    </td>
+                                                );
+                                                case 'discipline': return (
+                                                    <td key={key} className="px-6 py-4" style={{ width: COLUMN_WIDTHS.discipline }}>
+                                                        <div className="flex flex-wrap gap-1">
+                                                            {company.discipline ? company.discipline.split(',').map(d => { const t = d.trim(); if (!t) return null; return <span key={t} className={`inline-flex px-1.5 py-0.5 rounded border text-[10px] font-bold uppercase tracking-tight ${getDisciplineColor(t)}`}>{t}</span>; }) : <span className="text-slate-300 italic text-xs">N/A</span>}
+                                                        </div>
+                                                    </td>
+                                                );
+                                                case 'targetTier': return <td key={key} className="px-6 py-4" style={{ width: COLUMN_WIDTHS.targetTier }}><span className="text-slate-700">{company.targetSponsorshipTier || 'N/A'}</span></td>;
+                                                case 'registeredTier': return <td key={key} className="px-6 py-4" style={{ width: COLUMN_WIDTHS.registeredTier }}><span className="text-slate-700">{company.sponsorshipTier || 'N/A'}</span></td>;
+                                                case 'daysAttending': return <td key={key} className="px-6 py-4 text-slate-700 text-xs break-words" style={{ width: COLUMN_WIDTHS.daysAttending }}>{(company.daysAttending || '').trim() || <span className="text-slate-300">—</span>}</td>;
+                                                case 'previousParticipationStatus': return <td key={key} className="px-6 py-4 text-slate-700 text-xs break-words" style={{ width: COLUMN_WIDTHS.previousParticipationStatus }}>{(company.previousParticipationStatus || '').trim() || <span className="text-slate-300">—</span>}</td>;
+                                                case 'contact': return <td key={key} className="px-6 py-4 text-slate-700 font-medium" style={{ width: COLUMN_WIDTHS.contact }}>{company.contact || '—'}</td>;
+                                                case 'emails': return (
+                                                    <td key={key} className={`relative px-6 py-4 text-slate-700 text-xs align-top ${company.email?.trim() ? 'cursor-pointer hover:text-blue-600 hover:bg-blue-50/50' : ''}`} style={{ width: COLUMN_WIDTHS.emails, minWidth: COLUMN_WIDTHS.emails, ...(company.email?.trim() ? { minHeight: '4.5rem' } : {}) }} onClick={e => handleCopyEmails(e, company)} title={company.email?.trim() ? 'Click to copy all emails' : ''}>
+                                                        {company.email?.trim() && copiedCell?.companyId === company.id && copiedCell?.field === 'emails' && <span className="absolute top-1/2 -translate-y-1/2 right-2 z-10 text-xs text-green-600 font-medium bg-white/95 px-1.5 py-0.5 rounded shadow-sm ring-1 ring-green-200" aria-live="polite">Copied!</span>}
+                                                        <div className="flex items-start gap-2 min-w-0 overflow-hidden"><span className="min-w-0 flex-1 break-words line-clamp-3" title={company.email?.trim() || undefined}>{company.email?.trim() ? company.email : <span className="text-slate-300">—</span>}</span>{company.email?.trim() && <ClipboardDocumentIcon className="w-3.5 h-3.5 text-slate-400 shrink-0 mt-0.5" aria-hidden />}</div>
+                                                    </td>
+                                                );
+                                                case 'phones': return (
+                                                    <td key={key} className={`relative px-6 py-4 text-slate-700 text-xs ${company.phone?.trim() ? 'cursor-pointer hover:text-blue-600 hover:bg-blue-50/50' : ''}`} style={{ width: COLUMN_WIDTHS.phones, minWidth: COLUMN_WIDTHS.phones }} onClick={e => handleCopyPhones(e, company)} title={company.phone?.trim() ? 'Click to copy all phone numbers' : ''}>
+                                                        {company.phone?.trim() && copiedCell?.companyId === company.id && copiedCell?.field === 'phones' && <span className="absolute top-1/2 -translate-y-1/2 right-2 z-10 text-xs text-green-600 font-medium bg-white/95 px-1.5 py-0.5 rounded shadow-sm ring-1 ring-green-200" aria-live="polite">Copied!</span>}
+                                                        <div className="flex items-center gap-2 min-w-0 overflow-hidden"><span className="min-w-0 truncate block" title={company.phone?.trim() || undefined}>{company.phone?.trim() ? company.phone : <span className="text-slate-300">—</span>}</span>{company.phone?.trim() && <ClipboardDocumentIcon className="w-3.5 h-3.5 text-slate-400 shrink-0" aria-hidden />}</div>
+                                                    </td>
+                                                );
+                                                case 'assignedTo': return <td key={key} className="px-6 py-4 text-slate-700" style={{ width: COLUMN_WIDTHS.assignedTo }}>{company.assignedTo}</td>;
+                                                case 'scheduled': return (
+                                                    <td key={key} className="px-6 py-4 text-xs whitespace-nowrap" style={{ width: COLUMN_WIDTHS.scheduled }}>
+                                                        {company.scheduledDate && company.scheduledTime ? <span className={company.scheduledIsOverdue ? 'text-red-700 font-semibold' : 'text-slate-600'}>{formatScheduledDate(company.scheduledDate)}, {formatTime(company.scheduledTime)}</span> : <span className="text-slate-300">—</span>}
+                                                    </td>
+                                                );
+                                                case 'lastUpdated': return <td key={key} className="px-6 py-4 text-slate-600 whitespace-nowrap" style={{ width: COLUMN_WIDTHS.lastUpdated }}>{formatDate(company.lastUpdated)}</td>;
+                                                case 'createdAt': return <td key={key} className="px-6 py-4 text-slate-600 whitespace-nowrap" style={{ width: COLUMN_WIDTHS.createdAt }}>{company.createdAt ? formatDate(company.createdAt) : <span className="text-slate-300">—</span>}</td>;
+                                                case 'followUps': return <td key={key} className="px-6 py-4 text-center" style={{ width: COLUMN_WIDTHS.followUps }}><span className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-blue-50 text-blue-700 font-semibold text-xs border border-blue-100">{company.followUpsCompleted || 0}</span></td>;
+                                                case 'batchLabel': return <td key={key} className="px-6 py-4" style={{ width: COLUMN_WIDTHS.batchLabel }}>{company.batchLabel ? <span className="inline-flex px-2 py-0.5 rounded text-xs font-medium bg-violet-100 text-violet-700">{company.batchLabel}</span> : <span className="text-slate-300">—</span>}</td>;
+                                                default: return null;
+                                            }
+                                        })}
                                     </tr>
                                 ))
                             )}

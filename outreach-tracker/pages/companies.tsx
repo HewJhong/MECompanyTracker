@@ -42,6 +42,8 @@ interface Company {
     lastCompanyActivity?: string;
     daysAttending?: string;
     previousParticipationStatus?: string;
+    batchLabel?: string;
+    createdAt?: string;
 }
 
 interface CommitteeMember {
@@ -86,6 +88,8 @@ export default function CompaniesPage() {
     // Bulk set status
     const [selectedContactStatus, setSelectedContactStatus] = useState('');
     const [selectedRelationshipStatus, setSelectedRelationshipStatus] = useState('');
+    const bulkBatchLabelRef = useRef<HTMLInputElement>(null);
+    const [isApplyingBatch, setIsApplyingBatch] = useState(false);
     const [pendingStatusUpdate, setPendingStatusUpdate] = useState<{ field: 'contactStatus' | 'relationshipStatus'; value: string } | null>(null);
     const [showStatusConfirmModal, setShowStatusConfirmModal] = useState(false);
     const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
@@ -345,6 +349,8 @@ export default function CompaniesPage() {
         scheduledDate: scheduleMap[company.id]?.date,
         scheduledTime: scheduleMap[company.id]?.time,
         scheduledIsOverdue: scheduleMap[company.id]?.isOverdue,
+        batchLabel: (company as any).batchLabel || '',
+        createdAt: (company as any).createdAt || '',
     }));
 
     const handleCompanyClick = (companyId: string) => {
@@ -575,6 +581,32 @@ export default function CompaniesPage() {
         }
     };
 
+    const handleApplyBatchLabel = async () => {
+        const label = bulkBatchLabelRef.current?.value.trim() ?? '';
+        if (!label || selectedCompanies.size === 0) return;
+        const companyIds = Array.from(selectedCompanies);
+        setIsApplyingBatch(true);
+        try {
+            const res = await fetch('/api/apply-batch-label', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ companyIds, batchLabel: label }),
+            });
+            if (!res.ok) throw new Error((await res.json()).message || 'Failed');
+            setData(prev => prev.map(c => selectedCompanies.has(c.id) ? { ...c, batchLabel: label } : c));
+            setSuccessMessage(`Batch label "${label}" applied to ${companyIds.length} ${companyIds.length === 1 ? 'company' : 'companies'}`);
+            setShowSuccessModal(true);
+            setSelectedCompanies(new Set());
+            setLastSelectedIndex(null);
+            if (bulkBatchLabelRef.current) bulkBatchLabelRef.current.value = '';
+        } catch (err) {
+            console.error('Apply batch label failed:', err);
+            showError('Batch label failed', err instanceof Error ? err.message : 'Could not apply batch label.');
+        } finally {
+            setIsApplyingBatch(false);
+        }
+    };
+
     if (loading && data.length === 0) {
         return (
             <Layout title="All Companies | Outreach Tracker">
@@ -795,6 +827,33 @@ export default function CompaniesPage() {
 
                             <div className="h-8 w-px bg-blue-400 hidden sm:block"></div>
 
+                            {/* Batch label */}
+                            <input
+                                ref={bulkBatchLabelRef}
+                                type="text"
+                                list="bulk-batch-label-suggestions"
+                                placeholder="Batch label…"
+                                defaultValue=""
+                                className="flex-1 min-w-[140px] px-3 py-2 bg-white text-slate-900 rounded-lg font-medium border-2 border-violet-300 focus:outline-none focus:ring-2 focus:ring-violet-400 text-sm"
+                            />
+                            <datalist id="bulk-batch-label-suggestions">
+                                {Array.from(new Set(data.map(c => c.batchLabel).filter(Boolean) as string[])).sort().map(label => (
+                                    <option key={label} value={label} />
+                                ))}
+                            </datalist>
+                            <button
+                                onClick={handleApplyBatchLabel}
+                                disabled={isApplyingBatch}
+                                className={`px-4 py-2 rounded-lg font-bold transition-all transform active:scale-95 shrink-0 ${!isApplyingBatch
+                                    ? 'bg-violet-100 text-violet-700 hover:bg-violet-200 shadow-md'
+                                    : 'bg-blue-800 text-blue-300 cursor-not-allowed'
+                                    }`}
+                            >
+                                {isApplyingBatch ? 'Applying…' : 'Apply Batch'}
+                            </button>
+
+                            <div className="h-8 w-px bg-blue-400 hidden sm:block"></div>
+
                             <button
                                 onClick={() => {
                                     setSelectedCompanies(new Set());
@@ -803,6 +862,7 @@ export default function CompaniesPage() {
                                     setScheduleStartTime('');
                                     setSelectedContactStatus('');
                                     setSelectedRelationshipStatus('');
+                                    if (bulkBatchLabelRef.current) bulkBatchLabelRef.current.value = '';
                                 }}
                                 className="px-3 py-2 bg-blue-500 hover:bg-blue-400 rounded-lg font-medium transition-colors flex items-center gap-1.5 shrink-0"
                             >
@@ -986,6 +1046,7 @@ export default function CompaniesPage() {
                     setShowSuccessModal(true);
                 }}
                 committeeMembers={committeeMembers}
+                existingBatchLabels={Array.from(new Set(data.map(c => c.batchLabel).filter(Boolean) as string[])).sort()}
             />
         </Layout>
     );

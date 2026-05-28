@@ -45,6 +45,7 @@ interface Contact {
     phone?: string;
     email?: string;
     isEmailInvalid?: boolean;
+    isPhoneInvalid?: boolean;
     role?: string;
     linkedin?: string;
     reference?: string;
@@ -163,6 +164,7 @@ const EMPTY_NEW_CONTACT = {
     remark: '',
     isActive: false,
     isEmailInvalid: false,
+    isPhoneInvalid: false,
 };
 
 // disciplineOptions and priorityOptions are now imported from mapping utilities
@@ -212,6 +214,8 @@ export default function CompanyDetailPage() {
     const [isSaving, setIsSaving] = useState(false);
     const [successMessage, setSuccessMessage] = useState('');
     const [showAddContact, setShowAddContact] = useState(false);
+    const [quickAdd, setQuickAdd] = useState<{ groupKey: string; phone: string; email: string; isEmailInvalid: boolean; isPhoneInvalid: boolean } | null>(null);
+    const [isQuickAdding, setIsQuickAdding] = useState(false);
     const [editingContactId, setEditingContactId] = useState<string | null>(null);
     const [newContact, setNewContact] = useState({ ...EMPTY_NEW_CONTACT });
     const [committeeMembers, setCommitteeMembers] = useState<{ name: string, email: string, role: string }[]>([]);
@@ -1476,6 +1480,7 @@ export default function CompanyDetailPage() {
                     email: updates.email ?? c.email,
                     isEmailInvalid: updates.isEmailInvalid ?? c.isEmailInvalid,
                     phone: updates.phone ?? c.phone,
+                    isPhoneInvalid: updates.isPhoneInvalid ?? c.isPhoneInvalid,
                     linkedin: updates.linkedin ?? c.linkedin,
                     reference: updates.reference ?? c.reference,
                     remark: updates.remark ?? c.remark,
@@ -1572,6 +1577,7 @@ export default function CompanyDetailPage() {
                     remark: newContact.remark,
                     isActive: newContact.isActive,
                     isEmailInvalid: newContact.isEmailInvalid,
+                    isPhoneInvalid: newContact.isPhoneInvalid,
                 });
                 setEditingContactId(null);
                 setNewContact({ ...EMPTY_NEW_CONTACT });
@@ -1637,8 +1643,65 @@ export default function CompanyDetailPage() {
             remark: contact.remark || '',
             isActive: contact.isActive || false,
             isEmailInvalid: contact.isEmailInvalid || false,
+            isPhoneInvalid: contact.isPhoneInvalid || false,
         });
         setShowAddContact(true);
+    };
+
+    const openQuickAdd = (sourceContact: Contact) => {
+        const groupKey = (sourceContact.name || '').trim().toLowerCase();
+        setQuickAdd({ groupKey, phone: '', email: '', isEmailInvalid: false, isPhoneInvalid: false });
+    };
+
+    const handleQuickAddSave = async (sourceContact: Contact) => {
+        if (!quickAdd || !company) return;
+        const phone = quickAdd.phone.trim();
+        const email = quickAdd.email.trim();
+        if (!phone && !email) {
+            showError('Nothing to add', 'Enter a phone or email before saving.');
+            return;
+        }
+        setIsQuickAdding(true);
+        const taskId = addTask(`Adding contact entry for ${sourceContact.name}...`);
+        try {
+            const contactPayload = {
+                name: sourceContact.name,
+                role: sourceContact.role || '',
+                phone,
+                email,
+                linkedin: '',
+                reference: sourceContact.reference?.trim() || '',
+                remark: '',
+                isActive: false,
+                isEmailInvalid: quickAdd.isEmailInvalid,
+                isPhoneInvalid: quickAdd.isPhoneInvalid,
+            };
+            const res = await fetch('/api/add-contact', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    companyId: company.id,
+                    companyName: company.companyName || company.name,
+                    discipline: company.discipline || '',
+                    contact: contactPayload,
+                    user: currentUser,
+                    historyLog: `[Contact Entry Added]: ${sourceContact.name}${phone ? ` — Phone: ${phone}` : ''}${email ? ` — Email: ${email}` : ''}`
+                })
+            });
+            if (res.ok) {
+                fetchData(true);
+                completeTask(taskId, 'Contact entry added');
+                setQuickAdd(null);
+            } else {
+                throw new Error('Failed to add entry');
+            }
+        } catch (error) {
+            console.error('Error adding contact entry:', error);
+            failTask(taskId, 'Failed to add contact entry');
+            showError('Add Failed', 'Could not add the new contact entry.');
+        } finally {
+            setIsQuickAdding(false);
+        }
     };
 
     const handleDeleteContact = (contact: Contact) => {
@@ -1777,6 +1840,10 @@ export default function CompanyDetailPage() {
         if (!company || !targetContact.rowNumber) return;
         if (method === 'email' && isMethodActive && targetContact.isEmailInvalid) {
             showError('Invalid email', 'This contact’s email is marked invalid. Unmark it as invalid (or update the email) before setting email as an active method.');
+            return;
+        }
+        if (method === 'phone' && isMethodActive && targetContact.isPhoneInvalid) {
+            showError('Invalid phone', 'This contact’s phone is marked invalid. Unmark it as invalid (or update the phone) before setting phone as an active method.');
             return;
         }
 
@@ -2687,7 +2754,16 @@ export default function CompanyDetailPage() {
                                             onChange={(e) => setNewContact({ ...newContact, email: e.target.value })}
                                             className="px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
                                         />
-                                        <label className="col-start-2 -mt-1 flex items-center justify-end gap-2 text-sm text-slate-700">
+                                        <label className="-mt-1 flex items-center gap-2 text-sm text-slate-700">
+                                            <input
+                                                type="checkbox"
+                                                checked={!!newContact.isPhoneInvalid}
+                                                onChange={(e) => setNewContact({ ...newContact, isPhoneInvalid: e.target.checked })}
+                                                className="h-4 w-4 rounded border-slate-300 text-red-600 focus:ring-red-500"
+                                            />
+                                            Mark phone as invalid
+                                        </label>
+                                        <label className="-mt-1 flex items-center justify-end gap-2 text-sm text-slate-700">
                                             <input
                                                 type="checkbox"
                                                 checked={!!newContact.isEmailInvalid}
@@ -2722,8 +2798,9 @@ export default function CompanyDetailPage() {
                                         <button
                                             type="button"
                                             onClick={() => handleContactAction(contacts.find(c => c.id === editingContactId))}
-                                            disabled={isSaving}
-                                            className="flex-1 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                                            disabled={isSaving || !newContact.name.trim()}
+                                            className="flex-1 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                                            title={!newContact.name.trim() ? 'Contact name is required' : undefined}
                                         >
                                             {isSaving ? 'Saving...' : editingContactId ? 'Update Contact' : 'Save Contact'}
                                         </button>
@@ -2738,180 +2815,294 @@ export default function CompanyDetailPage() {
                                 </div>
                             )}
                             <div className="space-y-3">
-                                {contacts.filter(c => c.id !== editingContactId).map((contact) => (
-                                    <div
-                                        key={contact.id}
-                                        className={`p-4 border rounded-lg transition-colors group ${contact.isActive
-                                            ? 'bg-blue-50 border-blue-200'
-                                            : 'border-slate-200 hover:border-slate-300'
-                                            }`}
-                                    >
-                                        <div className="flex items-start justify-between">
-                                            <div className="flex-1">
+                                {(() => {
+                                    const visibleContacts = contacts.filter(c => c.id !== editingContactId);
+                                    const groups: Contact[][] = [];
+                                    const groupIndex = new Map<string, number>();
+                                    visibleContacts.forEach(c => {
+                                        const key = (c.name || '').trim().toLowerCase();
+                                        if (groupIndex.has(key)) {
+                                            groups[groupIndex.get(key)!].push(c);
+                                        } else {
+                                            groupIndex.set(key, groups.length);
+                                            groups.push([c]);
+                                        }
+                                    });
+                                    return groups.map(group => {
+                                        const primary = group[0];
+                                        const groupActive = group.some(c => c.isActive);
+                                        return (
+                                            <div
+                                                key={primary.id}
+                                                className={`relative group/card p-4 border rounded-lg transition-colors ${groupActive
+                                                    ? 'bg-blue-50 border-blue-200'
+                                                    : 'border-slate-200 hover:border-slate-300'
+                                                    }`}
+                                            >
                                                 <div className="flex items-center gap-2 flex-wrap">
                                                     <button
                                                         type="button"
-                                                        onClick={() => handleCopyContactField(contact.name, `${contact.id}-name`)}
+                                                        onClick={() => handleCopyContactField(primary.name, `${primary.id}-name`)}
                                                         title="Click to copy"
                                                         className="font-semibold text-slate-900 text-left hover:bg-slate-100 rounded px-0.5 -mx-0.5 py-0.5 transition-colors cursor-pointer"
                                                     >
-                                                        {contact.name}
+                                                        {primary.name}
                                                     </button>
-                                                    {copiedContactField === `${contact.id}-name` && <span className="text-xs text-green-600 font-medium">Copied!</span>}
-                                                    {contact.role && (
+                                                    {copiedContactField === `${primary.id}-name` && <span className="text-xs text-green-600 font-medium">Copied!</span>}
+                                                    {primary.role && (
                                                         <>
                                                             <button
                                                                 type="button"
-                                                                onClick={() => handleCopyContactField(contact.role!, `${contact.id}-role`)}
+                                                                onClick={() => handleCopyContactField(primary.role!, `${primary.id}-role`)}
                                                                 title="Click to copy"
                                                                 className="text-xs text-slate-500 py-0.5 px-2 bg-slate-100 rounded-full hover:bg-slate-200 transition-colors cursor-pointer"
                                                             >
-                                                                {contact.role}
+                                                                {primary.role}
                                                             </button>
-                                                            {copiedContactField === `${contact.id}-role` && <span className="text-xs text-green-600 font-medium">Copied!</span>}
+                                                            {copiedContactField === `${primary.id}-role` && <span className="text-xs text-green-600 font-medium">Copied!</span>}
                                                         </>
                                                     )}
-                                                    {contact.isActive && (
-                                                        <span className="inline-flex items-center gap-1 text-xs text-blue-700 py-0.5 pl-2 pr-1 bg-blue-100 rounded-full font-medium">
-                                                            Currently Contacting
-                                                            {canEdit && (
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={() => handleClearAllContactMethods(contact)}
-                                                                    className="ml-0.5 p-0.5 hover:bg-blue-200 rounded-full transition-colors"
-                                                                    title="Remove from currently contacting"
-                                                                >
-                                                                    <XMarkIcon className="w-3 h-3" />
-                                                                </button>
-                                                            )}
+                                                    {group.length > 1 && (
+                                                        <span className="text-[10px] font-medium text-slate-500 py-0.5 px-2 bg-slate-100 rounded-full">
+                                                            {group.length} entries
                                                         </span>
                                                     )}
                                                 </div>
-                                                <div className="flex flex-wrap gap-x-6 gap-y-2 mt-2">
-                                                    {contact.phone && (
-                                                        <div className="flex items-center gap-1.5 group/method">
-                                                            <div className={`text-sm flex items-center gap-1 ${contact.activeMethods?.includes('phone') ? 'text-amber-700 font-medium' : 'text-slate-600'}`}>
-                                                                <PhoneIcon className="w-4 h-4 shrink-0" />
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={() => handleCopyContactField(contact.phone!, `${contact.id}-phone`)}
-                                                                    title="Click to copy"
-                                                                    className="hover:bg-slate-100 rounded px-0.5 -mx-0.5 py-0.5 transition-colors cursor-pointer text-left"
-                                                                >
-                                                                    {contact.phone}
-                                                                </button>
-                                                                {copiedContactField === `${contact.id}-phone` && <span className="text-xs text-green-600 font-medium">Copied!</span>}
+                                                <div className={`mt-2 ${group.length > 1 ? 'divide-y divide-slate-200' : ''}`}>
+                                                    {group.map((contact) => (
+                                                        <div key={contact.id} className={`group/entry ${group.length > 1 ? 'relative py-2 first:pt-0' : ''}`}>
+                                                            <div className="pr-16">
+                                                                <div className="flex-1 min-w-0">
+                                                                    <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+                                                                        {contact.phone && (
+                                                                            <div className="flex items-center gap-1.5 group/method">
+                                                                                <div className={`text-sm flex items-center gap-1 ${contact.activeMethods?.includes('phone') ? 'text-amber-700 font-medium' : 'text-slate-600'}`}>
+                                                                                    <PhoneIcon className="w-4 h-4 shrink-0" />
+                                                                                    <button
+                                                                                        type="button"
+                                                                                        onClick={() => handleCopyContactField(contact.phone!, `${contact.id}-phone`)}
+                                                                                        title="Click to copy"
+                                                                                        className={`hover:bg-slate-100 rounded px-0.5 -mx-0.5 py-0.5 transition-colors cursor-pointer text-left ${contact.isPhoneInvalid ? 'line-through opacity-75' : ''}`}
+                                                                                    >
+                                                                                        {contact.phone}
+                                                                                    </button>
+                                                                                    {copiedContactField === `${contact.id}-phone` && <span className="text-xs text-green-600 font-medium">Copied!</span>}
+                                                                                    {contact.isPhoneInvalid && (
+                                                                                        <span className="ml-1 inline-flex items-center text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-red-100 text-red-700">
+                                                                                            Invalid
+                                                                                        </span>
+                                                                                    )}
+                                                                                </div>
+                                                                                {canEdit && (
+                                                                                    <button
+                                                                                        type="button"
+                                                                                        onClick={() => handleToggleContactMethod(contact, 'phone', !contact.activeMethods?.includes('phone'))}
+                                                                                        disabled={!!contact.isPhoneInvalid}
+                                                                                        className={`p-1 rounded flex items-center justify-center transition-all ${contact.activeMethods?.includes('phone')
+                                                                                            ? 'text-amber-600 bg-amber-100 hover:bg-amber-200 opacity-100'
+                                                                                            : 'text-slate-400 hover:text-amber-600 hover:bg-amber-50 opacity-0 group-hover/method:opacity-100'
+                                                                                            }`}
+                                                                                        title={contact.isPhoneInvalid ? "Phone is marked invalid" : (contact.activeMethods?.includes('phone') ? "Remove phone from active" : "Mark phone as active method")}
+                                                                                    >
+                                                                                        <svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+                                                                                            <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
+                                                                                        </svg>
+                                                                                    </button>
+                                                                                )}
+                                                                            </div>
+                                                                        )}
+                                                                        {contact.email && (
+                                                                            <div className="flex items-center gap-1.5 group/method">
+                                                                                <div className={`text-sm flex items-center gap-1 ${contact.activeMethods?.includes('email') ? 'text-amber-700 font-medium' : 'text-slate-600'}`}>
+                                                                                    <EnvelopeIcon className="w-4 h-4 shrink-0" />
+                                                                                    <button
+                                                                                        type="button"
+                                                                                        onClick={() => handleCopyContactField(contact.email!, `${contact.id}-email`)}
+                                                                                        title="Click to copy"
+                                                                                        className={`hover:bg-slate-100 rounded px-0.5 -mx-0.5 py-0.5 transition-colors cursor-pointer text-left ${contact.isEmailInvalid ? 'line-through opacity-75' : ''}`}
+                                                                                    >
+                                                                                        {contact.email}
+                                                                                    </button>
+                                                                                    {copiedContactField === `${contact.id}-email` && <span className="text-xs text-green-600 font-medium">Copied!</span>}
+                                                                                    {contact.isEmailInvalid && (
+                                                                                        <span className="ml-1 inline-flex items-center text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-red-100 text-red-700">
+                                                                                            Invalid
+                                                                                        </span>
+                                                                                    )}
+                                                                                </div>
+                                                                                {canEdit && (
+                                                                                    <button
+                                                                                        type="button"
+                                                                                        onClick={() => handleToggleContactMethod(contact, 'email', !contact.activeMethods?.includes('email'))}
+                                                                                        disabled={!!contact.isEmailInvalid}
+                                                                                        className={`p-1 rounded flex items-center justify-center transition-all ${contact.activeMethods?.includes('email')
+                                                                                            ? 'text-amber-600 bg-amber-100 hover:bg-amber-200 opacity-100'
+                                                                                            : 'text-slate-400 hover:text-amber-600 hover:bg-amber-50 opacity-0 group-hover/method:opacity-100'
+                                                                                            }`}
+                                                                                        title={contact.isEmailInvalid ? "Email is marked invalid" : (contact.activeMethods?.includes('email') ? "Remove email from active" : "Mark email as active method")}
+                                                                                    >
+                                                                                        <svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+                                                                                            <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
+                                                                                        </svg>
+                                                                                    </button>
+                                                                                )}
+                                                                            </div>
+                                                                        )}
+                                                                        {contact.isActive && (
+                                                                            <span className="inline-flex items-center gap-1 text-xs text-blue-700 py-0.5 pl-2 pr-1 bg-blue-100 rounded-full font-medium">
+                                                                                Currently Contacting
+                                                                                {canEdit && (
+                                                                                    <button
+                                                                                        type="button"
+                                                                                        onClick={() => handleClearAllContactMethods(contact)}
+                                                                                        className="ml-0.5 p-0.5 hover:bg-blue-200 rounded-full transition-colors"
+                                                                                        title="Remove from currently contacting"
+                                                                                    >
+                                                                                        <XMarkIcon className="w-3 h-3" />
+                                                                                    </button>
+                                                                                )}
+                                                                            </span>
+                                                                        )}
+                                                                    </div>
+                                                                    {contact.reference?.trim() && (
+                                                                        <p className="text-xs text-slate-500 mt-2">
+                                                                            <span className="text-slate-400">Referred by:</span>{' '}
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={() => handleCopyContactField(contact.reference!.trim(), `${contact.id}-reference`)}
+                                                                                title="Click to copy"
+                                                                                className="text-left hover:bg-slate-100 rounded px-0.5 -mx-0.5 py-0.5 transition-colors cursor-pointer"
+                                                                            >
+                                                                                {contact.reference.trim()}
+                                                                            </button>
+                                                                            {copiedContactField === `${contact.id}-reference` && <span className="text-xs text-green-600 font-medium ml-1">Copied!</span>}
+                                                                        </p>
+                                                                    )}
+                                                                    {contact.remark && (
+                                                                        <p className="text-xs text-slate-500 mt-2 italic">
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={() => handleCopyContactField(contact.remark!, `${contact.id}-remark`)}
+                                                                                title="Click to copy"
+                                                                                className="text-left hover:bg-slate-100 rounded px-0.5 -mx-0.5 py-0.5 transition-colors cursor-pointer"
+                                                                            >
+                                                                                "{contact.remark}"
+                                                                            </button>
+                                                                            {copiedContactField === `${contact.id}-remark` && <span className="text-xs text-green-600 font-medium ml-1">Copied!</span>}
+                                                                        </p>
+                                                                    )}
+                                                                </div>
                                                             </div>
-                                                            {canEdit && (
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={() => handleToggleContactMethod(contact, 'phone', !contact.activeMethods?.includes('phone'))}
-                                                                    className={`p-1 rounded flex items-center justify-center transition-all ${contact.activeMethods?.includes('phone')
-                                                                        ? 'text-amber-600 bg-amber-100 hover:bg-amber-200 opacity-100'
-                                                                        : 'text-slate-400 hover:text-amber-600 hover:bg-amber-50 opacity-0 group-hover/method:opacity-100'
-                                                                        }`}
-                                                                    title={contact.activeMethods?.includes('phone') ? "Remove phone from active" : "Mark phone as active method"}
-                                                                >
-                                                                    <svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
-                                                                        <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
-                                                                    </svg>
-                                                                </button>
+                                                            {canEdit && group.length === 1 && (
+                                                                <div className="absolute top-2 right-2 flex gap-1">
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => startEditingContact(contact)}
+                                                                        className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg opacity-0 group-hover/card:opacity-100 transition-opacity"
+                                                                        title="Edit Contact"
+                                                                    >
+                                                                        <PencilSquareIcon className="w-5 h-5" />
+                                                                    </button>
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => handleDeleteContact(contact)}
+                                                                        className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg opacity-0 group-hover/card:opacity-100 transition-opacity"
+                                                                        title="Delete Contact"
+                                                                    >
+                                                                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                                                        </svg>
+                                                                    </button>
+                                                                </div>
+                                                            )}
+                                                            {canEdit && group.length > 1 && (
+                                                                <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover/entry:opacity-100 transition-opacity">
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => startEditingContact(contact)}
+                                                                        className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg"
+                                                                        title="Edit Contact"
+                                                                    >
+                                                                        <PencilSquareIcon className="w-5 h-5" />
+                                                                    </button>
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => handleDeleteContact(contact)}
+                                                                        className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg"
+                                                                        title="Delete Contact"
+                                                                    >
+                                                                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                                                        </svg>
+                                                                    </button>
+                                                                </div>
                                                             )}
                                                         </div>
-                                                    )}
-                                                    {contact.email && (
-                                                        <div className="flex items-center gap-1.5 group/method">
-                                                            <div className={`text-sm flex items-center gap-1 ${contact.activeMethods?.includes('email') ? 'text-amber-700 font-medium' : 'text-slate-600'}`}>
-                                                                <EnvelopeIcon className="w-4 h-4 shrink-0" />
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={() => handleCopyContactField(contact.email!, `${contact.id}-email`)}
-                                                                    title="Click to copy"
-                                                                    className={`hover:bg-slate-100 rounded px-0.5 -mx-0.5 py-0.5 transition-colors cursor-pointer text-left ${contact.isEmailInvalid ? 'line-through opacity-75' : ''}`}
-                                                                >
-                                                                    {contact.email}
-                                                                </button>
-                                                                {copiedContactField === `${contact.id}-email` && <span className="text-xs text-green-600 font-medium">Copied!</span>}
-                                                                {contact.isEmailInvalid && (
-                                                                    <span className="ml-1 inline-flex items-center text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-red-100 text-red-700">
-                                                                        Invalid
-                                                                    </span>
-                                                                )}
-                                                            </div>
-                                                            {canEdit && (
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={() => handleToggleContactMethod(contact, 'email', !contact.activeMethods?.includes('email'))}
-                                                                    disabled={!!contact.isEmailInvalid}
-                                                                    className={`p-1 rounded flex items-center justify-center transition-all ${contact.activeMethods?.includes('email')
-                                                                        ? 'text-amber-600 bg-amber-100 hover:bg-amber-200 opacity-100'
-                                                                        : 'text-slate-400 hover:text-amber-600 hover:bg-amber-50 opacity-0 group-hover/method:opacity-100'
-                                                                        }`}
-                                                                    title={contact.isEmailInvalid ? "Email is marked invalid" : (contact.activeMethods?.includes('email') ? "Remove email from active" : "Mark email as active method")}
-                                                                >
-                                                                    <svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
-                                                                        <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
-                                                                    </svg>
-                                                                </button>
-                                                            )}
-                                                        </div>
-                                                    )}
+                                                    ))}
                                                 </div>
-                                                {contact.reference?.trim() && (
-                                                    <p className="text-xs text-slate-500 mt-2">
-                                                        <span className="text-slate-400">Referred by:</span>{' '}
+                                                {canEdit && quickAdd?.groupKey === (primary.name || '').trim().toLowerCase() ? (
+                                                    <div className="mt-3 flex flex-wrap items-center gap-2 p-2 bg-white border border-blue-200 rounded-lg">
+                                                        <input
+                                                            type="tel"
+                                                            placeholder="Phone"
+                                                            value={quickAdd.phone}
+                                                            onChange={(e) => setQuickAdd({ ...quickAdd, phone: e.target.value })}
+                                                            className="flex-1 min-w-[120px] px-2 py-1 border border-slate-300 rounded text-sm focus:ring-2 focus:ring-blue-500"
+                                                        />
+                                                        <input
+                                                            type="email"
+                                                            placeholder="Email"
+                                                            value={quickAdd.email}
+                                                            onChange={(e) => setQuickAdd({ ...quickAdd, email: e.target.value })}
+                                                            className="flex-1 min-w-[160px] px-2 py-1 border border-slate-300 rounded text-sm focus:ring-2 focus:ring-blue-500"
+                                                        />
+                                                        <label className="flex items-center gap-1 text-xs text-slate-600" title="Mark phone as invalid">
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={quickAdd.isPhoneInvalid}
+                                                                onChange={(e) => setQuickAdd({ ...quickAdd, isPhoneInvalid: e.target.checked })}
+                                                                className="h-3.5 w-3.5 rounded border-slate-300 text-red-600 focus:ring-red-500"
+                                                            />
+                                                            Phone invalid
+                                                        </label>
+                                                        <label className="flex items-center gap-1 text-xs text-slate-600" title="Mark email as invalid">
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={quickAdd.isEmailInvalid}
+                                                                onChange={(e) => setQuickAdd({ ...quickAdd, isEmailInvalid: e.target.checked })}
+                                                                className="h-3.5 w-3.5 rounded border-slate-300 text-red-600 focus:ring-red-500"
+                                                            />
+                                                            Email invalid
+                                                        </label>
                                                         <button
                                                             type="button"
-                                                            onClick={() => handleCopyContactField(contact.reference!.trim(), `${contact.id}-reference`)}
-                                                            title="Click to copy"
-                                                            className="text-left hover:bg-slate-100 rounded px-0.5 -mx-0.5 py-0.5 transition-colors cursor-pointer"
+                                                            onClick={() => handleQuickAddSave(primary)}
+                                                            disabled={isQuickAdding || (!quickAdd.phone.trim() && !quickAdd.email.trim())}
+                                                            className="px-3 py-1 bg-blue-600 text-white text-xs font-medium rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
                                                         >
-                                                            {contact.reference.trim()}
+                                                            {isQuickAdding ? 'Saving...' : 'Save'}
                                                         </button>
-                                                        {copiedContactField === `${contact.id}-reference` && <span className="text-xs text-green-600 font-medium ml-1">Copied!</span>}
-                                                    </p>
-                                                )}
-                                                {contact.remark && (
-                                                    <p className="text-xs text-slate-500 mt-2 italic">
                                                         <button
                                                             type="button"
-                                                            onClick={() => handleCopyContactField(contact.remark!, `${contact.id}-remark`)}
-                                                            title="Click to copy"
-                                                            className="text-left hover:bg-slate-100 rounded px-0.5 -mx-0.5 py-0.5 transition-colors cursor-pointer"
+                                                            onClick={() => setQuickAdd(null)}
+                                                            className="px-2 py-1 text-xs text-slate-600 hover:bg-slate-100 rounded"
                                                         >
-                                                            "{contact.remark}"
+                                                            Cancel
                                                         </button>
-                                                        {copiedContactField === `${contact.id}-remark` && <span className="text-xs text-green-600 font-medium ml-1">Copied!</span>}
-                                                    </p>
-                                                )}
+                                                    </div>
+                                                ) : canEdit ? (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => openQuickAdd(primary)}
+                                                        className="mt-2 inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded px-2 py-1 transition-colors"
+                                                    >
+                                                        <PlusIcon className="w-3 h-3" /> Add email/phone
+                                                    </button>
+                                                ) : null}
                                             </div>
-                                            <div className="flex gap-1">
-                                                {canEdit && (
-                                                    <>
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => startEditingContact(contact)}
-                                                            className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg opacity-0 group-hover:opacity-100"
-                                                            title="Edit Contact"
-                                                        >
-                                                            <PencilSquareIcon className="w-5 h-5" />
-                                                        </button>
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => handleDeleteContact(contact)}
-                                                            className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg opacity-0 group-hover:opacity-100"
-                                                            title="Delete Contact"
-                                                        >
-                                                            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                                                            </svg>
-                                                        </button>
-                                                    </>
-                                                )}
-                                            </div>
-                                        </div>
-                                    </div>
-                                ))}
+                                        );
+                                    });
+                                })()}
                             </div>
                         </div>
                     )}

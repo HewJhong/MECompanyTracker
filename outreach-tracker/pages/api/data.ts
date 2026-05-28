@@ -53,7 +53,7 @@ export default async function handler(
             () =>
                 sheets.spreadsheets.values.get({
                     spreadsheetId: databaseSpreadsheetId,
-                    range: `${dbSheetName}!A2:Q`,
+                    range: `${dbSheetName}!A2:T`,
                 }),
             DATA_READ_MAX_ATTEMPTS,
             'api/data:dbRows',
@@ -201,6 +201,8 @@ export default async function handler(
                     discipline: row[2],
                     targetSponsorshipTier: row[3],
                     reference: cellTrim(row[11]),
+                    batchLabel: cellTrim(row[18]),
+                    createdAt: cellTrim(row[19]),
                     isFlagged: false,
                     isDeleted: false,
                     contacts: []
@@ -229,6 +231,7 @@ export default async function handler(
                     isActive: row[13] === 'TRUE',
                     activeMethods: row[14] || '',
                     isEmailInvalid: (row[16] || '').toString().trim().toUpperCase() === 'TRUE',
+                    isPhoneInvalid: (row[17] || '').toString().trim().toUpperCase() === 'TRUE',
                 });
             }
         });
@@ -259,6 +262,16 @@ export default async function handler(
                 return tB - tA;
             });
             c.history = companyHistory;
+            // Derive createdAt from earliest history entry when not stored in sheet
+            if (!c.createdAt) {
+                if (companyHistory.length > 0) {
+                    // companyHistory is sorted newest-first; last element is oldest
+                    c.createdAt = companyHistory[companyHistory.length - 1].timestamp || '';
+                } else if (c.lastUpdated) {
+                    // Fall back to lastUpdated as the best available proxy
+                    c.createdAt = c.lastUpdated;
+                }
+            }
             const now = Date.now();
             const lu = c.lastUpdated ? new Date(c.lastUpdated).getTime() : 0;
             const la = c.lastCompanyActivity ? new Date(c.lastCompanyActivity).getTime() : 0;

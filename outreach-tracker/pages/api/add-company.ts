@@ -18,7 +18,7 @@ export default async function handler(
     if (!ctx) return;
 
     try {
-        const { companyName, discipline, contactName, contactEmail, contactPhone, assignedTo, remarks } = req.body;
+        const { companyName, discipline, contactName, contactRole, contactEmail, contactPhone, assignedTo, remarks, batchLabel } = req.body;
 
         // Validation
         if (!companyName || !companyName.trim()) {
@@ -69,14 +69,20 @@ export default async function handler(
             '',                              // D: Target Sponsorship Tier (empty for now)
             '',                              // E: Priority (empty for now)
             contactName?.trim() || '',       // F: Company PIC
-            '',                              // G: Job title/position (empty for now)
+            contactRole?.trim() || '',       // G: Job title/position
             contactEmail?.trim() || '',      // H: Email
             contactPhone?.trim() || '',      // I: Phone Number
             '',                              // J: Landline Number (empty)
             '',                              // K: LinkedIn (empty)
             '',                              // L: Reference (empty)
             '',                              // M: Contact-specific remarks (empty)
-            'TRUE'                           // N: Is_Active
+            'TRUE',                          // N: Is_Active
+            '',                              // O: activeMethods
+            '',                              // P: Archived
+            '',                              // Q: isEmailInvalid
+            '',                              // R: isPhoneInvalid
+            batchLabel?.trim() || '',        // S: batchLabel
+            timestamp,                       // T: createdAt
         ];
 
         // 5. Prepare data for tracker
@@ -101,7 +107,7 @@ export default async function handler(
         // 6. Append to both sheets
         await sheets.spreadsheets.values.append({
             spreadsheetId: databaseSpreadsheetId,
-            range: `${dbSheetName}!A:N`,
+            range: `${dbSheetName}!A:T`,
             valueInputOption: 'RAW',
             requestBody: {
                 values: [databaseRow]
