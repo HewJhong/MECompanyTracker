@@ -20,8 +20,7 @@ gcloud run deploy "$SERVICE" \
   --source . \
   --project "$PROJECT" \
   --region "$REGION" \
-  --allow-unauthenticated \
-  --min-instances 1
+  --allow-unauthenticated
 
 echo "Done. Service URL:"
 gcloud run services describe "$SERVICE" --project "$PROJECT" --region "$REGION" --format='value(status.url)'
