@@ -60,7 +60,6 @@ jobs:
             --project ${{ env.PROJECT_ID }} \
             --region ${{ env.REGION }} \
             --allow-unauthenticated \
-            --min-instances 1 \
             --quiet
         working-directory: outreach-tracker
 
