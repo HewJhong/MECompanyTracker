@@ -101,6 +101,10 @@ export default async function handler(
         const rejectingCompany =
             requestedRelationship !== undefined &&
             requestedRelationship === 'Rejected';
+        const clearingToNone =
+            requestedRelationship !== undefined &&
+            requestedRelationship === '' &&
+            (currentRelationship === 'Registered' || currentRelationship === 'Interested');
 
         let autoDayClearNote = '';
         if (leavingRegistered) {
@@ -111,9 +115,9 @@ export default async function handler(
         }
 
         let autoSponsorshipClearNote = '';
-        if (rejectingCompany && currentSponsorshipTier) {
+        if ((rejectingCompany || clearingToNone) && currentSponsorshipTier) {
             updates.sponsorshipTier = '';
-            autoSponsorshipClearNote = `[Auto] Cleared Registered Sponsorship (relationship rejected). Previously: ${currentSponsorshipTier}`;
+            autoSponsorshipClearNote = `[Auto] Cleared Registered Sponsorship (relationship changed to None). Previously: ${currentSponsorshipTier}`;
         }
 
         const TRACKER_MAP = TRACKER_FIELD_TO_COLUMN;
