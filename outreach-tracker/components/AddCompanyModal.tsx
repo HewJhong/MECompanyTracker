@@ -22,6 +22,8 @@ export default function AddCompanyModal({ isOpen, onClose, onSuccess, committeeM
     const [batchLabel, setBatchLabel] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [error, setError] = useState('');
+    const [similarCompanies, setSimilarCompanies] = useState<{ id: string; companyName: string; score: number }[]>([]);
+    const [isCheckingDuplicate, setIsCheckingDuplicate] = useState(false);
 
     // Reset form when modal closes
     useEffect(() => {
@@ -36,6 +38,7 @@ export default function AddCompanyModal({ isOpen, onClose, onSuccess, committeeM
             setRemarks('');
             setBatchLabel('');
             setError('');
+            setSimilarCompanies([]);
         }
     }, [isOpen]);
 
@@ -47,6 +50,26 @@ export default function AddCompanyModal({ isOpen, onClose, onSuccess, committeeM
         }
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [isOpen]);
+
+    const handleCompanyNameBlur = async () => {
+        const name = companyName.trim();
+        if (name.length < 2) {
+            setSimilarCompanies([]);
+            return;
+        }
+        setIsCheckingDuplicate(true);
+        try {
+            const res = await fetch(`/api/check-duplicate?name=${encodeURIComponent(name)}`);
+            if (res.ok) {
+                const data = await res.json();
+                setSimilarCompanies(data.matches || []);
+            }
+        } catch {
+            // Silently ignore — duplicate check is non-critical
+        } finally {
+            setIsCheckingDuplicate(false);
+        }
+    };
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -142,11 +165,28 @@ export default function AddCompanyModal({ isOpen, onClose, onSuccess, committeeM
                                 type="text"
                                 id="companyName"
                                 value={companyName}
-                                onChange={(e) => setCompanyName(e.target.value)}
+                                onChange={(e) => { setCompanyName(e.target.value); setSimilarCompanies([]); }}
+                                onBlur={handleCompanyNameBlur}
                                 className="w-full px-4 py-2.5 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                                 placeholder="Enter company name"
                                 required
                             />
+                            {isCheckingDuplicate && (
+                                <p className="mt-1.5 text-xs text-slate-400">Checking for similar companies...</p>
+                            )}
+                            {!isCheckingDuplicate && similarCompanies.length > 0 && (
+                                <div className="mt-2 p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
+                                    <p className="font-medium mb-1">Similar companies already exist:</p>
+                                    <ul className="space-y-0.5 mb-2">
+                                        {similarCompanies.map(c => (
+                                            <li key={c.id} className="text-xs">
+                                                <span className="font-mono">{c.id}</span> — {c.companyName} <span className="text-amber-600">({Math.round(c.score * 100)}% similar)</span>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                    <p className="text-xs text-amber-700">You can still proceed if this is a different company.</p>
+                                </div>
+                            )}
                         </div>
 
                         {/* Discipline */}
