@@ -983,7 +983,7 @@ export default function CompanyDetailPage() {
         // Auto-save immediately using computed values (not state, which hasn't updated yet)
         setIsSaving(true);
         const previousCompanyState = { ...company };
-        const taskId = addTask(`Logging ${actionTag} for ${company.name}...`);
+        const taskId = addTask(`Logging ${actionTag} for ${company.companyName || company.name || company.id}...`);
         try {
             const res = await fetch('/api/update', {
                 method: 'POST',
@@ -1061,7 +1061,7 @@ export default function CompanyDetailPage() {
         // Auto-save immediately using computed values
         setIsSaving(true);
         const previousCompanyState = { ...company };
-        const taskId = addTask(`Logging Company Reply for ${company.name}...`);
+        const taskId = addTask(`Logging Company Reply for ${company.companyName || company.name || company.id}...`);
         try {
             const res = await fetch('/api/update', {
                 method: 'POST',
@@ -1131,7 +1131,7 @@ export default function CompanyDetailPage() {
         // Auto-save immediately using computed values
         setIsSaving(true);
         const previousCompanyState = { ...company };
-        const taskId = addTask(`Logging Our Reply for ${company.name}...`);
+        const taskId = addTask(`Logging Our Reply for ${company.companyName || company.name || company.id}...`);
         try {
             const res = await fetch('/api/update', {
                 method: 'POST',
