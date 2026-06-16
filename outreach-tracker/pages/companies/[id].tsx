@@ -1267,8 +1267,7 @@ export default function CompanyDetailPage() {
 
         const resolvedDaysAttending = relationshipStatus === 'Registered' ? daysAttending : '';
 
-        const existingRejectionReason = extractPlainRejectionReason(company.remark);
-        const effectiveRejectionReason = remarks.trim() || existingRejectionReason;
+        const effectiveRejectionReason = remarks.trim();
 
         // Validate rejection reason
         if (relationshipStatus === 'Rejected' && !effectiveRejectionReason.trim()) {
@@ -2335,11 +2334,7 @@ export default function CompanyDetailPage() {
                                     disabled={!canEdit}
                                     placeholder={relationshipStatus === 'Rejected' ? 'Please provide rejection reason...' : 'Add context about this update...'}
                                     className={`w-full px-4 py-2.5 border rounded-lg focus:outline-none focus:ring-2 resize-none disabled:bg-slate-50 disabled:cursor-not-allowed ${
-                                        relationshipStatus === 'Rejected' && (() => {
-                                            const savedReason = extractPlainRejectionReason(company?.remark);
-                                            const effectiveReason = remarks.trim() || savedReason;
-                                            return !effectiveReason.trim();
-                                        })()
+                                        relationshipStatus === 'Rejected' && !remarks.trim()
                                             ? 'border-red-300 focus:ring-red-500'
                                             : 'border-slate-300 focus:ring-blue-500'
                                     }`}
@@ -2361,9 +2356,7 @@ export default function CompanyDetailPage() {
                                     </div>
                                 )}
                                 {(() => {
-                                    const savedReason = extractPlainRejectionReason(company?.remark);
-                                    const effectiveReason = remarks.trim() || savedReason;
-                                    const isMissing = relationshipStatus === 'Rejected' && !effectiveReason.trim();
+                                    const isMissing = relationshipStatus === 'Rejected' && !remarks.trim();
                                     return isMissing ? (
                                     <p className="mt-1 text-xs text-red-600">A rejection reason is required when marking as Rejected.</p>
                                     ) : null;
