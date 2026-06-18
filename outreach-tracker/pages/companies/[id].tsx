@@ -1267,10 +1267,10 @@ export default function CompanyDetailPage() {
 
         const resolvedDaysAttending = relationshipStatus === 'Registered' ? daysAttending : '';
 
-        const effectiveRejectionReason = remarks.trim();
+        const effectiveRejectionReason = remarks.trim() || extractPlainRejectionReason(company.remark || '');
 
         // Validate rejection reason
-        if (relationshipStatus === 'Rejected' && !effectiveRejectionReason.trim()) {
+        if (relationshipStatus === 'Rejected' && !effectiveRejectionReason) {
             showError("Reason Required", "Please provide a rejection reason before saving.");
             return;
         }
@@ -2334,7 +2334,7 @@ export default function CompanyDetailPage() {
                                     disabled={!canEdit}
                                     placeholder={relationshipStatus === 'Rejected' ? 'Please provide rejection reason...' : 'Add context about this update...'}
                                     className={`w-full px-4 py-2.5 border rounded-lg focus:outline-none focus:ring-2 resize-none disabled:bg-slate-50 disabled:cursor-not-allowed ${
-                                        relationshipStatus === 'Rejected' && !remarks.trim()
+                                        relationshipStatus === 'Rejected' && !remarks.trim() && !extractPlainRejectionReason(company.remark || '')
                                             ? 'border-red-300 focus:ring-red-500'
                                             : 'border-slate-300 focus:ring-blue-500'
                                     }`}
@@ -2356,7 +2356,7 @@ export default function CompanyDetailPage() {
                                     </div>
                                 )}
                                 {(() => {
-                                    const isMissing = relationshipStatus === 'Rejected' && !remarks.trim();
+                                    const isMissing = relationshipStatus === 'Rejected' && !remarks.trim() && !extractPlainRejectionReason(company.remark || '');
                                     return isMissing ? (
                                     <p className="mt-1 text-xs text-red-600">A rejection reason is required when marking as Rejected.</p>
                                     ) : null;
