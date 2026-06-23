@@ -7,6 +7,7 @@ import { requireEffectiveCanEditCompanies } from '../../lib/authz';
 import { formatActorLabel } from '../../lib/authz';
 import { withSheetsRetry, isRetryableSheetsError } from '../../lib/sheets-retry';
 import { TRACKER_FIELD_TO_COLUMN, TRACKER_ROW_INDEX } from '../../lib/tracker-sheet-columns';
+import { extractPlainRejectionReason } from '../../lib/rejection-reason';
 
 const UPDATE_READ_ATTEMPTS = 5;
 const UPDATE_READ_RETRY_OPTS = { baseDelayMs: 1500 } as const;
@@ -101,6 +102,8 @@ export default async function handler(
         const rejectingCompany =
             requestedRelationship !== undefined &&
             requestedRelationship === 'Rejected';
+        const transitioningToRejected =
+            rejectingCompany && currentRelationship !== 'Rejected';
         const clearingToNone =
             requestedRelationship !== undefined &&
             requestedRelationship === '' &&
@@ -118,6 +121,13 @@ export default async function handler(
         if ((rejectingCompany || clearingToNone) && currentSponsorshipTier) {
             updates.sponsorshipTier = '';
             autoSponsorshipClearNote = `[Auto] Cleared Registered Sponsorship (relationship changed to None). Previously: ${currentSponsorshipTier}`;
+        }
+
+        let remarkText = typeof remark === 'string' ? remark : '';
+        if (transitioningToRejected && !extractPlainRejectionReason(remarkText)) {
+            return res.status(400).json({
+                message: 'Rejection reason is required when marking as Rejected.',
+            });
         }
 
         const TRACKER_MAP = TRACKER_FIELD_TO_COLUMN;
@@ -141,7 +151,6 @@ export default async function handler(
 
         // Automatic "No Reply" transition logic - SKIP if contactStatus is being manually updated
         // Uses last company contact (I) or last committee contact (J), whichever is more recent
-        let remarkText = typeof remark === 'string' ? remark : '';
         if (autoDayClearNote) {
             remarkText = remarkText ? `${remarkText}\n\n${autoDayClearNote}` : autoDayClearNote;
         }
