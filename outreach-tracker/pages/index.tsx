@@ -45,7 +45,13 @@ interface HistoryEntry {
 
 type TimelineMetric = 'contacted' | 'interested' | 'registered';
 
-function OutreachPerformanceLineChart({ timeline }: { timeline: { date: string; contacted: number; interested: number; registered: number }[] }) {
+function OutreachPerformanceLineChart({
+    timeline,
+    hasDailyStats,
+}: {
+    timeline: { date: string; contacted: number; interested: number; registered: number }[];
+    hasDailyStats: boolean;
+}) {
     const [metric, setMetric] = useState<TimelineMetric>('contacted');
     const chartWidth = 600;
     const chartHeight = 200;
@@ -99,6 +105,15 @@ function OutreachPerformanceLineChart({ timeline }: { timeline: { date: string; 
                 </select>
             </div>
             <div className="relative w-full flex-1 flex">
+                {!hasDailyStats ? (
+                    <div
+                        className="flex flex-1 items-center justify-center text-sm text-slate-400 italic"
+                        style={{ height: `${chartHeight}px` }}
+                    >
+                        Daily stats are not available yet. Try refreshing data.
+                    </div>
+                ) : (
+                    <>
                 {/* Y-Axis Scale Labels */}
                 <div className="flex flex-col justify-between items-end pr-3 text-[10px] font-medium text-slate-400 pb-[24px]" style={{ height: `${chartHeight}px` }}>
                     {scaleMarkers.map((marker, i) => (
@@ -107,7 +122,7 @@ function OutreachPerformanceLineChart({ timeline }: { timeline: { date: string; 
                 </div>
 
                 {/* Graph Area */}
-                <div className="relative flex-1 h-full">
+                <div className="relative flex-1" style={{ height: `${chartHeight}px` }}>
                     {/* Horizontal Grid Lines */}
                     <div className="absolute inset-0 flex flex-col justify-between pb-[24px]" style={{ height: `${chartHeight}px` }}>
                         {scaleMarkers.map((_, i) => (
@@ -140,6 +155,8 @@ function OutreachPerformanceLineChart({ timeline }: { timeline: { date: string; 
                         )}
                     </svg>
                 </div>
+                    </>
+                )}
             </div>
             <div className="flex justify-between mt-auto pt-2 text-[10px] text-slate-400 font-medium pl-6">
                 <span>{timeline[0]?.date}</span>
@@ -358,10 +375,11 @@ export default function Home() {
             dayAttendanceTierMismatch,
             leaderboard,
             timeline: cumulativeTimeline,
+            hasDailyStats: dailyStats.length > 0,
             realMembers,
             flagged: data.filter(c => c.isFlagged)
         };
-    }, [data, history]);
+    }, [data, history, dailyStats]);
 
     if (authStatus === 'loading') {
         return (
@@ -678,7 +696,7 @@ export default function Home() {
                         </div>
 
                         {/* Outreach Performance Over Time - line chart with metric filter */}
-                        <OutreachPerformanceLineChart timeline={stats.timeline} />
+                        <OutreachPerformanceLineChart timeline={stats.timeline} hasDailyStats={stats.hasDailyStats} />
 
                     </div>
 
