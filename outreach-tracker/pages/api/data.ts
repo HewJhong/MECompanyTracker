@@ -185,7 +185,7 @@ export default async function handler(
             try {
                 await syncDailyStats(sheets, trackerSpreadsheetId);
                 dailyStats = await fetchDailyStats(sheets, trackerSpreadsheetId);
-                bootstrappedDailyStats = true;
+                bootstrappedDailyStats = dailyStats.length > 0;
             } catch (e) {
                 console.warn("Daily Stats bootstrap failed:", e);
             }
