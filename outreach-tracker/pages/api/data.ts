@@ -3,6 +3,7 @@ import { getGoogleSheetsClient } from '../../lib/google-sheets';
 import { getCompanyDatabaseSheet } from '../../lib/spreadsheet-utils';
 import { getCommitteeMembers, CommitteeMember } from '../../lib/committee-members';
 import { cache } from '../../lib/cache';
+import { syncDailyStats } from '../../lib/daily-stats';
 import { withSheetsRetry, isRetryableSheetsError } from '../../lib/sheets-retry';
 
 const SHEET_DATA_CACHE_KEY = 'sheet_data';
@@ -10,6 +11,58 @@ const SHEET_DATA_CACHE_KEY = 'sheet_data';
 const DATA_READ_MAX_ATTEMPTS = 7;
 const DATA_READ_RETRY_BASE_MS = 2000;
 const dataReadRetryOpts = { baseDelayMs: DATA_READ_RETRY_BASE_MS } as const;
+
+type DailyStatRow = {
+    date: string;
+    total: number;
+    toContact: number;
+    contacted: number;
+    toFollowUp: number;
+    interested: number;
+    registered: number;
+    noReply: number;
+    rejected: number;
+};
+
+type SheetDataPayload = {
+    companies: unknown[];
+    history: unknown[];
+    dailyStats: DailyStatRow[];
+    committeeMembers: CommitteeMember[];
+    idNameMismatches?: Array<{ id: string; trackerName: string; dbName: string }>;
+    trackerOnlyCompanies?: Array<{ id: string; name: string }>;
+};
+
+function parseDailyStatsRows(rows: string[][]): DailyStatRow[] {
+    return rows.map(row => ({
+        date: row[0],
+        total: parseInt(row[1], 10) || 0,
+        toContact: parseInt(row[2], 10) || 0,
+        contacted: parseInt(row[3], 10) || 0,
+        toFollowUp: parseInt(row[4], 10) || 0,
+        interested: parseInt(row[5], 10) || 0,
+        registered: parseInt(row[6], 10) || 0,
+        noReply: parseInt(row[7], 10) || 0,
+        rejected: parseInt(row[8], 10) || 0,
+    }));
+}
+
+async function fetchDailyStats(
+    sheets: Awaited<ReturnType<typeof getGoogleSheetsClient>>,
+    trackerSpreadsheetId: string,
+): Promise<DailyStatRow[]> {
+    const statsResponse = await withSheetsRetry(
+        () =>
+            sheets.spreadsheets.values.get({
+                spreadsheetId: trackerSpreadsheetId,
+                range: `Daily_Stats!A2:I`,
+            }),
+        DATA_READ_MAX_ATTEMPTS,
+        'api/data:dailyStats',
+        dataReadRetryOpts,
+    );
+    return parseDailyStatsRows(statsResponse.data.values || []);
+}
 
 export default async function handler(
     req: NextApiRequest,
@@ -20,23 +73,30 @@ export default async function handler(
     }
 
     const { refresh } = req.query;
-    const cachedPayload = cache.get(SHEET_DATA_CACHE_KEY);
+    const cachedPayload = cache.get(SHEET_DATA_CACHE_KEY) as SheetDataPayload | undefined;
 
     const startTime = Date.now();
     console.log(">>> [API DATA] Request started");
 
     try {
-        // 1. Check Cache
+        // 1. Check Cache (skip when daily stats are missing so graph can bootstrap)
         if (cachedPayload && refresh !== 'true') {
-            console.log(">>> [API DATA] Serving from cache");
-            res.setHeader('X-Cache', 'HIT');
-            return res.status(200).json(cachedPayload);
+            const hasDailyStats = Array.isArray(cachedPayload.dailyStats) && cachedPayload.dailyStats.length > 0;
+            if (hasDailyStats) {
+                console.log(">>> [API DATA] Serving from cache");
+                res.setHeader('X-Cache', 'HIT');
+                return res.status(200).json(cachedPayload);
+            }
+            console.log(">>> [API DATA] Cache miss — daily stats empty, fetching fresh");
         }
 
         console.log(">>> [API DATA] Fetching from Sheets...");
         const sheets = await getGoogleSheetsClient();
         const databaseSpreadsheetId = process.env.SPREADSHEET_ID_1;
         const trackerSpreadsheetId = process.env.SPREADSHEET_ID_2;
+        if (!databaseSpreadsheetId || !trackerSpreadsheetId) {
+            throw new Error('SPREADSHEET_ID_1 and SPREADSHEET_ID_2 must be set');
+        }
 
         // DB Fetch
         console.log(">>> [API DATA] DB Metadata...");
@@ -111,34 +171,24 @@ export default async function handler(
             console.warn("History fetch failed");
         }
 
-        // Daily Stats Fetch
+        // Daily Stats Fetch (bootstrap sheet when missing/empty)
         console.log(">>> [API DATA] Daily Stats...");
-        let dailyStats: any[] = [];
+        let dailyStats: DailyStatRow[] = [];
+        let bootstrappedDailyStats = false;
         try {
-            const statsResponse = await withSheetsRetry(
-                () =>
-                    sheets.spreadsheets.values.get({
-                        spreadsheetId: trackerSpreadsheetId,
-                        // Daily_Stats columns: Date, Total, To Contact, Contacted, To Follow Up, Interested, Registered, No Reply, Rejected
-                        range: `Daily_Stats!A2:I`,
-                    }),
-                DATA_READ_MAX_ATTEMPTS,
-                'api/data:dailyStats',
-                dataReadRetryOpts,
-            );
-            dailyStats = (statsResponse.data.values || []).map(row => ({
-                date: row[0],
-                total: parseInt(row[1], 10) || 0,
-                toContact: parseInt(row[2], 10) || 0,
-                contacted: parseInt(row[3], 10) || 0,
-                toFollowUp: parseInt(row[4], 10) || 0,
-                interested: parseInt(row[5], 10) || 0,
-                registered: parseInt(row[6], 10) || 0,
-                noReply: parseInt(row[7], 10) || 0,
-                rejected: parseInt(row[8], 10) || 0,
-            }));
+            dailyStats = await fetchDailyStats(sheets, trackerSpreadsheetId);
         } catch (e) {
             console.warn("Daily Stats fetch failed, sheet might not exist yet");
+        }
+
+        if (dailyStats.length === 0) {
+            try {
+                await syncDailyStats(sheets, trackerSpreadsheetId);
+                dailyStats = await fetchDailyStats(sheets, trackerSpreadsheetId);
+                bootstrappedDailyStats = true;
+            } catch (e) {
+                console.warn("Daily Stats bootstrap failed:", e);
+            }
         }
 
         // Processing
@@ -316,6 +366,9 @@ export default async function handler(
             idNameMismatches: idNameMismatches.length > 0 ? idNameMismatches : undefined,
             trackerOnlyCompanies: trackerOnlyCompanies.length > 0 ? trackerOnlyCompanies : undefined,
         };
+        if (bootstrappedDailyStats) {
+            cache.delete(SHEET_DATA_CACHE_KEY);
+        }
         cache.set(SHEET_DATA_CACHE_KEY, responseData);
 
         console.log(`>>> [API DATA] Done in ${Date.now() - startTime}ms`);

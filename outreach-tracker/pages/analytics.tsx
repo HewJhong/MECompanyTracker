@@ -15,7 +15,13 @@ import { useCurrentUser } from '../contexts/CurrentUserContext';
 
 type TimelineMetric = 'contacted' | 'interested' | 'registered';
 
-function OutreachPerformanceLineChart({ timeline }: { timeline: { date: string; contacted: number; interested: number; registered: number }[] }) {
+function OutreachPerformanceLineChart({
+    timeline,
+    hasDailyStats,
+}: {
+    timeline: { date: string; contacted: number; interested: number; registered: number }[];
+    hasDailyStats: boolean;
+}) {
     const [selectedMetrics, setSelectedMetrics] = useState<TimelineMetric[]>(['contacted']);
     const chartWidth = 600;
     const chartHeight = 240;
@@ -93,6 +99,15 @@ function OutreachPerformanceLineChart({ timeline }: { timeline: { date: string; 
                 </div>
             </div>
             <div className="relative w-full flex-1 flex">
+                {!hasDailyStats ? (
+                    <div
+                        className="flex flex-1 items-center justify-center text-sm text-slate-400 italic"
+                        style={{ height: `${chartHeight}px` }}
+                    >
+                        Daily stats are not available yet. Try refreshing data.
+                    </div>
+                ) : (
+                    <>
                 {/* Y-Axis Scale Labels */}
                 <div className="flex flex-col justify-between items-end pr-4 text-[10px] font-medium text-slate-400 pb-[24px]" style={{ height: `${chartHeight}px` }}>
                     {scaleMarkers.map((marker, i) => (
@@ -101,7 +116,7 @@ function OutreachPerformanceLineChart({ timeline }: { timeline: { date: string; 
                 </div>
 
                 {/* Graph Area */}
-                <div className="relative flex-1 h-full">
+                <div className="relative flex-1" style={{ height: `${chartHeight}px` }}>
                     {/* Horizontal Grid Lines */}
                     <div className="absolute inset-0 flex flex-col justify-between pb-[24px]" style={{ height: `${chartHeight}px` }}>
                         {scaleMarkers.map((_, i) => (
@@ -140,6 +155,8 @@ function OutreachPerformanceLineChart({ timeline }: { timeline: { date: string; 
                         ))}
                     </svg>
                 </div>
+                    </>
+                )}
             </div>
             <div className="flex justify-between mt-auto pt-4 text-xs text-slate-400 font-medium">
                 <span>{timeline[0]?.date}</span>
@@ -214,7 +231,6 @@ export default function Analytics() {
     // --- Calculations ---
 
     const stats = useMemo(() => {
-        console.log(">>> [DEBUG GRAPH] stats useMemo TRIGGERED", { dataLength: data.length, historyLength: history.length });
         if (data.length === 0) return null;
 
         const total = data.length;
@@ -309,8 +325,6 @@ export default function Analytics() {
             }
         }
 
-        console.log('[DEBUG GRAPH] Final Cumulative Timeline fed from Daily_Stats:', cumulativeTimeline);
-
         // Active members (last activity per user from history)
         const memberActivityMap = new Map<string, string>();
         history.forEach((entry: HistoryEntry) => {
@@ -338,10 +352,11 @@ export default function Analytics() {
             dayDist,
             leaderboard,
             timeline: cumulativeTimeline,
+            hasDailyStats: dailyStats.length > 0,
             flagged: data.filter(c => c.isFlagged),
             realMembers
         };
-    }, [data, history]);
+    }, [data, history, dailyStats]);
 
     const processedLogs = useMemo(() => {
         let logs = [...history].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
@@ -513,7 +528,7 @@ export default function Analytics() {
                 </div>
 
                 {/* Row 3: Timeline Graph */}
-                <OutreachPerformanceLineChart timeline={stats.timeline} />
+                <OutreachPerformanceLineChart timeline={stats.timeline} hasDailyStats={stats.hasDailyStats} />
 
                 {/* Team & Admin Section: Active Members, Leaderboard, Flagged */}
                 {currentUser?.isCommitteeMember && (
