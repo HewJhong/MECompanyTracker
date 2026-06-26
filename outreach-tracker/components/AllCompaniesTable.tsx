@@ -1060,6 +1060,7 @@ export default function AllCompaniesTable({
                                         case 'assignedTo': return <th key={key} className="px-6 py-2 bg-white" style={{ width: COLUMN_WIDTHS.assignedTo }}><FilterRowMultiSelect options={assignees} selected={columnFilters.assignedTo} onChange={s => setColumnFilters({ ...columnFilters, assignedTo: s })} /></th>;
                                         case 'scheduled': return <th key={key} className="px-6 py-2 bg-white" style={{ width: COLUMN_WIDTHS.scheduled }}><FilterRowMultiSelect options={SCHEDULE_FILTER_OPTIONS.map(o => o.label)} selected={columnFilters.scheduled} onChange={s => setColumnFilters({ ...columnFilters, scheduled: s })} placeholder="Schedule…" /></th>;
                                         case 'batchLabel': return <th key={key} className="px-6 py-2 bg-white" style={{ width: COLUMN_WIDTHS.batchLabel }}><FilterRowMultiSelect options={batchLabels} selected={columnFilters.batchLabel} onChange={s => setColumnFilters({ ...columnFilters, batchLabel: s })} placeholder="Batch…" /></th>;
+                                        case 'id': return null;
                                         default: return <th key={key} className="px-6 py-2 bg-white" style={{ width: COLUMN_WIDTHS[key] }} />;
                                     }
                                 })}
