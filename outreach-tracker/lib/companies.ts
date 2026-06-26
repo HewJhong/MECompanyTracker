@@ -6,6 +6,7 @@ import { syncDailyStats } from './daily-stats';
 import { withSheetsRetry } from './sheets-retry';
 import { TRACKER_FIELD_TO_COLUMN, TRACKER_ROW_INDEX } from './tracker-sheet-columns';
 import { extractPlainRejectionReason } from './rejection-reason';
+import { loadSheetData, type SheetCompany } from './sheet-data';
 
 export interface CreateCompanyParams {
     companyName: string;
@@ -468,4 +469,18 @@ export async function updateCompany(
         historyLogged,
         updatedRows: dbRowIndices.length,
     };
+}
+
+export async function listCompanies(options?: { includeArchived?: boolean }): Promise<SheetCompany[]> {
+    const result = await loadSheetData();
+    if (!result.ok) throw new Error(result.message);
+    const companies = result.payload.companies;
+    if (options?.includeArchived) return companies;
+    return companies.filter(c => !c.isDeleted);
+}
+
+export async function getCompany(companyId: string): Promise<SheetCompany | null> {
+    const result = await loadSheetData();
+    if (!result.ok) throw new Error(result.message);
+    return result.payload.companies.find(c => c.id === companyId) ?? null;
 }
