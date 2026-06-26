@@ -103,21 +103,24 @@ export async function createCompany(
         requestBody: { values: [trackerRow] },
     });
 
-    await sheets.spreadsheets.values.append({
-        spreadsheetId: trackerSpreadsheetId,
-        range: 'Thread_History!A:D',
-        valueInputOption: 'USER_ENTERED',
-        requestBody: { values: [[timestamp, newCompanyId, actorLabel, `Added new company ${companyName}`]] },
-    });
-
-    await sheets.spreadsheets.values.append({
-        spreadsheetId: trackerSpreadsheetId,
-        range: 'Logs_DoNotEdit!A:E',
-        valueInputOption: 'RAW',
-        requestBody: {
-            values: [[timestamp, actorLabel, 'ADD_COMPANY', `${newCompanyId} – ${companyName}`, JSON.stringify({ discipline, assignedTo })]],
-        },
-    });
+    try {
+        await sheets.spreadsheets.values.append({
+            spreadsheetId: trackerSpreadsheetId,
+            range: 'Thread_History!A:D',
+            valueInputOption: 'USER_ENTERED',
+            requestBody: { values: [[timestamp, newCompanyId, actorLabel, `Added new company ${companyName}`]] },
+        });
+        await sheets.spreadsheets.values.append({
+            spreadsheetId: trackerSpreadsheetId,
+            range: 'Logs_DoNotEdit!A:E',
+            valueInputOption: 'RAW',
+            requestBody: {
+                values: [[timestamp, actorLabel, 'ADD_COMPANY', `${newCompanyId} – ${companyName}`, JSON.stringify({ discipline, assignedTo })]],
+            },
+        });
+    } catch (auditErr) {
+        console.error('[createCompany] Audit log append failed after company was created:', auditErr);
+    }
 
     cache.clear();
     await syncDailyStats(sheets, trackerSpreadsheetId);

@@ -34,5 +34,6 @@ export function requireApiKey(req: NextApiRequest, res: NextApiResponse): boolea
 
 export function getApiActorLabel(req: NextApiRequest): string {
     const key = typeof req.headers['x-api-key'] === 'string' ? req.headers['x-api-key'] : '';
-    return `API:${key.substring(0, 8)}`;
+    const hash = crypto.createHash('sha256').update(key).digest('hex');
+    return `API:${hash.substring(0, 8)}`;
 }

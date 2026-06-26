@@ -61,6 +61,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 			});
 		}
 		if (isRetryableSheetsError(error)) {
+			console.error(`[v1/companies/${id}] Sheets quota exhausted:`, error);
 			return res.status(503).json({ error: 'Sheets quota exceeded — retry in a moment', code: 'SHEETS_QUOTA' });
 		}
 		console.error(`[v1/companies/${id}]`, error);

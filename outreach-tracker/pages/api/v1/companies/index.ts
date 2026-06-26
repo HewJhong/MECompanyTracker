@@ -44,6 +44,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 		return res.status(405).json({ error: 'Method not allowed', code: 'METHOD_NOT_ALLOWED' });
 	} catch (error) {
 		if (isRetryableSheetsError(error)) {
+			console.error('[v1/companies] Sheets quota exhausted:', error);
 			return res.status(503).json({ error: 'Sheets quota exceeded — retry in a moment', code: 'SHEETS_QUOTA' });
 		}
 		console.error('[v1/companies]', error);
