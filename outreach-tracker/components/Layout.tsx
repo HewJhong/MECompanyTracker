@@ -15,19 +15,58 @@ import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { signOut } from 'next-auth/react';
 import { useCurrentUser } from '../contexts/CurrentUserContext';
+import { prefetchAppBoards } from '../lib/board-prefetch';
+import {
+    fetchCommitteeMembers,
+    getCachedCommitteeMembers,
+    type CommitteeMember,
+} from '../lib/committee-members-fetch';
 
 interface LayoutProps {
     children: React.ReactNode;
     title?: string;
 }
 
+function pathFromRouteUrl(url: string): string {
+    return url.split('?')[0].split('#')[0];
+}
+
 export default function Layout({ children, title = 'Outreach Tracker' }: LayoutProps) {
     const [sidebarOpen, setSidebarOpen] = useState(false);
     const router = useRouter();
+    // Highlight the clicked tab immediately on routeChangeStart — don't wait for
+    // the destination page bundle to finish loading (router.pathname lags until then).
+    const [activePath, setActivePath] = useState(() => router.pathname);
+
+    useEffect(() => {
+        setActivePath(router.pathname);
+    }, [router.pathname]);
+
+    useEffect(() => {
+        prefetchAppBoards();
+    }, []);
+
+    useEffect(() => {
+        const onStart = (url: string) => setActivePath(pathFromRouteUrl(url));
+        const onComplete = (url: string) => setActivePath(pathFromRouteUrl(url));
+        const onError = () => setActivePath(router.pathname);
+        router.events.on('routeChangeStart', onStart);
+        router.events.on('routeChangeComplete', onComplete);
+        router.events.on('routeChangeError', onError);
+        return () => {
+            router.events.off('routeChangeStart', onStart);
+            router.events.off('routeChangeComplete', onComplete);
+            router.events.off('routeChangeError', onError);
+        };
+    }, [router]);
     const { user, realUser, isImpersonating, impersonatedEmail, startImpersonation, stopImpersonation } = useCurrentUser();
     const [impersonateEmail, setImpersonateEmail] = useState('');
-    const [committeeMembers, setCommitteeMembers] = useState<Array<{ name: string; email: string; role: string }>>([]);
-    const [committeeMembersLoading, setCommitteeMembersLoading] = useState(false);
+    const [committeeMembers, setCommitteeMembers] = useState<CommitteeMember[]>(
+        () => getCachedCommitteeMembers() || [],
+    );
+    const [committeeMembersLoading, setCommitteeMembersLoading] = useState(
+        () => !(getCachedCommitteeMembers()?.length),
+    );
     const [impersonateBusy, setImpersonateBusy] = useState(false);
     const [impersonateError, setImpersonateError] = useState<string | null>(null);
     const canImpersonate = Boolean(realUser?.isSuperAdmin);
@@ -50,28 +89,23 @@ export default function Layout({ children, title = 'Outreach Tracker' }: LayoutP
 
     useEffect(() => {
         if (!canImpersonate) return;
+        const cached = getCachedCommitteeMembers();
+        if (cached && cached.length > 0) {
+            setCommitteeMembers(cached);
+            setCommitteeMembersLoading(false);
+            return;
+        }
         let cancelled = false;
         setCommitteeMembersLoading(true);
-        fetch('/api/committee-members')
-            .then((res) => res.ok ? res.json() : null)
-            .then((json) => {
+        fetchCommitteeMembers()
+            .then((members) => {
                 if (cancelled) return;
-                const members = (json?.members || []) as Array<{ name: string; email: string; role: string }>;
-                const normalized = members
-                    .filter(m => m?.email && String(m.email).trim() !== '')
-                    .map(m => ({
-                        name: String(m.name || '').trim(),
-                        email: String(m.email || '').trim(),
-                        role: String(m.role || '').trim(),
-                    }))
-                    .sort((a, b) => (a.name || a.email).localeCompare(b.name || b.email));
-                setCommitteeMembers(normalized);
+                setCommitteeMembers(members);
+                setCommitteeMembersLoading(false);
             })
             .catch(() => {
-                if (!cancelled) setCommitteeMembers([]);
-            })
-            .finally(() => {
-                if (!cancelled) setCommitteeMembersLoading(false);
+                if (cancelled) return;
+                setCommitteeMembersLoading(false);
             });
         return () => { cancelled = true; };
     }, [canImpersonate]);
@@ -126,8 +160,8 @@ export default function Layout({ children, title = 'Outreach Tracker' }: LayoutP
                     </p>
                     {navItems.map((item) => {
                         const isActive = item.href === '/'
-                            ? router.pathname === '/'
-                            : router.pathname.startsWith(item.href);
+                            ? activePath === '/'
+                            : activePath.startsWith(item.href);
                         return (
                             <Link
                                 key={item.name}
