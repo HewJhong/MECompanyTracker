@@ -113,101 +113,120 @@ export async function loadSheetData(options?: { refresh?: boolean }): Promise<Lo
             throw new Error('SPREADSHEET_ID_1 and SPREADSHEET_ID_2 must be set');
         }
 
-        console.log('>>> [SHEET DATA] DB Metadata...');
-        const dbMetadata = await withSheetsRetry(
-            () => sheets.spreadsheets.get({ spreadsheetId: databaseSpreadsheetId }),
-            DATA_READ_MAX_ATTEMPTS,
-            'sheet-data:dbMetadata',
-            dataReadRetryOpts,
-        );
-        const { title: dbSheetName } = getCompanyDatabaseSheet(dbMetadata.data.sheets);
+        // The DB chain, tracker chain, history, and daily stats are all
+        // independent reads — fetch them concurrently instead of one after
+        // another to avoid stacking up Sheets API round trips.
+        console.log('>>> [SHEET DATA] DB rows, tracker rows, history, daily stats (concurrent)...');
 
-        console.log('>>> [SHEET DATA] DB Rows...');
-        const dbResponse = await withSheetsRetry(
-            () =>
-                sheets.spreadsheets.values.get({
-                    spreadsheetId: databaseSpreadsheetId,
-                    range: `${dbSheetName}!A2:T`,
-                }),
-            DATA_READ_MAX_ATTEMPTS,
-            'sheet-data:dbRows',
-            dataReadRetryOpts,
-        );
-        const dbRows = dbResponse.data.values || [];
+        const dbChain = async () => {
+            const dbMetadata = await withSheetsRetry(
+                () => sheets.spreadsheets.get({ spreadsheetId: databaseSpreadsheetId }),
+                DATA_READ_MAX_ATTEMPTS,
+                'sheet-data:dbMetadata',
+                dataReadRetryOpts,
+            );
+            const { title: dbSheetName } = getCompanyDatabaseSheet(dbMetadata.data.sheets);
 
-        console.log('>>> [SHEET DATA] Tracker Metadata...');
-        const trackerMetadata = await withSheetsRetry(
-            () => sheets.spreadsheets.get({ spreadsheetId: trackerSpreadsheetId }),
-            DATA_READ_MAX_ATTEMPTS,
-            'sheet-data:trackerMetadata',
-            dataReadRetryOpts,
-        );
-        const trackerSheetName = trackerMetadata.data.sheets?.[0].properties?.title;
-        if (!trackerSheetName) throw new Error('Tracker Sheet not found');
+            const dbResponse = await withSheetsRetry(
+                () =>
+                    sheets.spreadsheets.values.get({
+                        spreadsheetId: databaseSpreadsheetId,
+                        range: `${dbSheetName}!A2:T`,
+                    }),
+                DATA_READ_MAX_ATTEMPTS,
+                'sheet-data:dbRows',
+                dataReadRetryOpts,
+            );
+            return dbResponse.data.values || [];
+        };
 
-        console.log('>>> [SHEET DATA] Tracker Rows...');
-        const trackerResponse = await withSheetsRetry(
-            () =>
-                sheets.spreadsheets.values.get({
-                    spreadsheetId: trackerSpreadsheetId,
-                    range: `${trackerSheetName}!A2:P`,
-                }),
-            DATA_READ_MAX_ATTEMPTS,
-            'sheet-data:trackerRows',
-            dataReadRetryOpts,
-        );
-        const trackerRows = trackerResponse.data.values || [];
+        const trackerChain = async () => {
+            const trackerMetadata = await withSheetsRetry(
+                () => sheets.spreadsheets.get({ spreadsheetId: trackerSpreadsheetId }),
+                DATA_READ_MAX_ATTEMPTS,
+                'sheet-data:trackerMetadata',
+                dataReadRetryOpts,
+            );
+            const trackerSheetName = trackerMetadata.data.sheets?.[0].properties?.title;
+            if (!trackerSheetName) throw new Error('Tracker Sheet not found');
 
-        console.log('>>> [SHEET DATA] History...');
-        let historyData: Array<{
-            id: string;
-            timestamp: string;
-            companyId: string;
-            user: string;
-            action: string;
-            remark: string;
-        }> = [];
-        try {
-            const historyResponse = await withSheetsRetry(
+            const trackerResponse = await withSheetsRetry(
                 () =>
                     sheets.spreadsheets.values.get({
                         spreadsheetId: trackerSpreadsheetId,
-                        range: `Thread_History!A2:D`,
+                        range: `${trackerSheetName}!A2:P`,
                     }),
                 DATA_READ_MAX_ATTEMPTS,
-                'sheet-data:history',
+                'sheet-data:trackerRows',
                 dataReadRetryOpts,
             );
-            historyData = (historyResponse.data.values || []).map((row, index) => ({
-                id: `history-${index}`,
-                timestamp: row[0],
-                companyId: row[1],
-                user: row[2],
-                action: row[3] || '',
-                remark: row[3] || '',
-            }));
-        } catch {
-            console.warn('History fetch failed');
-        }
+            return trackerResponse.data.values || [];
+        };
 
-        console.log('>>> [SHEET DATA] Daily Stats...');
-        let dailyStats: DailyStatRow[] = [];
-        let bootstrappedDailyStats = false;
-        try {
-            dailyStats = await fetchDailyStats(sheets, trackerSpreadsheetId);
-        } catch {
-            console.warn('Daily Stats fetch failed, sheet might not exist yet');
-        }
-
-        if (dailyStats.length === 0) {
+        const historyChain = async () => {
             try {
-                await syncDailyStats(sheets, trackerSpreadsheetId);
-                dailyStats = await fetchDailyStats(sheets, trackerSpreadsheetId);
-                bootstrappedDailyStats = dailyStats.length > 0;
-            } catch (e) {
-                console.warn('Daily Stats bootstrap failed:', e);
+                const historyResponse = await withSheetsRetry(
+                    () =>
+                        sheets.spreadsheets.values.get({
+                            spreadsheetId: trackerSpreadsheetId,
+                            range: `Thread_History!A2:D`,
+                        }),
+                    DATA_READ_MAX_ATTEMPTS,
+                    'sheet-data:history',
+                    dataReadRetryOpts,
+                );
+                return (historyResponse.data.values || []).map((row, index) => ({
+                    id: `history-${index}`,
+                    timestamp: row[0],
+                    companyId: row[1],
+                    user: row[2],
+                    action: row[3] || '',
+                    remark: row[3] || '',
+                }));
+            } catch {
+                console.warn('History fetch failed');
+                return [];
             }
-        }
+        };
+
+        const dailyStatsChain = async () => {
+            let stats: DailyStatRow[] = [];
+            let bootstrapped = false;
+            try {
+                stats = await fetchDailyStats(sheets, trackerSpreadsheetId);
+            } catch {
+                console.warn('Daily Stats fetch failed, sheet might not exist yet');
+            }
+
+            if (stats.length === 0) {
+                try {
+                    await syncDailyStats(sheets, trackerSpreadsheetId);
+                    stats = await fetchDailyStats(sheets, trackerSpreadsheetId);
+                    bootstrapped = stats.length > 0;
+                } catch (e) {
+                    console.warn('Daily Stats bootstrap failed:', e);
+                }
+            }
+            return { stats, bootstrapped };
+        };
+
+        const committeeChain = async (): Promise<CommitteeMember[]> => {
+            try {
+                return await getCommitteeMembers();
+            } catch {
+                return [];
+            }
+        };
+
+        const [dbRows, trackerRows, historyData, dailyStatsResult, committeeMembers] = await Promise.all([
+            dbChain(),
+            trackerChain(),
+            historyChain(),
+            dailyStatsChain(),
+            committeeChain(),
+        ]);
+        const dailyStats = dailyStatsResult.stats;
+        const bootstrappedDailyStats = dailyStatsResult.bootstrapped;
 
         console.log('>>> [SHEET DATA] Processing...');
         const trackerMap = new Map<string, Record<string, unknown>>();
@@ -342,14 +361,6 @@ export async function loadSheetData(options?: { refresh?: boolean }): Promise<Lo
             c.isCommitteeStale = (now - lu) / (1000 * 60 * 60 * 24) > 7;
             c.isCompanyStale = (now - la) / (1000 * 60 * 60 * 24) > 7;
         });
-
-        console.log('>>> [SHEET DATA] Committee Members...');
-        let committeeMembers: CommitteeMember[] = [];
-        try {
-            committeeMembers = await getCommitteeMembers();
-        } catch {
-            // optional
-        }
 
         let idNameMismatches: Array<{ id: string; trackerName: string; dbName: string }> = [];
         if (refresh) {
