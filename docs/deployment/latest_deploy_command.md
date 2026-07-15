@@ -1,123 +1,87 @@
-# Deploy Outreach Tracker (Cloud Run) — commands
+# Outreach Tracker Cloud Run release commands
 
-## Deploy (recommended)
+Production releases have two separate operations: create a zero-traffic candidate, then explicitly promote a verified immutable revision.
 
-From repo root:
+The protected GitHub Actions workflows are preferred. These local commands are for an authorized operator using equivalent production approval controls.
+
+## Create a zero-traffic candidate
+
+From the repository root:
 
 ```bash
+REVISION_SUFFIX=sheets-freeze-bootstrap \
+MAINTENANCE_MODE=1 \
 ./outreach-tracker/deploy.sh
 ```
 
-Override project/region if needed:
+To create a temporary smoke-test URL, add a tag:
 
 ```bash
-GCLOUD_PROJECT=company-tracker-485803 GCLOUD_REGION=us-central1 ./outreach-tracker/deploy.sh
+REVISION_SUFFIX=sheets-freeze-bootstrap \
+REVISION_TAG=sheets-freeze-bootstrap \
+MAINTENANCE_MODE=1 \
+./outreach-tracker/deploy.sh
 ```
 
-## Deploy (manual one-off)
+The script builds locally, deploys with `--no-traffic`, and prints the service traffic table. It refuses to run without an explicit revision suffix. Bootstrap CI reports the repository's existing lint backlog separately; Task 3 makes lint a required gate after establishing a clean baseline.
 
-From `outreach-tracker/`:
+Override the target only when intentionally working with another isolated environment:
 
 ```bash
-gcloud run deploy outreach-tracker \
-  --source . \
-  --project company-tracker-485803 \
-  --region us-central1 \
-  --allow-unauthenticated \
-  --min-instances 1
+GCLOUD_PROJECT=company-tracker-485803 \
+GCLOUD_REGION=us-central1 \
+CLOUD_RUN_SERVICE=outreach-tracker \
+REVISION_SUFFIX=reviewed-candidate \
+MAINTENANCE_MODE=1 \
+./outreach-tracker/deploy.sh
 ```
 
-## Set production config (env vars + secrets)
+## Verify a freeze candidate
 
-Notes:
-- `outreach-tracker/.env.local` is **local-only** (gitignored). Cloud Run uses its own env vars/secrets.
-- Prefer Secret Manager for sensitive values (private keys, OAuth client secret, NextAuth secret).
-- Use `--update-env-vars` / `--update-secrets` for small changes. Use `--set-*` only when you intend to replace the full set.
-
-### Update a few env vars (safe, non-destructive)
+Against its temporary tag URL, verify all non-auth APIs are blocked regardless of HTTP method:
 
 ```bash
-gcloud run services update outreach-tracker \
-  --project company-tracker-485803 \
-  --region us-central1 \
-  --update-env-vars "SPREADSHEET_ID_1=...,SPREADSHEET_ID_2=...,GOOGLE_OAUTH_CLIENT_ID=..." \
-  --quiet
+curl -i https://TAGGED-REVISION-URL/api/data
+curl -i https://TAGGED-REVISION-URL/api/limits
+curl -i https://TAGGED-REVISION-URL/api/email-schedule
+curl -i -X POST https://TAGGED-REVISION-URL/api/clear-cache
 ```
 
-### Update secret bindings (safe, non-destructive)
+Each request must return `503` with `Cache-Control: no-store` and `Retry-After: 600`.
+
+Remove the temporary tag after verification:
 
 ```bash
-gcloud run services update outreach-tracker \
+gcloud run services update-traffic outreach-tracker \
   --project company-tracker-485803 \
   --region us-central1 \
-  --update-secrets "GOOGLE_PRIVATE_KEY=your-secret:latest,GOOGLE_OAUTH_CLIENT_SECRET=your-secret:latest,NEXTAUTH_SECRET=your-secret:latest" \
-  --quiet
+  --remove-tags sheets-freeze-bootstrap
 ```
 
-## Maintenance mode (disable writes)
+## Promote an exact revision
 
-Enable:
+Use **Actions → Promote Outreach Tracker Revision** whenever possible. For an authorized manual recovery operation, route traffic only by exact immutable revision name:
 
 ```bash
-gcloud run services update outreach-tracker \
+gcloud run services update-traffic outreach-tracker \
   --project company-tracker-485803 \
   --region us-central1 \
-  --update-env-vars MAINTENANCE_MODE=1 \
-  --quiet
+  --to-revisions outreach-tracker-EXACT-REVISION=100
 ```
 
-Disable:
+Then verify:
 
 ```bash
-gcloud run services update outreach-tracker \
+gcloud run services describe outreach-tracker \
   --project company-tracker-485803 \
   --region us-central1 \
-  --update-env-vars MAINTENANCE_MODE=0 \
-  --quiet
+  --format='table(status.traffic.revisionName,status.traffic.percent,status.traffic.tag,status.traffic.url)'
 ```
 
-Remove entirely:
+Do not use `--to-latest` for a production release. Do not percentage-split traffic between Sheets-backed and Postgres-backed revisions.
 
-```bash
-gcloud run services update outreach-tracker \
-  --project company-tracker-485803 \
-  --region us-central1 \
-  --remove-env-vars MAINTENANCE_MODE \
-  --quiet
-```
+## Important maintenance rule
 
-## Troubleshooting
+Do not toggle `MAINTENANCE_MODE` on the live service during a migration window. Updating a Cloud Run environment variable creates a new revision and can change traffic unexpectedly. Pre-build and verify distinct frozen/live revisions at zero traffic, then route to the exact named revision required by the runbook.
 
-### Build fails with buildpacks (wrong build context)
-
-Run deploy from `outreach-tracker/` (or use the script):
-
-```bash
-cd outreach-tracker
-gcloud run deploy outreach-tracker \
-  --source . \
-  --project company-tracker-485803 \
-  --region us-central1 \
-  --allow-unauthenticated \
-  --min-instances 1
-```
-
-### Google sign-in redirects to localhost
-
-Set `NEXTAUTH_URL` to the Cloud Run service URL:
-
-```bash
-SERVICE_URL=$(gcloud run services describe outreach-tracker \
-  --project company-tracker-485803 \
-  --region us-central1 \
-  --format='value(status.url)')
-
-gcloud run services update outreach-tracker \
-  --project company-tracker-485803 \
-  --region us-central1 \
-  --update-env-vars "NEXTAUTH_URL=${SERVICE_URL}" \
-  --quiet
-```
-
-Also ensure your Google OAuth client has the redirect URI:
-`https://YOUR-SERVICE-URL/api/auth/callback/google`
+Cloud Run service environment variables and secrets remain managed separately. Prefer `--update-env-vars` and `--update-secrets` for deliberate configuration changes; `--set-*` replaces the complete corresponding set.

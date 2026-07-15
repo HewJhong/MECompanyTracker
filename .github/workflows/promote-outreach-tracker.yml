@@ -1,0 +1,89 @@
+# Explicitly promote one already-deployed Cloud Run revision to production traffic.
+# This workflow does not build or deploy a new revision.
+
+name: Promote Outreach Tracker Revision
+
+on:
+  workflow_dispatch:
+    inputs:
+      revision_name:
+        description: 'Exact immutable Cloud Run revision name to receive 100% traffic'
+        required: true
+        type: string
+      confirmation:
+        description: 'Type PROMOTE to confirm the traffic change'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: outreach-tracker-production-release
+  cancel-in-progress: false
+
+env:
+  PROJECT_ID: company-tracker-485803
+  REGION: us-central1
+  SERVICE_NAME: outreach-tracker
+
+jobs:
+  promote:
+    name: Promote an approved revision
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+
+    steps:
+      - name: Validate promotion request
+        env:
+          REVISION_NAME: ${{ inputs.revision_name }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          set -euo pipefail
+          if [[ "$CONFIRMATION" != "PROMOTE" ]]; then
+            echo "Promotion confirmation did not match PROMOTE." >&2
+            exit 1
+          fi
+          if [[ ! "$REVISION_NAME" =~ ^outreach-tracker-[a-z][a-z0-9-]{0,40}[a-z0-9]$ ]]; then
+            echo "Invalid production revision name: $REVISION_NAME" >&2
+            exit 1
+          fi
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Describe approved revision before promotion
+        env:
+          REVISION_NAME: ${{ inputs.revision_name }}
+        run: |
+          set -euo pipefail
+          gcloud run revisions describe "$REVISION_NAME" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --format='yaml(metadata.name,status.conditions,status.imageDigest,spec.containers[0].env)'
+
+      - name: Route production traffic to approved revision
+        env:
+          REVISION_NAME: ${{ inputs.revision_name }}
+        run: |
+          set -euo pipefail
+          gcloud run services update-traffic "$SERVICE_NAME" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --to-revisions "$REVISION_NAME=100" \
+            --quiet
+
+      - name: Verify production traffic
+        run: |
+          gcloud run services describe "$SERVICE_NAME" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --format='table(status.traffic.revisionName,status.traffic.percent,status.traffic.tag,status.traffic.url)'

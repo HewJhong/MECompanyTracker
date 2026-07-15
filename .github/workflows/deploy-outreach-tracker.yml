@@ -1,16 +1,34 @@
-# Deploy Outreach Tracker to Google Cloud Run
-# Runs on push to main or manual trigger.
+# Deploy an Outreach Tracker revision to Google Cloud Run with zero traffic.
+# Production traffic is changed only by promote-outreach-tracker.yml.
 # Setup: see docs/deployment/GITHUB_ACTIONS_SETUP.md
 
-name: Deploy Outreach Tracker
+name: Deploy Outreach Tracker Candidate
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'outreach-tracker/**'
-      - '.github/workflows/deploy-outreach-tracker.yml'
-  workflow_dispatch:  # Allow "Run workflow" from the Actions tab
+  workflow_dispatch:
+    inputs:
+      revision_suffix:
+        description: 'Cloud Run revision suffix (for example: sheets-freeze-bootstrap)'
+        required: true
+        default: 'sheets-freeze-bootstrap'
+        type: string
+      revision_tag:
+        description: 'Optional temporary tag for smoke testing; remove it after testing'
+        required: false
+        default: ''
+        type: string
+      maintenance_mode:
+        description: 'Block all non-auth API requests in this revision'
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: outreach-tracker-production-release
+  cancel-in-progress: false
 
 env:
   PROJECT_ID: company-tracker-485803
@@ -19,8 +37,10 @@ env:
 
 jobs:
   deploy:
-    name: Build and deploy
+    name: Build and deploy at zero traffic
     runs-on: ubuntu-latest
+    environment:
+      name: production
     defaults:
       run:
         working-directory: outreach-tracker
@@ -36,7 +56,7 @@ jobs:
           cache: 'npm'
           cache-dependency-path: outreach-tracker/package-lock.json
 
-      - name: Build (verify before deploy)
+      - name: Verify candidate
         run: |
           npm ci
           npm run build
@@ -51,21 +71,59 @@ jobs:
         with:
           project_id: ${{ env.PROJECT_ID }}
 
-      - name: Deploy to Cloud Run
+      - name: Validate release inputs
+        env:
+          REVISION_SUFFIX: ${{ inputs.revision_suffix }}
+          REVISION_TAG: ${{ inputs.revision_tag }}
         run: |
-          # Ensure Dockerfile is used (--source uses it when present; list for debugging)
-          ls -la Dockerfile 2>/dev/null || true
-          gcloud run deploy ${{ env.SERVICE_NAME }} \
-            --source . \
-            --project ${{ env.PROJECT_ID }} \
-            --region ${{ env.REGION }} \
-            --allow-unauthenticated \
-            --quiet
-        working-directory: outreach-tracker
+          set -euo pipefail
+          if [[ ! "$REVISION_SUFFIX" =~ ^[a-z][a-z0-9-]{0,40}[a-z0-9]$ ]]; then
+            echo "Invalid revision suffix: $REVISION_SUFFIX" >&2
+            exit 1
+          fi
+          if [[ -n "$REVISION_TAG" && ! "$REVISION_TAG" =~ ^[a-z][a-z0-9-]{0,61}[a-z0-9]$ ]]; then
+            echo "Invalid revision tag: $REVISION_TAG" >&2
+            exit 1
+          fi
 
-      - name: Show service URL
+      - name: Deploy candidate with zero traffic
+        env:
+          REVISION_SUFFIX: ${{ inputs.revision_suffix }}
+          REVISION_TAG: ${{ inputs.revision_tag }}
+          MAINTENANCE_MODE: ${{ inputs.maintenance_mode && '1' || '0' }}
         run: |
+          set -euo pipefail
+          deploy_args=(
+            run deploy "$SERVICE_NAME"
+            --source .
+            --project "$PROJECT_ID"
+            --region "$REGION"
+            --revision-suffix "$REVISION_SUFFIX"
+            --update-env-vars "MAINTENANCE_MODE=$MAINTENANCE_MODE"
+            --no-traffic
+            --quiet
+          )
+          if [[ -n "$REVISION_TAG" ]]; then
+            deploy_args+=(--tag "$REVISION_TAG")
+          fi
+          gcloud "${deploy_args[@]}"
+
+      - name: Verify candidate revision
+        env:
+          REVISION_SUFFIX: ${{ inputs.revision_suffix }}
+        run: |
+          set -euo pipefail
+          revision_name="${SERVICE_NAME}-${REVISION_SUFFIX}"
+          gcloud run revisions describe "$revision_name" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --format='yaml(metadata.name,status.conditions,status.imageDigest,spec.containers[0].env)'
           gcloud run services describe ${{ env.SERVICE_NAME }} \
             --project ${{ env.PROJECT_ID }} \
             --region ${{ env.REGION }} \
-            --format='value(status.url)'
+            --format='table(status.traffic.revisionName,status.traffic.percent,status.traffic.tag,status.traffic.url)'
+
+      - name: Promotion reminder
+        run: |
+          echo "Candidate deployed with zero service traffic."
+          echo "Smoke-test any temporary tag, remove it after testing, and use the separate promotion workflow only after approval."
