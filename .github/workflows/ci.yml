@@ -1,0 +1,51 @@
+name: Outreach Tracker CI
+
+on:
+  pull_request:
+    paths:
+      - 'outreach-tracker/**'
+      - '.github/workflows/**'
+  push:
+    branches: [main]
+    paths:
+      - 'outreach-tracker/**'
+      - '.github/workflows/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: outreach-tracker-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bootstrap:
+    name: Bootstrap checks
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: outreach-tracker
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: outreach-tracker/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # The repository currently has a pre-existing lint backlog. Keep the
+      # signal visible without blocking the initial deployment-safety change;
+      # Task 3 makes lint required after establishing a clean baseline.
+      - name: Lint baseline (non-blocking)
+        continue-on-error: true
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
