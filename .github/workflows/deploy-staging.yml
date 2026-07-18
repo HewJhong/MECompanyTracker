@@ -1,46 +1,46 @@
-# Deploy an Outreach Tracker revision to Google Cloud Run with zero traffic.
-# Production traffic is changed only by promote-outreach-tracker.yml.
-# Setup: see docs/deployment/GITHUB_ACTIONS_SETUP.md
+# Deploy an Outreach Tracker revision to the isolated staging service with zero traffic.
+# Task 2 must provision the staging service, identity, secrets, OAuth callback, and
+# source Sheets before this workflow is run.
 
-name: Deploy Outreach Tracker Candidate
+name: Deploy Outreach Tracker Staging Candidate
 
 on:
   workflow_dispatch:
     inputs:
       revision_suffix:
-        description: 'Cloud Run revision suffix (for example: sheets-freeze-bootstrap)'
+        description: 'Staging revision suffix (for example: sheets-baseline-bootstrap)'
         required: true
-        default: 'sheets-freeze-bootstrap'
+        default: 'sheets-baseline-bootstrap'
         type: string
       revision_tag:
-        description: 'Optional temporary tag for smoke testing; remove it after testing'
+        description: 'Optional temporary staging tag for smoke testing'
         required: false
         default: ''
         type: string
       maintenance_mode:
-        description: 'Block all non-auth API requests in this revision'
+        description: 'Block all non-auth API requests in this staging revision'
         required: true
-        default: true
+        default: false
         type: boolean
 
 permissions:
   contents: read
 
 concurrency:
-  group: outreach-tracker-production-release
+  group: outreach-tracker-staging-release
   cancel-in-progress: false
 
 env:
   PROJECT_ID: company-tracker-485803
   REGION: us-central1
-  SERVICE_NAME: outreach-tracker
+  SERVICE_NAME: outreach-tracker-staging
 
 jobs:
   deploy:
-    name: Build and deploy at zero traffic
+    name: Build and deploy staging candidate at zero traffic
     runs-on: ubuntu-latest
     environment:
-      name: production
+      name: staging
     defaults:
       run:
         working-directory: outreach-tracker
@@ -61,23 +61,22 @@ jobs:
           npm ci
           npm run build
 
-      - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v2
-        with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
-
-      - name: Set up Cloud SDK
-        uses: google-github-actions/setup-gcloud@v2
-        with:
-          project_id: ${{ env.PROJECT_ID }}
-
-      - name: Validate release inputs
+      - name: Validate staging release inputs
         env:
           REVISION_SUFFIX: ${{ inputs.revision_suffix }}
           REVISION_TAG: ${{ inputs.revision_tag }}
+          STAGING_BOUNDARIES_VERIFIED: ${{ vars.STAGING_BOUNDARIES_VERIFIED }}
         run: |
           set -euo pipefail
-          if [[ ! "$REVISION_SUFFIX" =~ ^[a-z][a-z0-9-]{0,40}[a-z0-9]$ ]]; then
+          if [[ "$SERVICE_NAME" != "outreach-tracker-staging" ]]; then
+            echo "Refusing non-staging service target: $SERVICE_NAME" >&2
+            exit 1
+          fi
+          if [[ "$STAGING_BOUNDARIES_VERIFIED" != "true" ]]; then
+            echo "Task 2 staging boundaries have not been marked verified." >&2
+            exit 1
+          fi
+          if [[ ! "$REVISION_SUFFIX" =~ ^[a-z][a-z0-9-]{0,36}[a-z0-9]$ ]]; then
             echo "Invalid revision suffix: $REVISION_SUFFIX" >&2
             exit 1
           fi
@@ -86,7 +85,25 @@ jobs:
             exit 1
           fi
 
-      - name: Deploy candidate with zero traffic
+      - name: Authenticate to staging Google Cloud identity
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_STAGING_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Verify staging service is provisioned
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$SERVICE_NAME" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --format='value(metadata.name)'
+
+      - name: Deploy staging candidate with zero traffic
         env:
           REVISION_SUFFIX: ${{ inputs.revision_suffix }}
           REVISION_TAG: ${{ inputs.revision_tag }}
@@ -108,7 +125,7 @@ jobs:
           fi
           gcloud "${deploy_args[@]}"
 
-      - name: Verify candidate revision
+      - name: Verify staging candidate revision
         env:
           REVISION_SUFFIX: ${{ inputs.revision_suffix }}
         run: |
@@ -118,12 +135,13 @@ jobs:
             --project "$PROJECT_ID" \
             --region "$REGION" \
             --format='yaml(metadata.name,status.conditions,status.imageDigest,spec.containers[0].env)'
-          gcloud run services describe ${{ env.SERVICE_NAME }} \
-            --project ${{ env.PROJECT_ID }} \
-            --region ${{ env.REGION }} \
+          gcloud run services describe "$SERVICE_NAME" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
             --format='table(status.traffic.revisionName,status.traffic.percent,status.traffic.tag,status.traffic.url)'
 
-      - name: Promotion reminder
+      - name: Staging reminder
         run: |
-          echo "Candidate deployed with zero service traffic."
-          echo "Smoke-test any temporary tag, remove it after testing, and use the separate promotion workflow only after approval."
+          echo "Staging candidate deployed with zero service traffic."
+          echo "A temporary tag creates a directly reachable URL; remove it after smoke testing."
+          echo "Do not promote the revision until Task 2 isolation and source-data controls are verified."

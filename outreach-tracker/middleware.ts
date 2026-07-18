@@ -15,29 +15,35 @@ function isAssetPath(pathname: string): boolean {
     );
 }
 
+function isAuthApiPath(pathname: string): boolean {
+    return pathname === '/api/auth' || pathname.startsWith('/api/auth/');
+}
+
 export function middleware(req: NextRequest) {
     if (!maintenanceEnabled()) return NextResponse.next();
 
     const { pathname } = req.nextUrl;
 
-    // Allow auth routes so users don't get stuck mid-login.
-    if (pathname.startsWith('/api/auth')) return NextResponse.next();
+    // Allow only NextAuth routes so users don't get stuck mid-login.
+    if (isAuthApiPath(pathname)) return NextResponse.next();
 
     // Allow the maintenance page and static assets.
     if (pathname === '/maintenance' || isAssetPath(pathname)) return NextResponse.next();
 
-    // Block any potentially mutating API calls to prevent data loss.
+    // Some GET handlers initialize or mutate Sheets, so maintenance mode must
+    // block the entire API surface regardless of HTTP method. Dedicated
+    // token-protected migration checks will be allowlisted when they exist.
     if (pathname.startsWith('/api/')) {
-        const method = req.method.toUpperCase();
-        const isRead = method === 'GET' || method === 'HEAD' || method === 'OPTIONS';
-        if (!isRead) {
-            return NextResponse.json(
-                { error: 'Service temporarily disabled for maintenance.' },
-                { status: 503, headers: { 'Retry-After': '600' } },
-            );
-        }
-        // Even read APIs should remain available (e.g., for debugging).
-        return NextResponse.next();
+        return NextResponse.json(
+            { error: 'Service temporarily disabled for maintenance.' },
+            {
+                status: 503,
+                headers: {
+                    'Cache-Control': 'no-store',
+                    'Retry-After': '600',
+                },
+            },
+        );
     }
 
     // For all other routes, rewrite to the maintenance page.

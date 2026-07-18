@@ -1,142 +1,115 @@
-# GitHub Actions: Deploy Outreach Tracker to Cloud Run
+# GitHub Actions: safe Outreach Tracker releases
 
-This guide walks you through setting up GitHub Actions so that pushes to `main` (or a manual run) build and deploy the Outreach Tracker to Google Cloud Run.
+The repository has four separate CI and release workflows:
 
----
+| Workflow | Trigger | Effect |
+|---|---|---|
+| `Outreach Tracker CI` | Pull requests and pushes to `main` | Runs `npm ci`, reports the current lint baseline, and requires a successful build. Never deploys. |
+| `Deploy Outreach Tracker Staging Candidate` | Manual only | Builds a named revision on the isolated staging service with zero service traffic. |
+| `Deploy Outreach Tracker Candidate` | Manual only | Builds a named Cloud Run revision with zero service traffic. |
+| `Promote Outreach Tracker Revision` | Manual only | Routes 100% traffic to one explicitly named, already-deployed revision. |
 
-## 1. Create a service account in Google Cloud
+Pushing or merging application code does not deploy it and cannot promote a revision.
 
-You need a service account that can deploy to Cloud Run and submit Cloud Build jobs.
+## 1. Protect the GitHub `production` environment
 
-1. Open [Google Cloud Console](https://console.cloud.google.com/) and select project **company-tracker-485803** (or your project).
-2. Go to **IAM & Admin** → **Service Accounts**.
-3. Click **Create Service Account**.
-   - **Name:** e.g. `github-actions-deploy`
-   - **Description:** e.g. "Used by GitHub Actions to deploy to Cloud Run"
-4. Click **Create and Continue**. Add these roles:
-   - **Cloud Run Admin** – deploy and update the service
-   - **Service Account User** – required for Cloud Run
-   - **Cloud Build Editor** – so `gcloud run deploy --source` can build the image
-   - **Artifact Registry Writer** – required for `gcloud run deploy --source` (images are pushed to the `cloud-run-source-deploy` repository)
-   - **Service Usage Consumer** – required so the caller can use project APIs (e.g. Cloud Build); without it you get "Caller does not have required permission to use project"
-   - **Storage Admin** (or **Storage Object Creator**) – for uploading source when using `--source`
-5. Click **Done**. Do **not** grant users access unless you need to.
+Both production workflows reference a GitHub environment named `production`. Configure it before using either workflow:
 
----
+1. Open the repository's **Settings → Environments**.
+2. Create or open `production`.
+3. Add the appropriate required reviewer or deployment protection rule for the repository's GitHub plan.
+4. Enable **Prevent self-review** where available.
+5. Restrict deployment branches/tags to the approved release policy.
+6. Confirm a test run waits for approval before receiving production credentials.
 
-## 2. Create and download a key for the service account
+An `environment: production` entry in YAML does not create an approval requirement by itself; the protection rule must be configured in GitHub. See [GitHub deployment environments](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments).
 
-1. In **Service Accounts**, click the account you just created (e.g. `github-actions-deploy`).
-2. Open the **Keys** tab → **Add Key** → **Create new key** → **JSON** → **Create**.
-3. A JSON key file downloads. Keep it secure; you will paste its contents into GitHub.
+If the repository plan does not support required reviewers for its visibility, keep both workflows manual and treat the missing two-person gate as an unresolved production control. Do not claim the migration's approval gate is complete until an equivalent protection rule is available.
 
----
+## 2. Configure Google Cloud authentication
 
-## 3. Add the key as a GitHub secret
+The workflows currently read `GCP_SA_KEY`. Prefer storing it as a secret on the protected `production` environment so it is unavailable until the protection rules pass.
 
-1. Open your repo on GitHub → **Settings** → **Secrets and variables** → **Actions**.
-2. Click **New repository secret**.
-3. **Name:** `GCP_SA_KEY`
-4. **Value:** Paste the **entire contents** of the JSON key file (one line or multi-line is fine).
-5. Click **Add secret**.
+The deploy identity needs only the permissions required to build from source and manage the `outreach-tracker` Cloud Run service. Follow Google's current [Cloud Run source deployment role guidance](https://cloud.google.com/run/docs/rollouts-rollbacks-traffic-migration#required-roles) and avoid unrelated project-wide roles.
 
-The workflow uses this secret in the step:
+Workload Identity Federation should replace the long-lived JSON key in a later credential-hardening change. Until then, rotate the key according to the release policy and never place it in repository files or workflow inputs.
 
-```yaml
-- uses: google-github-actions/auth@v2
-  with:
-    credentials_json: ${{ secrets.GCP_SA_KEY }}
+The staging workflow reads `GCP_STAGING_SA_KEY` from a separate GitHub environment named `staging` and targets only `outreach-tracker-staging`. Task 2 must create that environment, staging-only service account, service, secrets, OAuth callback, and non-production source Sheets before anyone runs the workflow. After every Task 2 isolation check passes, set the staging environment variable `STAGING_BOUNDARIES_VERIFIED` to the exact value `true`; the workflow refuses to deploy without it. The workflow also verifies that the staging service already exists and always deploys with `--no-traffic`; it does not provision infrastructure or promote a revision.
+
+An optional staging tag provides a directly reachable smoke-test URL even though the revision receives zero percentage-based service traffic. Remove the tag as soon as testing finishes:
+
+```bash
+gcloud run services update-traffic outreach-tracker-staging \
+  --project company-tracker-485803 \
+  --region us-central1 \
+  --remove-tags TEMPORARY_TAG
 ```
 
----
+## 3. Run bootstrap CI
 
-## 4. When the workflow runs
+Open a pull request and confirm `Outreach Tracker CI` installs dependencies and builds successfully:
 
-- **On push to `main`**  
-  Only when files under `outreach-tracker/` or the workflow file itself change (see `paths` in the workflow).
-
-- **Manual run**  
-  In the repo go to **Actions** → **Deploy Outreach Tracker** → **Run workflow** → **Run workflow**.
-
----
-
-## 5. How to see when the action is triggered and deploying
-
-1. **Open the Actions tab**  
-   On GitHub: open your repo → click **Actions** in the top bar.
-
-2. **Check the workflow run**  
-   - You’ll see a run for **“Deploy Outreach Tracker”** (triggered by your push or by “Run workflow”).  
-   - **Yellow circle** = running.  
-   - **Green check** = succeeded.  
-   - **Red X** = failed.
-
-3. **Open the run for details**  
-   Click the run (e.g. the commit message or “Deploy Outreach Tracker”). You’ll see:
-   - **Build and deploy** job with steps: Checkout → Build → Authenticate → Deploy to Cloud Run → Show service URL.  
-   - Click a step to expand and see logs (e.g. build output, `gcloud` deploy progress).
-
-4. **Optional: get notified**  
-   Repo **Settings** → **Notifications** → enable **Actions** (or **Watch** the repo and choose “Custom” → Actions). You’ll get emails when a workflow fails (and optionally when it succeeds).
-
-So after you push: go to **Actions** and you’ll see the new run and whether it’s in progress or done.
-
----
-
-## 6. What the workflow does
-
-The workflow will:
-
-1. Check out the code.
-2. Run `npm ci` and `npm run build` in `outreach-tracker` (so the job fails early if the build breaks).
-3. Authenticate to GCP using `GCP_SA_KEY`.
-4. Run `gcloud run deploy ... --source .` from `outreach-tracker`, which builds the image in Cloud Build and deploys to Cloud Run.
-
----
-
-## 7. Optional: change project or region
-
-Edit the `env` block at the top of [`.github/workflows/deploy-outreach-tracker.yml`](../../.github/workflows/deploy-outreach-tracker.yml):
-
-```yaml
-env:
-  PROJECT_ID: company-tracker-485803
-  REGION: us-central1
-  SERVICE_NAME: outreach-tracker
+```text
+npm ci
+npm run lint
+npm run build
 ```
 
----
+The repository currently has a pre-existing lint backlog, so the bootstrap workflow runs lint as a visible non-blocking check. Do not interpret that warning as a clean lint baseline. Task 3 of the Supabase migration plan will establish the clean baseline, make lint required, and add typecheck and test suites.
 
-## 8. Optional: Workload Identity Federation (no key file)
+## 4. Deploy a zero-traffic candidate
 
-For better security you can avoid storing a JSON key and use **Workload Identity Federation** so GitHub OIDC tokens are exchanged for short-lived GCP credentials. Setup is more involved:
+From **Actions → Deploy Outreach Tracker Candidate → Run workflow**:
 
-1. In GCP: **IAM & Admin** → **Workload Identity Federation** → create a pool and provider for GitHub.
-2. Allow your GitHub repo (e.g. `your-org/ME-Company-Tracker`) to impersonate the service account.
-3. In the workflow, replace the `auth` step with something like:
+1. Choose the exact reviewed branch or commit.
+2. Enter a stable revision suffix, such as `sheets-freeze-bootstrap`.
+3. Leave `maintenance_mode` enabled for a freeze candidate.
+4. Supply a temporary revision tag only when an operator needs a smoke-test URL.
+5. Approve the protected `production` environment request.
 
-   ```yaml
-   - uses: google-github-actions/auth@v2
-     with:
-       workload_identity_provider: 'projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/POOL/providers/PROVIDER'
-       service_account: 'github-actions-deploy@company-tracker-485803.iam.gserviceaccount.com'
-   ```
+The workflow uses `gcloud run deploy --no-traffic`. A tag provides a direct test URL but can expose the tagged revision according to the service's ingress and IAM configuration. Remove the tag as soon as smoke testing finishes:
 
-4. Remove the `GCP_SA_KEY` secret from GitHub.
+```bash
+gcloud run services update-traffic outreach-tracker \
+  --project company-tracker-485803 \
+  --region us-central1 \
+  --remove-tags sheets-freeze-bootstrap
+```
 
-If you want to switch to this later, you can update the workflow and delete the `GCP_SA_KEY` secret.
+Before promotion, verify the candidate's revision name, image digest, environment configuration, maintenance behavior, and current traffic table.
 
----
+## 5. Promote an approved revision
 
-## 9. Troubleshooting
+Promotion is a separate manual workflow:
 
-| Problem | What to check |
-|--------|----------------|
-| **Permission denied** | Service account has Cloud Run Admin, Service Account User, Cloud Build Editor, **Artifact Registry Writer**, **Service Usage Consumer**, and Storage (see step 1). |
-| **`artifactregistry.repositories.get` denied** | Add the **Artifact Registry Writer** role to the service account in IAM. Deploy-from-source uses Artifact Registry; without this role the deploy step fails with PERMISSION_DENIED. |
-| **"Caller does not have required permission to use project" / "default service account is missing required IAM permissions"** | Add the **Service Usage Consumer** role to the GitHub Actions service account. This allows the caller to use project APIs (e.g. Cloud Build). If the build still fails, ensure the project’s **default Cloud Build service account** has the permissions described in [Cloud Run build service account](https://cloud.google.com/run/docs/configuring/services/build-service-account). |
-| **Build fails in Actions** | Check the "Build (verify before deploy)" step; fix `npm run build` locally. |
-| **Deploy fails** | Check the "Deploy to Cloud Run" step logs; ensure `GCP_SA_KEY` is the full JSON key. |
-| **Workflow doesn’t run on push** | Confirm you pushed under `outreach-tracker/**` or the workflow file, and the branch is `main` (or change `branches` in the workflow). |
+1. Open **Actions → Promote Outreach Tracker Revision → Run workflow**.
+2. Enter the exact immutable Cloud Run revision name reported by the candidate workflow.
+3. Enter `PROMOTE` in the confirmation field.
+4. Review and approve the protected `production` environment request.
+5. Verify the post-promotion traffic table names the intended revision at 100%.
 
-To test without pushing to `main`, use **Actions** → **Deploy Outreach Tracker** → **Run workflow** and choose your branch.
+Never promote a revision suffix, `latest`, or an unverified image. During the Sheets-to-Postgres cutover, do not use percentage traffic splitting between revisions backed by different data stores.
+
+## 6. Bootstrap freeze verification
+
+For the temporary `sheets-freeze-bootstrap` candidate, enable maintenance mode and verify the temporary tag returns `503` for at least:
+
+- `GET /api/data`
+- `GET /api/limits`
+- schedule GET routes
+- representative POST/PATCH/DELETE mutations
+
+`/api/auth/*`, the maintenance page, and static assets remain available. No internal migration endpoint is allowlisted until its dedicated token protection exists.
+
+After recording the results, remove the temporary tag. Do not promote the bootstrap freeze revision during this verification.
+
+## Troubleshooting
+
+| Problem | Check |
+|---|---|
+| Workflow starts without waiting | Configure required reviewers or another protection rule on the GitHub `production` environment. |
+| Candidate receives normal service traffic | Stop and inspect the workflow; candidate deployment must include `--no-traffic`. |
+| Tagged URL is unreachable | Check the tag, Cloud Run ingress, IAM, and whether unauthenticated access is intended. |
+| Source build is denied | Re-check the current Cloud Run source deployment roles and service-account impersonation. |
+| CI fails | Reproduce from `outreach-tracker/` with `npm ci` and `npm run build`; inspect the separate non-blocking lint output as tracked baseline debt. |
+| Promotion targets the wrong revision | Do not retry with `latest`; copy the exact immutable revision name from the verified candidate output. |
