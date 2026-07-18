@@ -1,10 +1,11 @@
 # GitHub Actions: safe Outreach Tracker releases
 
-The repository has three separate production-related workflows:
+The repository has four separate CI and release workflows:
 
 | Workflow | Trigger | Effect |
 |---|---|---|
 | `Outreach Tracker CI` | Pull requests and pushes to `main` | Runs `npm ci`, reports the current lint baseline, and requires a successful build. Never deploys. |
+| `Deploy Outreach Tracker Staging Candidate` | Manual only | Builds a named revision on the isolated staging service with zero service traffic. |
 | `Deploy Outreach Tracker Candidate` | Manual only | Builds a named Cloud Run revision with zero service traffic. |
 | `Promote Outreach Tracker Revision` | Manual only | Routes 100% traffic to one explicitly named, already-deployed revision. |
 
@@ -32,6 +33,17 @@ The workflows currently read `GCP_SA_KEY`. Prefer storing it as a secret on the 
 The deploy identity needs only the permissions required to build from source and manage the `outreach-tracker` Cloud Run service. Follow Google's current [Cloud Run source deployment role guidance](https://cloud.google.com/run/docs/rollouts-rollbacks-traffic-migration#required-roles) and avoid unrelated project-wide roles.
 
 Workload Identity Federation should replace the long-lived JSON key in a later credential-hardening change. Until then, rotate the key according to the release policy and never place it in repository files or workflow inputs.
+
+The staging workflow reads `GCP_STAGING_SA_KEY` from a separate GitHub environment named `staging` and targets only `outreach-tracker-staging`. Task 2 must create that environment, staging-only service account, service, secrets, OAuth callback, and non-production source Sheets before anyone runs the workflow. After every Task 2 isolation check passes, set the staging environment variable `STAGING_BOUNDARIES_VERIFIED` to the exact value `true`; the workflow refuses to deploy without it. The workflow also verifies that the staging service already exists and always deploys with `--no-traffic`; it does not provision infrastructure or promote a revision.
+
+An optional staging tag provides a directly reachable smoke-test URL even though the revision receives zero percentage-based service traffic. Remove the tag as soon as testing finishes:
+
+```bash
+gcloud run services update-traffic outreach-tracker-staging \
+  --project company-tracker-485803 \
+  --region us-central1 \
+  --remove-tags TEMPORARY_TAG
+```
 
 ## 3. Run bootstrap CI
 

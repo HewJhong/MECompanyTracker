@@ -1,0 +1,147 @@
+# Deploy an Outreach Tracker revision to the isolated staging service with zero traffic.
+# Task 2 must provision the staging service, identity, secrets, OAuth callback, and
+# source Sheets before this workflow is run.
+
+name: Deploy Outreach Tracker Staging Candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      revision_suffix:
+        description: 'Staging revision suffix (for example: sheets-baseline-bootstrap)'
+        required: true
+        default: 'sheets-baseline-bootstrap'
+        type: string
+      revision_tag:
+        description: 'Optional temporary staging tag for smoke testing'
+        required: false
+        default: ''
+        type: string
+      maintenance_mode:
+        description: 'Block all non-auth API requests in this staging revision'
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: outreach-tracker-staging-release
+  cancel-in-progress: false
+
+env:
+  PROJECT_ID: company-tracker-485803
+  REGION: us-central1
+  SERVICE_NAME: outreach-tracker-staging
+
+jobs:
+  deploy:
+    name: Build and deploy staging candidate at zero traffic
+    runs-on: ubuntu-latest
+    environment:
+      name: staging
+    defaults:
+      run:
+        working-directory: outreach-tracker
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: outreach-tracker/package-lock.json
+
+      - name: Verify candidate
+        run: |
+          npm ci
+          npm run build
+
+      - name: Validate staging release inputs
+        env:
+          REVISION_SUFFIX: ${{ inputs.revision_suffix }}
+          REVISION_TAG: ${{ inputs.revision_tag }}
+          STAGING_BOUNDARIES_VERIFIED: ${{ vars.STAGING_BOUNDARIES_VERIFIED }}
+        run: |
+          set -euo pipefail
+          if [[ "$SERVICE_NAME" != "outreach-tracker-staging" ]]; then
+            echo "Refusing non-staging service target: $SERVICE_NAME" >&2
+            exit 1
+          fi
+          if [[ "$STAGING_BOUNDARIES_VERIFIED" != "true" ]]; then
+            echo "Task 2 staging boundaries have not been marked verified." >&2
+            exit 1
+          fi
+          if [[ ! "$REVISION_SUFFIX" =~ ^[a-z][a-z0-9-]{0,36}[a-z0-9]$ ]]; then
+            echo "Invalid revision suffix: $REVISION_SUFFIX" >&2
+            exit 1
+          fi
+          if [[ -n "$REVISION_TAG" && ! "$REVISION_TAG" =~ ^[a-z][a-z0-9-]{0,61}[a-z0-9]$ ]]; then
+            echo "Invalid revision tag: $REVISION_TAG" >&2
+            exit 1
+          fi
+
+      - name: Authenticate to staging Google Cloud identity
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_STAGING_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Verify staging service is provisioned
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$SERVICE_NAME" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --format='value(metadata.name)'
+
+      - name: Deploy staging candidate with zero traffic
+        env:
+          REVISION_SUFFIX: ${{ inputs.revision_suffix }}
+          REVISION_TAG: ${{ inputs.revision_tag }}
+          MAINTENANCE_MODE: ${{ inputs.maintenance_mode && '1' || '0' }}
+        run: |
+          set -euo pipefail
+          deploy_args=(
+            run deploy "$SERVICE_NAME"
+            --source .
+            --project "$PROJECT_ID"
+            --region "$REGION"
+            --revision-suffix "$REVISION_SUFFIX"
+            --update-env-vars "MAINTENANCE_MODE=$MAINTENANCE_MODE"
+            --no-traffic
+            --quiet
+          )
+          if [[ -n "$REVISION_TAG" ]]; then
+            deploy_args+=(--tag "$REVISION_TAG")
+          fi
+          gcloud "${deploy_args[@]}"
+
+      - name: Verify staging candidate revision
+        env:
+          REVISION_SUFFIX: ${{ inputs.revision_suffix }}
+        run: |
+          set -euo pipefail
+          revision_name="${SERVICE_NAME}-${REVISION_SUFFIX}"
+          gcloud run revisions describe "$revision_name" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --format='yaml(metadata.name,status.conditions,status.imageDigest,spec.containers[0].env)'
+          gcloud run services describe "$SERVICE_NAME" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --format='table(status.traffic.revisionName,status.traffic.percent,status.traffic.tag,status.traffic.url)'
+
+      - name: Staging reminder
+        run: |
+          echo "Staging candidate deployed with zero service traffic."
+          echo "A temporary tag creates a directly reachable URL; remove it after smoke testing."
+          echo "Do not promote the revision until Task 2 isolation and source-data controls are verified."
