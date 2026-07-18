@@ -10,6 +10,11 @@ on:
         description: 'Exact immutable Cloud Run revision name to receive 100% traffic'
         required: true
         type: string
+      expected_maintenance_mode:
+        description: 'Expected MAINTENANCE_MODE on the revision; promotion fails on mismatch'
+        required: true
+        default: false
+        type: boolean
       confirmation:
         description: 'Type PROMOTE to confirm the traffic change'
         required: true
@@ -60,15 +65,33 @@ jobs:
         with:
           project_id: ${{ env.PROJECT_ID }}
 
-      - name: Describe approved revision before promotion
+      - name: Verify approved revision state before promotion
         env:
           REVISION_NAME: ${{ inputs.revision_name }}
+          EXPECTED_MAINTENANCE_MODE: ${{ inputs.expected_maintenance_mode && '1' || '0' }}
         run: |
           set -euo pipefail
+          revision_json="$RUNNER_TEMP/approved-revision.json"
           gcloud run revisions describe "$REVISION_NAME" \
             --project "$PROJECT_ID" \
             --region "$REGION" \
-            --format='yaml(metadata.name,status.conditions,status.imageDigest,spec.containers[0].env)'
+            --format=json > "$revision_json"
+
+          actual_maintenance_mode="$(python3 -c 'import json, sys; data = json.load(open(sys.argv[1])); print(next((entry.get("value", "") for entry in data["spec"]["containers"][0].get("env", []) if entry.get("name") == "MAINTENANCE_MODE"), ""), end="")' "$revision_json")"
+          if [[ ! "$actual_maintenance_mode" =~ ^[01]$ ]]; then
+            echo "Revision does not declare MAINTENANCE_MODE as 0 or 1." >&2
+            exit 1
+          fi
+          if [[ "$actual_maintenance_mode" != "$EXPECTED_MAINTENANCE_MODE" ]]; then
+            echo "Maintenance mode mismatch: expected $EXPECTED_MAINTENANCE_MODE, found $actual_maintenance_mode." >&2
+            exit 1
+          fi
+
+          echo "Verified MAINTENANCE_MODE=$actual_maintenance_mode."
+          gcloud run revisions describe "$REVISION_NAME" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --format='yaml(metadata.name,status.conditions,status.imageDigest)'
 
       - name: Route production traffic to approved revision
         env:
