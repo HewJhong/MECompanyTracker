@@ -84,9 +84,12 @@ Promotion is a separate manual workflow:
 
 1. Open **Actions → Promote Outreach Tracker Revision → Run workflow**.
 2. Enter the exact immutable Cloud Run revision name reported by the candidate workflow.
-3. Enter `PROMOTE` in the confirmation field.
-4. Review and approve the protected `production` environment request.
-5. Verify the post-promotion traffic table names the intended revision at 100%.
+3. Set `expected_maintenance_mode` to the state that revision must have: disabled for a live revision, or enabled only when intentionally routing to a frozen maintenance revision.
+4. Enter `PROMOTE` in the confirmation field.
+5. Review and approve the protected `production` environment request.
+6. Verify the post-promotion traffic table names the intended revision at 100%.
+
+Before changing traffic, the workflow reads the immutable revision configuration and requires `MAINTENANCE_MODE` to be explicitly set to `0` or `1` and to match the operator's expected state. A missing value or mismatch stops promotion.
 
 Never promote a revision suffix, `latest`, or an unverified image. During the Sheets-to-Postgres cutover, do not use percentage traffic splitting between revisions backed by different data stores.
 
